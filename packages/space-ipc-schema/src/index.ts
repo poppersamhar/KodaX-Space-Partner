@@ -620,6 +620,9 @@ export {
 export { notificationShowChannel, notificationClickedChannel } from './channels/notification.js';
 
 export {
+  PARTNER_BROWSER_FRAME_NAME_PREFIX,
+  PARTNER_BROWSER_MAX_URL_LENGTH,
+  partnerBrowserNavigatedChannel,
   windowActivityChannel,
   windowActivityStateSchema,
   windowCompleteExitProgressChannel,
@@ -629,6 +632,7 @@ export {
   windowStateChannel,
   windowStateSchema,
   type WindowActivityPayload,
+  type PartnerBrowserNavigatedPayload,
   type WindowActivityStateT,
   type WindowCompleteExitProgressPayload,
   type WindowControlActionT,

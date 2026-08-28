@@ -45,6 +45,10 @@ import type {
 import { LeftSidebar } from './LeftSidebar.js';
 import { ResizeHandle } from './ResizeHandle.js';
 import { useSmartPopoutDirector } from '../features/popout-director/useSmartPopoutDirector.js';
+import type {
+  FocusArtifactEventDetail,
+  OpenFileViewerEventDetail,
+} from '../features/artifact/transientArtifact.js';
 import { Breadcrumb } from './Breadcrumb.js';
 import { CommandToolbar, type PopoutKind } from './CommandToolbar.js';
 import { BottomBar } from './BottomBar.js';
@@ -73,11 +77,13 @@ import { PartnerWorkspace } from '../features/partner/PartnerWorkspace.js';
 import { PartnerRightSidebar } from '../features/partner/PartnerRightSidebar.js';
 import { AdminAuditPanel } from '../features/partner/AdminAuditPanel.js';
 import {
-  destinationForPartnerResultSignal,
-  isPartnerResultRailPresenceConclusive,
-  projectPartnerResultRail,
-  type PartnerResultSelectionRequest,
-} from '../features/partner/partnerResultRail.js';
+  consumePartnerDetailOpenRequest,
+  partnerDetailRequestForContext,
+  partnerDetailWorkspaceContextKey,
+  type PartnerDetailOpenRequest,
+  type PartnerDetailOpenTarget,
+  type PartnerDetailWorkspaceContext,
+} from '../features/partner/partnerDetailWorkspace.js';
 import { HandoffInbox } from './HandoffInbox.js';
 import { SettingsModal, type SettingsTab } from '../features/settings/SettingsModal.js';
 import {
@@ -116,19 +122,21 @@ const RIGHT_SIDEBAR_DEFAULT_MIN_WIDTH = 320;
 const RIGHT_SIDEBAR_DEFAULT_MAX_WIDTH = 520;
 const RIGHT_SIDEBAR_DEFAULT_RATIO = 0.3;
 const RIGHT_SIDEBAR_MIN_WIDTH = 180;
+const PARTNER_DETAIL_DEFAULT_WIDTH = 440;
 const SHELL_PANEL_HORIZONTAL_PADDING_PX = 20;
 const SHELL_PANEL_GAP_PX = 10;
 const RESIZE_HANDLE_WIDTH_PX = 4;
 const CODER_MIN_CENTER_PX = 520;
-const PARTNER_RIGHT_SIDEBAR_OPEN_KEY = 'kodax-space.partnerArtifactOpen';
+const PARTNER_MIN_CENTER_PX = 420;
+const PARTNER_RIGHT_SIDEBAR_OPEN_KEY = 'kodax-space.partnerDetailOpen.v1';
 type LeftSidebarMode = 'navigation' | 'files';
 
 function readPartnerRightSidebarOpen(): boolean {
-  if (typeof window === 'undefined') return true;
+  if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(PARTNER_RIGHT_SIDEBAR_OPEN_KEY) !== '0';
+    return window.localStorage.getItem(PARTNER_RIGHT_SIDEBAR_OPEN_KEY) === '1';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -183,6 +191,21 @@ function rightSidebarDefaultWidth(
     RIGHT_SIDEBAR_DEFAULT_MAX_WIDTH,
     Math.max(RIGHT_SIDEBAR_DEFAULT_MIN_WIDTH, proportionalWidth),
   );
+}
+
+function surfaceRightSidebarDefaultWidth(
+  surface: 'code' | 'partner',
+  leftSidebarVisible: boolean,
+  leftWidth: number,
+  viewportWidth = getViewportWidth(),
+): number {
+  if (surface === 'partner') {
+    return Math.min(
+      PARTNER_DETAIL_DEFAULT_WIDTH,
+      rightSidebarOpenWidth(leftSidebarVisible, leftWidth, viewportWidth),
+    );
+  }
+  return rightSidebarDefaultWidth(leftSidebarVisible, leftWidth, viewportWidth);
 }
 
 function rightSidebarMaxWidth(
@@ -270,7 +293,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   const leftSidebarOpen = useAppStore((s) => s.leftSidebarOpen);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const currentSessionIdForPlan = useAppStore((s) => s.currentSessionId);
-  const currentProjectPathForPartnerResults = useAppStore((s) => s.currentProjectPath);
+  const currentProjectPathForPartnerDetail = useAppStore((s) => s.currentProjectPath);
   const mascotMode = useAppStore((s) => s.mascotMode);
   const setLeftSidebarOpen = useAppStore((s) => s.setLeftSidebarOpen);
   const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen);
@@ -289,10 +312,36 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   const setLeftSidebarWidth = useAppStore((s) => s.setLeftSidebarWidth);
   const setRightSidebarWidth = useAppStore((s) => s.setRightSidebarWidth);
   const [leftWidthDraft, setLeftWidthDraft] = useState<number | null>(null);
-  const [rightWidthDraft, setRightWidthDraft] = useState<number | null>(null);
+  const [partnerRightSidebarWidth, setPartnerRightSidebarWidth] = useState(
+    PARTNER_DETAIL_DEFAULT_WIDTH,
+  );
+  const [rightWidthDraftBySurface, setRightWidthDraftBySurface] = useState<
+    Record<'code' | 'partner', number | null>
+  >({ code: null, partner: null });
+  const rightWidthDraft = rightWidthDraftBySurface[currentSurface];
+  const setRightWidthDraft = useCallback(
+    (width: number | null): void => {
+      setRightWidthDraftBySurface((current) =>
+        current[currentSurface] === width ? current : { ...current, [currentSurface]: width },
+      );
+    },
+    [currentSurface],
+  );
+  const storedRightWidth =
+    currentSurface === 'partner' ? partnerRightSidebarWidth : persistedRightWidth;
   const [leftSidebarMode, setLeftSidebarMode] = useState<LeftSidebarMode>('navigation');
-  const [rightSidebarWidthMode, setRightSidebarWidthMode] =
-    useState<RightSidebarWidthMode>('custom');
+  const [rightSidebarWidthModeBySurface, setRightSidebarWidthModeBySurface] = useState<
+    Record<'code' | 'partner', RightSidebarWidthMode>
+  >({ code: 'custom', partner: 'default' });
+  const rightSidebarWidthMode = rightSidebarWidthModeBySurface[currentSurface];
+  const setRightSidebarWidthMode = useCallback(
+    (mode: RightSidebarWidthMode): void => {
+      setRightSidebarWidthModeBySurface((current) =>
+        current[currentSurface] === mode ? current : { ...current, [currentSurface]: mode },
+      );
+    },
+    [currentSurface],
+  );
   const [rightSidebarWidthSettling, setRightSidebarWidthSettling] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -300,27 +349,55 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatusT | null>(null);
   const popoutBoundsRef = useRef<HTMLDivElement | null>(null);
   const rightSidebarWidthSettlingTimerRef = useRef<number | null>(null);
-  const rightSidebarWidthPersistTimerRef = useRef<number | null>(null);
+  const rightSidebarWidthPersistTimerRef = useRef<Record<'code' | 'partner', number | null>>({
+    code: null,
+    partner: null,
+  });
   const [taskDockFocusRequest, setTaskDockFocusRequest] = useState<TaskDockFocusState>({
     section: null,
     nonce: 0,
   });
-  const [partnerResultSelectionRequest, setPartnerResultSelectionRequest] =
-    useState<PartnerResultSelectionRequest | null>(null);
-  const partnerResultSelectionRevisionRef = useRef(0);
+  const [partnerDetailOpenRequest, setPartnerDetailOpenRequest] =
+    useState<PartnerDetailOpenRequest | null>(null);
+  const partnerDetailOpenRevisionRef = useRef(0);
+  const livePartnerDetailContext: PartnerDetailWorkspaceContext = {
+    projectRoot: currentProjectPathForPartnerDetail,
+    sessionId: currentSessionIdForPlan,
+  };
+  const [retainedPartnerDetailContext, setRetainedPartnerDetailContext] =
+    useState<PartnerDetailWorkspaceContext | null>(() =>
+      currentSurface === 'partner' ? livePartnerDetailContext : null,
+    );
+  const mountedPartnerDetailContext =
+    currentSurface === 'partner' ? livePartnerDetailContext : retainedPartnerDetailContext;
+  const partnerDetailContextKey = mountedPartnerDetailContext
+    ? partnerDetailWorkspaceContextKey(mountedPartnerDetailContext)
+    : null;
+  const scopedPartnerDetailOpenRequest = mountedPartnerDetailContext
+    ? partnerDetailRequestForContext(partnerDetailOpenRequest, mountedPartnerDetailContext)
+    : null;
+  useEffect(() => {
+    if (currentSurface !== 'partner') return;
+    setRetainedPartnerDetailContext({
+      projectRoot: currentProjectPathForPartnerDetail,
+      sessionId: currentSessionIdForPlan,
+    });
+  }, [currentProjectPathForPartnerDetail, currentSessionIdForPlan, currentSurface]);
+  const visiblePartnerDetailOpenRequest =
+    currentSurface === 'partner' ? scopedPartnerDetailOpenRequest : null;
   const [viewportWidth, setViewportWidth] = useState(() => getViewportWidth());
   const leftWidth = clampSidebarWidthPx(leftWidthDraft ?? persistedLeftWidth);
-  const partnerResultRailPreferredOpenRef = useRef(readPartnerRightSidebarOpen());
+  const partnerRightSidebarPreferredOpenRef = useRef(readPartnerRightSidebarOpen());
   const rightSidebarOpenBySurfaceRef = useRef<Record<'code' | 'partner', boolean>>({
     code: rightSidebarOpen,
-    partner: partnerResultRailPreferredOpenRef.current,
+    partner: partnerRightSidebarPreferredOpenRef.current,
   });
   const activeRightSidebarSurfaceRef = useRef<'code' | 'partner' | null>(null);
   const setRightSidebarOpenForCurrentSurface = useCallback(
     (open: boolean): void => {
       rightSidebarOpenBySurfaceRef.current[currentSurface] = open;
       if (currentSurface === 'partner') {
-        partnerResultRailPreferredOpenRef.current = open;
+        partnerRightSidebarPreferredOpenRef.current = open;
         persistPartnerRightSidebarOpen(open);
       }
       setRightSidebarOpen(open);
@@ -342,28 +419,50 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     }, 240);
   }, []);
 
-  const persistRightSidebarWidthAfterPaint = useCallback(
-    (px: number): void => {
-      if (rightSidebarWidthPersistTimerRef.current !== null) {
-        window.clearTimeout(rightSidebarWidthPersistTimerRef.current);
+  const commitRightSidebarWidth = useCallback(
+    (surface: 'code' | 'partner', px: number): void => {
+      const pendingTimer = rightSidebarWidthPersistTimerRef.current[surface];
+      if (pendingTimer !== null) {
+        window.clearTimeout(pendingTimer);
+        rightSidebarWidthPersistTimerRef.current[surface] = null;
       }
-      rightSidebarWidthPersistTimerRef.current = window.setTimeout(() => {
-        rightSidebarWidthPersistTimerRef.current = null;
-        setRightSidebarWidth(px);
-      }, 240);
+      if (surface === 'partner') {
+        setPartnerRightSidebarWidth(px);
+        return;
+      }
+      setRightSidebarWidth(px);
     },
     [setRightSidebarWidth],
   );
 
+  const persistRightSidebarWidthAfterPaint = useCallback(
+    (surface: 'code' | 'partner', px: number): void => {
+      const pendingTimer = rightSidebarWidthPersistTimerRef.current[surface];
+      if (pendingTimer !== null) {
+        window.clearTimeout(pendingTimer);
+      }
+      rightSidebarWidthPersistTimerRef.current[surface] = window.setTimeout(() => {
+        rightSidebarWidthPersistTimerRef.current[surface] = null;
+        commitRightSidebarWidth(surface, px);
+      }, 240);
+    },
+    [commitRightSidebarWidth],
+  );
+
   useEffect(() => {
+    const persistTimers = rightSidebarWidthPersistTimerRef.current;
     return () => {
       if (rightSidebarWidthSettlingTimerRef.current !== null) {
         window.clearTimeout(rightSidebarWidthSettlingTimerRef.current);
       }
-      if (rightSidebarWidthPersistTimerRef.current !== null) {
-        window.clearTimeout(rightSidebarWidthPersistTimerRef.current);
+      for (const pendingTimer of Object.values(persistTimers)) {
+        if (pendingTimer !== null) window.clearTimeout(pendingTimer);
       }
     };
+  }, []);
+
+  const consumePartnerDetailRequest = useCallback((revision: number): void => {
+    setPartnerDetailOpenRequest((current) => consumePartnerDetailOpenRequest(current, revision));
   }, []);
 
   useEffect(() => {
@@ -431,6 +530,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
 
   const preferredLeftSidebarVisible = leftSidebarOpen && !fullscreenRead;
   const preferredRightSidebarVisible = rightSidebarOpen && !fullscreenRead;
+  const surfaceMinCenterWidth =
+    currentSurface === 'partner' ? PARTNER_MIN_CENTER_PX : CODER_MIN_CENTER_PX;
   const preliminaryRightSidebarHalfWidth = rightSidebarOpenWidth(
     preferredLeftSidebarVisible,
     leftWidth,
@@ -444,8 +545,26 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         : rightSidebarWidthMode === 'half'
           ? preliminaryRightSidebarHalfWidth
           : rightSidebarWidthMode === 'default'
-            ? rightSidebarDefaultWidth(preferredLeftSidebarVisible, leftWidth, viewportWidth)
-            : Math.min(clampSidebarWidthPx(persistedRightWidth), preliminaryRightSidebarHalfWidth);
+            ? surfaceRightSidebarDefaultWidth(
+                currentSurface,
+                preferredLeftSidebarVisible,
+                leftWidth,
+                viewportWidth,
+              )
+            : Math.min(clampSidebarWidthPx(storedRightWidth), preliminaryRightSidebarHalfWidth);
+  const rightSidebarDefaultWidthFits =
+    coderCenterWidthPx(
+      preferredLeftSidebarVisible,
+      leftWidth,
+      true,
+      surfaceRightSidebarDefaultWidth(
+        currentSurface,
+        preferredLeftSidebarVisible,
+        leftWidth,
+        viewportWidth,
+      ),
+      viewportWidth,
+    ) >= surfaceMinCenterWidth;
   const responsiveHideRightSidebar =
     preferredRightSidebarVisible &&
     rightSidebarWidthMode !== 'half' &&
@@ -456,10 +575,9 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       true,
       preliminaryRightWidth,
       viewportWidth,
-    ) < CODER_MIN_CENTER_PX;
+    ) < surfaceMinCenterWidth;
   const rightSidebarVisibleBeforeLeft = preferredRightSidebarVisible && !responsiveHideRightSidebar;
   const responsiveHideLeftSidebar =
-    currentSurface === 'code' &&
     preferredLeftSidebarVisible &&
     rightSidebarWidthMode !== 'max' &&
     coderCenterWidthPx(
@@ -468,7 +586,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       rightSidebarVisibleBeforeLeft,
       preliminaryRightWidth,
       viewportWidth,
-    ) < CODER_MIN_CENTER_PX;
+    ) < surfaceMinCenterWidth;
   const leftSidebarVisible = preferredLeftSidebarVisible && !responsiveHideLeftSidebar;
 
   const openRightSidebarAtBalancedWidth = useCallback((): void => {
@@ -476,41 +594,83 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     pulseRightSidebarWidthSettling();
     setRightWidthDraft(null);
     setRightSidebarWidthMode('half');
-    persistRightSidebarWidthAfterPaint(targetWidth);
+    persistRightSidebarWidthAfterPaint(currentSurface, targetWidth);
     setRightSidebarOpenForCurrentSurface(true);
   }, [
+    currentSurface,
     leftSidebarVisible,
     leftWidth,
     persistRightSidebarWidthAfterPaint,
     pulseRightSidebarWidthSettling,
     setRightSidebarOpenForCurrentSurface,
+    setRightSidebarWidthMode,
+    setRightWidthDraft,
     viewportWidth,
   ]);
 
   const openRightSidebarAtDefaultWidth = useCallback((): void => {
-    const targetWidth = rightSidebarDefaultWidth(leftSidebarVisible, leftWidth, viewportWidth);
+    const targetWidth = surfaceRightSidebarDefaultWidth(
+      currentSurface,
+      leftSidebarVisible,
+      leftWidth,
+      viewportWidth,
+    );
     pulseRightSidebarWidthSettling();
     setRightWidthDraft(null);
     setRightSidebarWidthMode('default');
-    persistRightSidebarWidthAfterPaint(targetWidth);
+    persistRightSidebarWidthAfterPaint(currentSurface, targetWidth);
     setRightSidebarOpenForCurrentSurface(true);
   }, [
+    currentSurface,
     leftSidebarVisible,
     leftWidth,
     persistRightSidebarWidthAfterPaint,
     pulseRightSidebarWidthSettling,
     setRightSidebarOpenForCurrentSurface,
+    setRightSidebarWidthMode,
+    setRightWidthDraft,
     viewportWidth,
   ]);
-  const openRightSidebarAtDefaultWidthRef = useRef(openRightSidebarAtDefaultWidth);
-  openRightSidebarAtDefaultWidthRef.current = openRightSidebarAtDefaultWidth;
+
+  const openPartnerDetail = useCallback(
+    (target: PartnerDetailOpenTarget): void => {
+      setPartnerDetailOpenRequest({
+        revision: ++partnerDetailOpenRevisionRef.current,
+        context: {
+          projectRoot: currentProjectPathForPartnerDetail,
+          sessionId: currentSessionIdForPlan,
+        },
+        target,
+      });
+      if (rightSidebarDefaultWidthFits) openRightSidebarAtDefaultWidth();
+      else openRightSidebarAtBalancedWidth();
+    },
+    [
+      currentProjectPathForPartnerDetail,
+      currentSessionIdForPlan,
+      openRightSidebarAtBalancedWidth,
+      openRightSidebarAtDefaultWidth,
+      rightSidebarDefaultWidthFits,
+    ],
+  );
 
   const openRightSidebarAtMaxWidth = useCallback((): void => {
+    if (currentSurface === 'partner') {
+      openRightSidebarAtDefaultWidth();
+      return;
+    }
     pulseRightSidebarWidthSettling();
     setRightWidthDraft(null);
     setRightSidebarWidthMode('max');
     setRightSidebarOpenForCurrentSurface(true);
-  }, [pulseRightSidebarWidthSettling, setRightSidebarOpenForCurrentSurface]);
+  }, [
+    currentSurface,
+    openRightSidebarAtDefaultWidth,
+    pulseRightSidebarWidthSettling,
+    setRightSidebarOpenForCurrentSurface,
+    setRightSidebarWidthMode,
+    setRightWidthDraft,
+  ]);
 
   const setTaskDockWidthPreset = useCallback(
     (mode: TaskDockWidthPreset): void => {
@@ -538,7 +698,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         rightSidebarWidthMode === 'half'
           ? halfWithLeft
           : rightSidebarWidthMode === 'default'
-            ? rightSidebarDefaultWidth(true, leftWidth, viewportWidth)
+            ? surfaceRightSidebarDefaultWidth(currentSurface, true, leftWidth, viewportWidth)
             : Math.min(clampSidebarWidthPx(persistedRightWidth), halfWithLeft);
       const currentCenterWithLeft = coderCenterWidthPx(
         true,
@@ -549,7 +709,12 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       );
 
       if (currentCenterWithLeft < CODER_MIN_CENTER_PX) {
-        const defaultWithLeft = rightSidebarDefaultWidth(true, leftWidth, viewportWidth);
+        const defaultWithLeft = surfaceRightSidebarDefaultWidth(
+          currentSurface,
+          true,
+          leftWidth,
+          viewportWidth,
+        );
         const defaultCenterWithLeft = coderCenterWidthPx(
           true,
           leftWidth,
@@ -621,10 +786,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       ? (s.liveProjectionBySession[sid]?.todos.length ?? s.todoListBySession[sid]?.length ?? 0)
       : 0;
   });
-  const transcriptArtifactCount = useAppStore((s) => {
-    const sid = s.currentSessionId;
-    return sid ? (s.transientArtifactsBySession[sid]?.length ?? 0) : 0;
-  });
   const smartPopoutEnabled = useAppStore((s) => s.smartPopoutEnabled);
   const lastAutoPlanRef = useRef<{ sessionId: string | null; hasPlan: boolean } | null>(null);
   useEffect(() => {
@@ -663,177 +824,44 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     setRightSidebarOpenForCurrentSurface,
   ]);
 
-  useEffect(() => {
-    if (currentSurface !== 'partner') return;
-
-    const sessionId = currentSessionIdForPlan;
-    const projectRoot = currentProjectPathForPartnerResults;
-    let alive = true;
-    let loadSequence = 0;
-
-    setPartnerResultSelectionRequest(null);
-    rightSidebarOpenBySurfaceRef.current.partner = false;
-    setRightSidebarOpen(false);
-
-    const bridge = window.kodaxSpace;
-    if (!bridge || !sessionId || !projectRoot) return;
-
-    const selected = { sessionId, projectRoot };
-    const loadPresence = async (preferredOpen: () => boolean): Promise<void> => {
-      const requestSequence = ++loadSequence;
-      try {
-        const [artifactsSettled, deliveriesSettled, proposalsSettled] = await Promise.allSettled([
-          bridge.invoke('artifact.list', { sessionId }),
-          bridge.invoke('partner.deliveries.list', { sessionId, projectRoot }),
-          bridge.invoke('partner.fileProposals.list', {
-            sessionId,
-            projectRoot,
-          }),
-        ]);
-        if (!alive || requestSequence !== loadSequence) return;
-        const artifactsResult =
-          artifactsSettled.status === 'fulfilled' ? artifactsSettled.value : null;
-        const deliveriesResult =
-          deliveriesSettled.status === 'fulfilled' ? deliveriesSettled.value : null;
-        const proposalsResult =
-          proposalsSettled.status === 'fulfilled' ? proposalsSettled.value : null;
-        const successfulResultCount = [
-          artifactsResult?.ok === true,
-          deliveriesResult?.ok === true,
-          proposalsResult?.ok === true,
-        ].filter(Boolean).length;
-        const transcriptCount =
-          useAppStore.getState().transientArtifactsBySession[sessionId]?.length ?? 0;
-        const presence = {
-          artifactCount:
-            (artifactsResult?.ok ? artifactsResult.data.artifacts.length : 0) + transcriptCount,
-          deliveryCount: deliveriesResult?.ok ? deliveriesResult.data.deliveries.length : 0,
-          fileProposalCount: proposalsResult?.ok ? proposalsResult.data.proposals.length : 0,
-        };
-        if (!isPartnerResultRailPresenceConclusive(presence, successfulResultCount)) return;
-        const next = projectPartnerResultRail(presence, preferredOpen());
-        if (next.hasContent) {
-          rightSidebarOpenBySurfaceRef.current.partner = next.open;
-          setRightSidebarOpen(next.open);
-        }
-      } catch (error) {
-        if (alive && requestSequence === loadSequence) {
-          const message = error instanceof Error ? error.message : String(error);
-          console.warn(`[partner-result-rail] failed to inspect result presence: ${message}`);
-        }
-      }
-    };
-
-    const refreshPresence = (): void => {
-      void loadPresence(() => useAppStore.getState().rightSidebarOpen);
-    };
-    const reveal = (): void => {
-      openRightSidebarAtDefaultWidthRef.current();
-    };
-    const revealForSignal = (
-      signal: Parameters<typeof destinationForPartnerResultSignal>[1],
-    ): void => {
-      const selection = destinationForPartnerResultSignal(selected, signal);
-      if (!selection) return;
-      setPartnerResultSelectionRequest({
-        revision: ++partnerResultSelectionRevisionRef.current,
-        selection,
-      });
-      reveal();
-    };
-
-    void loadPresence(() => partnerResultRailPreferredOpenRef.current);
-    const offArtifacts = bridge.on('artifact.changed', (payload) => {
-      revealForSignal({
-        source: 'artifact',
-        sessionId: payload.sessionId,
-        reason: payload.reason,
-      });
-      if (payload.sessionId === undefined || payload.sessionId === sessionId) refreshPresence();
-    });
-    const offDeliveries = bridge.on('partner.deliveries.changed', (payload) => {
-      if (payload.sessionId !== sessionId) return;
-      revealForSignal({
-        source: 'delivery',
-        sessionId: payload.sessionId,
-        reason: payload.reason,
-      });
-      refreshPresence();
-    });
-    const offProposals = bridge.on('partner.fileProposals.changed', (payload) => {
-      if (payload.sessionId !== sessionId || payload.projectRoot !== projectRoot) return;
-      revealForSignal({
-        source: 'file-proposal',
-        sessionId: payload.sessionId,
-        projectRoot: payload.projectRoot,
-        status: payload.status,
-        reason: payload.reason,
-      });
-      refreshPresence();
-    });
-    return () => {
-      alive = false;
-      offArtifacts();
-      offDeliveries();
-      offProposals();
-    };
-  }, [
-    currentProjectPathForPartnerResults,
-    currentSessionIdForPlan,
-    currentSurface,
-    setRightSidebarOpen,
-  ]);
-
-  const lastTranscriptArtifactCountRef = useRef<{
-    readonly sessionId: string | null;
-    readonly count: number;
-  } | null>(null);
-  useEffect(() => {
-    const previous = lastTranscriptArtifactCountRef.current;
-    lastTranscriptArtifactCountRef.current = {
-      sessionId: currentSessionIdForPlan,
-      count: transcriptArtifactCount,
-    };
-    if (
-      currentSurface !== 'partner' ||
-      currentSessionIdForPlan === null ||
-      previous === null ||
-      previous.sessionId !== currentSessionIdForPlan ||
-      previous.count > 0 ||
-      transcriptArtifactCount === 0
-    ) {
-      return;
-    }
-    openRightSidebarAtDefaultWidth();
-  }, [
-    currentSessionIdForPlan,
-    currentSurface,
-    openRightSidebarAtDefaultWidth,
-    transcriptArtifactCount,
-  ]);
-
   // F059c: 对话里点 artifact 卡片 → 若右侧栏关着先打开它（RightSidebar 内部再切到 Artifact
   // tab + 选中）。否则点了卡片"什么都没发生"。
   useEffect(() => {
-    const onFocus = (): void => {
-      if (currentSurface === 'partner') {
-        openRightSidebarAtDefaultWidth();
-        return;
-      }
+    const openCoderDetail = (): void => {
       openRightSidebarAtBalancedWidth();
     };
-    window.addEventListener('kodax-space.focus-artifact', onFocus);
-    window.addEventListener('kodax-space.open-file-viewer', onFocus);
-    return () => {
-      window.removeEventListener('kodax-space.focus-artifact', onFocus);
-      window.removeEventListener('kodax-space.open-file-viewer', onFocus);
+    const onFocusArtifact = (event: Event): void => {
+      if (currentSurface === 'partner') {
+        const detail = (event as CustomEvent<FocusArtifactEventDetail>).detail;
+        openPartnerDetail({
+          kind: 'results',
+          selection: { destination: 'results', view: 'artifacts' },
+          focusArtifact: {
+            id: detail?.id,
+            snapshot: detail?.snapshot,
+          },
+        });
+        return;
+      }
+      openCoderDetail();
     };
-  }, [
-    currentSessionIdForPlan,
-    currentSurface,
-    openRightSidebarAtBalancedWidth,
-    openRightSidebarAtDefaultWidth,
-  ]);
+    const onOpenFileViewer = (event: Event): void => {
+      if (currentSurface === 'partner') {
+        const detail = (event as CustomEvent<OpenFileViewerEventDetail>).detail;
+        if (detail?.snapshot) {
+          openPartnerDetail({ kind: 'file', snapshot: detail.snapshot });
+        }
+        return;
+      }
+      openCoderDetail();
+    };
+    window.addEventListener('kodax-space.focus-artifact', onFocusArtifact);
+    window.addEventListener('kodax-space.open-file-viewer', onOpenFileViewer);
+    return () => {
+      window.removeEventListener('kodax-space.focus-artifact', onFocusArtifact);
+      window.removeEventListener('kodax-space.open-file-viewer', onOpenFileViewer);
+    };
+  }, [currentSessionIdForPlan, currentSurface, openPartnerDetail, openRightSidebarAtBalancedWidth]);
 
   useEffect(() => {
     const onOpenFilesWorkspace = (): void => {
@@ -1029,22 +1057,19 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         : rightSidebarWidthMode === 'half'
           ? rightSidebarHalfWidth
           : rightSidebarWidthMode === 'default'
-            ? rightSidebarDefaultWidth(leftSidebarVisible, leftWidth, viewportWidth)
-            : clampRightSidebarNonMaxWidth(persistedRightWidth);
+            ? surfaceRightSidebarDefaultWidth(
+                currentSurface,
+                leftSidebarVisible,
+                leftWidth,
+                viewportWidth,
+              )
+            : clampRightSidebarNonMaxWidth(storedRightWidth);
   const rightSidebarVisible =
     rightSidebarVisibleBeforeLeft &&
     (rightSidebarWidthMode === 'half' ||
       rightSidebarWidthMode === 'max' ||
       coderCenterWidthPx(leftSidebarVisible, leftWidth, true, rightWidth, viewportWidth) >=
-        CODER_MIN_CENTER_PX);
-  const rightSidebarDefaultWidthFits =
-    coderCenterWidthPx(
-      leftSidebarOpen,
-      leftWidth,
-      true,
-      rightSidebarDefaultWidth(leftSidebarOpen, leftWidth, viewportWidth),
-      viewportWidth,
-    ) >= CODER_MIN_CENTER_PX;
+        surfaceMinCenterWidth);
   const toggleRightSidebar = useCallback((): void => {
     if (fullscreenRead) setFullscreenRead(false);
     const action = resolveRightSidebarToggleAction(
@@ -1064,7 +1089,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     rightSidebarVisible,
     setRightSidebarOpenForCurrentSurface,
   ]);
-  const rightSidebarWorkspaceMode = rightSidebarVisible && rightSidebarWidthMode === 'max';
+  const rightSidebarWorkspaceMode =
+    currentSurface === 'code' && rightSidebarVisible && rightSidebarWidthMode === 'max';
 
   // FEATURE_032 v2：内联提问卡与停靠条都在 center-pane 内，右侧栏 max 模式（display:none）
   // 下不可见（旧 modal 挂 Shell 根不受影响）。「查看」召回时退出 max 模式，让问题卡回到可视区。
@@ -1075,7 +1101,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     };
     window.addEventListener(FOCUS_ASK_USER_EVENT, onFocusAskUser);
     return () => window.removeEventListener(FOCUS_ASK_USER_EVENT, onFocusAskUser);
-  }, [rightSidebarWorkspaceMode]);
+  }, [rightSidebarWorkspaceMode, setRightSidebarWidthMode]);
   const platformClass = getRendererPlatformClass();
   const isWindows = platformClass === 'platform-win32';
 
@@ -1191,6 +1217,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
             workspaceMode={rightSidebarWorkspaceMode}
             onToggleLeftSidebar={toggleLeftSidebar}
             onToggleRightSidebar={toggleRightSidebar}
+            onOpenDetail={openPartnerDetail}
           />
         ) : (
           /* 中央阅读区：默认实色；全特效档使用半透明玻璃，并在滚动/拖拽期间临时卸下
@@ -1262,46 +1289,43 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
           </div>
         )}
 
-        {rightSidebarVisible && (
-          <>
-            {!rightSidebarWorkspaceMode && (
-              <ResizeHandle
-                side="right"
-                width={rightWidth}
-                defaultWidth={rightSidebarDefaultWidth(
-                  leftSidebarVisible,
-                  leftWidth,
-                  viewportWidth,
-                )}
-                onPreview={(px) => setRightWidthDraft(clampRightSidebarWidth(px))}
-                onCommit={(px) => {
-                  setRightWidthDraft(null);
-                  setRightSidebarWidthMode('custom');
-                  setRightSidebarWidth(clampRightSidebarNonMaxWidth(px));
-                }}
-              />
+        {rightSidebarVisible && !rightSidebarWorkspaceMode && (
+          <ResizeHandle
+            side="right"
+            width={rightWidth}
+            defaultWidth={surfaceRightSidebarDefaultWidth(
+              currentSurface,
+              leftSidebarVisible,
+              leftWidth,
+              viewportWidth,
             )}
-            {currentSurface === 'partner' ? (
-              <PartnerRightSidebar
-                width={rightWidth}
-                widthMode={rightSidebarWidthMode}
-                selectionRequest={partnerResultSelectionRequest}
-                onRestoreWidth={openRightSidebarAtDefaultWidth}
-                onMaxWidth={openRightSidebarAtMaxWidth}
-                onClose={() => setRightSidebarOpenForCurrentSurface(false)}
-              />
-            ) : (
-              <RightSidebar
-                width={rightWidth}
-                widthMode={rightSidebarWidthMode}
-                onDefaultWidth={openRightSidebarAtDefaultWidth}
-                onHalfWidth={openRightSidebarAtBalancedWidth}
-                onMaxWidth={openRightSidebarAtMaxWidth}
-                onClose={() => setRightSidebarOpenForCurrentSurface(false)}
-                shellFocusRequest={taskDockFocusRequest}
-              />
-            )}
-          </>
+            onPreview={(px) => setRightWidthDraft(clampRightSidebarWidth(px))}
+            onCommit={(px) => {
+              setRightWidthDraft(null);
+              setRightSidebarWidthMode('custom');
+              commitRightSidebarWidth(currentSurface, clampRightSidebarNonMaxWidth(px));
+            }}
+          />
+        )}
+        {currentSurface === 'code' && rightSidebarVisible && (
+          <RightSidebar
+            width={rightWidth}
+            widthMode={rightSidebarWidthMode}
+            onDefaultWidth={openRightSidebarAtDefaultWidth}
+            onHalfWidth={openRightSidebarAtBalancedWidth}
+            onMaxWidth={openRightSidebarAtMaxWidth}
+            onClose={() => setRightSidebarOpenForCurrentSurface(false)}
+            shellFocusRequest={taskDockFocusRequest}
+          />
+        )}
+        {mountedPartnerDetailContext && (
+          <PartnerRightSidebar
+            key={partnerDetailContextKey ?? 'partner-detail'}
+            open={currentSurface === 'partner' && rightSidebarVisible}
+            width={currentSurface === 'partner' ? rightWidth : partnerRightSidebarWidth}
+            openRequest={visiblePartnerDetailOpenRequest}
+            onConsumeOpenRequest={consumePartnerDetailRequest}
+          />
         )}
       </div>
 

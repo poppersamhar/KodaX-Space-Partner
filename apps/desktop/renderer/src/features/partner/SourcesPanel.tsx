@@ -37,11 +37,29 @@ function notifySourcesChanged(): void {
   window.dispatchEvent(new Event(PARTNER_SOURCES_CHANGED_EVENT));
 }
 
-interface SourcesPanelProps {
-  readonly openPickerRequest?: number;
+export function handleSourcePickerOpenRequest(
+  request: number,
+  projectPath: string | null,
+  openPicker: () => void,
+  onConsumed?: () => void,
+): boolean {
+  if (request === 0 || !projectPath) return false;
+  openPicker();
+  onConsumed?.();
+  return true;
 }
 
-export function SourcesPanel({ openPickerRequest = 0 }: SourcesPanelProps): JSX.Element {
+interface SourcesPanelProps {
+  readonly openPickerRequest?: number;
+  readonly onOpenPickerRequestConsumed?: () => void;
+  readonly variant?: 'rail' | 'detail';
+}
+
+export function SourcesPanel({
+  openPickerRequest = 0,
+  onOpenPickerRequestConsumed,
+  variant = 'rail',
+}: SourcesPanelProps): JSX.Element {
   const { t } = useI18n();
   const sourceActionsRef = useRef<HTMLDivElement | null>(null);
   const currentProjectPath = useAppStore((s) => s.currentProjectPath);
@@ -158,9 +176,13 @@ export function SourcesPanel({ openPickerRequest = 0 }: SourcesPanelProps): JSX.
   }, [currentProjectPath, currentSessionId]);
 
   useEffect(() => {
-    if (openPickerRequest === 0 || !currentProjectPath) return;
-    openSourcePicker();
-  }, [currentProjectPath, openPickerRequest, openSourcePicker]);
+    handleSourcePickerOpenRequest(
+      openPickerRequest,
+      currentProjectPath,
+      openSourcePicker,
+      onOpenPickerRequestConsumed,
+    );
+  }, [currentProjectPath, onOpenPickerRequestConsumed, openPickerRequest, openSourcePicker]);
 
   useEffect(() => {
     if (!sourcePickerOpen) return;
@@ -412,7 +434,11 @@ export function SourcesPanel({ openPickerRequest = 0 }: SourcesPanelProps): JSX.
 
   return (
     <aside
-      className="relative w-60 flex-shrink-0 border-r border-border-default flex flex-col bg-surface"
+      className={
+        variant === 'detail'
+          ? 'relative w-full h-full min-w-0 flex flex-col bg-surface'
+          : 'relative w-60 flex-shrink-0 border-r border-border-default flex flex-col bg-surface'
+      }
       data-testid="partner-sources-panel"
     >
       <div className={sourcePickerOpen ? 'hidden' : 'contents'} aria-hidden={sourcePickerOpen}>

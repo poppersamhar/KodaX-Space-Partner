@@ -1,36 +1,421 @@
-import { RightSidebarFrame, type RightSidebarWidthMode } from '../../shell/RightSidebarFrame.js';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { FileText, Globe2, Plus, SquareTerminal, X } from 'lucide-react';
+import { useI18n } from '../../i18n/I18nProvider.js';
+import { FilesPanel } from '../../shell/popouts/FilesPanel.js';
 import { ArtifactPanel } from './ArtifactPanel.js';
-import type { PartnerResultSelectionRequest } from './partnerResultRail.js';
+import { PartnerBrowserPanel } from './PartnerBrowserPanel.js';
+import { FileViewer } from '../preview/FileViewer.js';
+import { SourcesPanel } from './SourcesPanel.js';
+import {
+  createPartnerDetailTab,
+  createPartnerDetailWorkspaceState,
+  reducePartnerDetailWorkspace,
+  resultSelectionForPartnerDetailRequest,
+  type PartnerDetailOpenRequest,
+  type PartnerDetailTabKind,
+} from './partnerDetailWorkspace.js';
+import { handleTablistKeyDown } from './tablistKeyboard.js';
+
+const LazyTerminalManager = lazy(() =>
+  import('../terminal/TerminalManager.js').then((module) => ({
+    default: module.TerminalManager,
+  })),
+);
 
 interface PartnerRightSidebarProps {
+  readonly open: boolean;
   readonly width?: number;
-  readonly widthMode?: RightSidebarWidthMode;
-  readonly onRestoreWidth?: () => void;
-  readonly onMaxWidth?: () => void;
-  readonly onClose?: () => void;
-  readonly selectionRequest?: PartnerResultSelectionRequest | null;
+  readonly openRequest?: PartnerDetailOpenRequest | null;
+  readonly onConsumeOpenRequest?: (revision: number) => void;
+}
+
+interface PartnerDetailTabKeyEvent {
+  readonly key: string;
+  preventDefault(): void;
+  stopPropagation(): void;
+}
+
+export function handlePartnerDetailTabKeyDown(
+  event: PartnerDetailTabKeyEvent,
+  onClose: () => void,
+): boolean {
+  if (event.key !== 'Delete') return false;
+  event.preventDefault();
+  event.stopPropagation();
+  onClose();
+  return true;
 }
 
 export function PartnerRightSidebar({
+  open,
   width,
-  widthMode,
-  onRestoreWidth,
-  onMaxWidth,
-  onClose,
-  selectionRequest,
+  openRequest = null,
+  onConsumeOpenRequest,
 }: PartnerRightSidebarProps): JSX.Element {
+  const { t } = useI18n();
+  const nextUniqueIdRef = useRef(openRequest?.revision ?? 0);
+  const initialTab = openRequest
+    ? createPartnerDetailTab(
+        openRequest.target,
+        detailTitle(openRequest.target.kind, t),
+        openRequest.revision,
+      )
+    : null;
+  const [state, dispatch] = useReducer(
+    reducePartnerDetailWorkspace,
+    undefined,
+    (): ReturnType<typeof createPartnerDetailWorkspaceState> =>
+      initialTab
+        ? reducePartnerDetailWorkspace(createPartnerDetailWorkspaceState(), {
+            type: 'open',
+            tab: initialTab,
+          })
+        : createPartnerDetailWorkspaceState(),
+  );
+  const lastRequestRevisionRef = useRef(openRequest?.revision ?? null);
+  const launcherToggleRef = useRef<HTMLButtonElement | null>(null);
+  const focusAfterStateChangeRef = useRef(false);
+  const [sourcePickerRequest, setSourcePickerRequest] = useState(
+    openRequest?.target.kind === 'sources' && openRequest.target.openPicker ? 1 : 0,
+  );
+  const consumeSourcePickerRequest = useCallback((): void => {
+    setSourcePickerRequest(0);
+  }, []);
+
+  useEffect(() => {
+    if (!openRequest || lastRequestRevisionRef.current === openRequest.revision) return;
+    lastRequestRevisionRef.current = openRequest.revision;
+    nextUniqueIdRef.current = Math.max(nextUniqueIdRef.current, openRequest.revision);
+    if (!(openRequest.target.kind === 'sources' && openRequest.target.openPicker)) {
+      focusAfterStateChangeRef.current = true;
+    }
+    dispatch({
+      type: 'open',
+      tab: createPartnerDetailTab(
+        openRequest.target,
+        detailTitle(openRequest.target.kind, t),
+        openRequest.revision,
+      ),
+    });
+    if (openRequest.target.kind === 'sources' && openRequest.target.openPicker) {
+      setSourcePickerRequest((request) => request + 1);
+    }
+  }, [openRequest, t]);
+
+  useEffect(() => {
+    if (!openRequest || !initialTab || state.activeId !== initialTab.id) return;
+    onConsumeOpenRequest?.(openRequest.revision);
+  }, [initialTab, onConsumeOpenRequest, openRequest, state.activeId]);
+
+  useEffect(() => {
+    if (!focusAfterStateChangeRef.current) return;
+    focusAfterStateChangeRef.current = false;
+    const nextTabId = state.activeId ?? state.tabs[0]?.id;
+    if (nextTabId) {
+      document.getElementById(detailTabElementId(nextTabId))?.focus();
+      return;
+    }
+    launcherToggleRef.current?.focus();
+  }, [state.activeId, state.tabs]);
+
+  const activeTab = state.tabs.find((tab) => tab.id === state.activeId) ?? null;
+  const resultSelectionRequest = resultSelectionForPartnerDetailRequest(openRequest);
+
+  const launch = (kind: 'files' | 'browser' | 'terminal'): void => {
+    nextUniqueIdRef.current += 1;
+    focusAfterStateChangeRef.current = true;
+    dispatch({
+      type: 'open',
+      tab: createPartnerDetailTab({ kind }, detailTitle(kind, t), nextUniqueIdRef.current),
+    });
+  };
+
+  const closeTab = (id: string): void => {
+    focusAfterStateChangeRef.current = true;
+    dispatch({ type: 'close', id });
+  };
+
   return (
-    <RightSidebarFrame
-      width={width}
-      widthMode={widthMode}
-      onDefaultWidth={onRestoreWidth}
-      onMaxWidth={onMaxWidth}
-      onClose={onClose}
-      compactWidthControls
-      closeTestId="partner-artifact-panel-close"
-      dockKind="partner-artifact-dock"
+    <aside
+      hidden={!open}
+      data-testid="right-sidebar"
+      data-dock-kind="partner-detail-dock"
+      data-state={open ? 'open' : 'closed'}
+      style={{
+        ...(width !== undefined ? { width: `${width}px` } : {}),
+        ...(!open ? { display: 'none' } : {}),
+      }}
+      className="glass lift ix-zone flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border-default bg-surface text-[13px]"
     >
-      <ArtifactPanel selectionRequest={selectionRequest} />
-    </RightSidebarFrame>
+      <div className="flex h-10 flex-shrink-0 items-stretch border-b border-border-default/70 bg-surface">
+        <div
+          className="flex min-w-0 flex-1 items-stretch overflow-x-auto"
+          role="tablist"
+          aria-label={t('partner.detail.tabs')}
+          onKeyDown={handleTablistKeyDown}
+          data-testid="partner-detail-tabs"
+        >
+          {state.tabs.map((tab, index) => {
+            const active = tab.id === state.activeId;
+            const translatedTitle = tab.kind === 'file' ? tab.title : detailTitle(tab.kind, t);
+            const tabbable = active || (state.activeId === null && index === 0);
+            return (
+              <div
+                key={tab.id}
+                className={`group flex min-w-28 max-w-40 flex-shrink-0 items-center border-r border-border-default/60 px-2 ${
+                  active ? 'bg-surface-2 text-fg-primary' : 'text-fg-muted hover:bg-hover-bg'
+                }`}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  id={detailTabElementId(tab.id)}
+                  aria-selected={active}
+                  aria-controls={detailPanelElementId(tab.id)}
+                  tabIndex={tabbable ? 0 : -1}
+                  onClick={() => dispatch({ type: 'select', id: tab.id })}
+                  onKeyDown={(event) =>
+                    handlePartnerDetailTabKeyDown(event, () => closeTab(tab.id))
+                  }
+                  className="min-w-0 flex-1 truncate text-left text-[11px]"
+                  title={translatedTitle}
+                >
+                  {translatedTitle}
+                </button>
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => closeTab(tab.id)}
+                  className="ml-1 inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-fg-faint opacity-60 hover:bg-surface-3 hover:text-fg-primary group-hover:opacity-100"
+                  aria-label={t('partner.detail.closeTab', { title: translatedTitle })}
+                  title={t('partner.detail.closeTab', { title: translatedTitle })}
+                >
+                  <X className="h-3 w-3" strokeWidth={1.9} aria-hidden />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button
+          ref={launcherToggleRef}
+          type="button"
+          onClick={() => dispatch({ type: 'show-launcher' })}
+          className={`inline-flex h-10 w-10 flex-shrink-0 items-center justify-center border-l border-border-default/60 hover:bg-hover-bg hover:text-fg-primary ${
+            state.activeId === null ? 'bg-surface-2 text-fg-primary' : 'text-fg-muted'
+          }`}
+          aria-label={t('partner.detail.openTool')}
+          title={t('partner.detail.openTool')}
+          aria-pressed={state.activeId === null}
+          data-testid="partner-detail-launcher-toggle"
+        >
+          <Plus className="h-4 w-4" strokeWidth={1.8} aria-hidden />
+        </button>
+      </div>
+
+      <div id="partner-detail-content" className="relative min-h-0 flex-1">
+        {state.activeId === null && <PartnerDetailLauncher onLaunch={launch} />}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'sources')
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              <SourcesPanel
+                variant="detail"
+                openPickerRequest={sourcePickerRequest}
+                onOpenPickerRequestConsumed={consumeSourcePickerRequest}
+              />
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'results' || tab.kind === 'pendingReview')
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {activeTab?.id === tab.id && (
+                <ArtifactPanel
+                  hideDestinationTabs
+                  destination={tab.kind === 'pendingReview' ? 'pendingReview' : 'results'}
+                  selectionRequest={resultSelectionRequest}
+                  focusRequest={
+                    openRequest?.target.kind === 'results' && openRequest.target.focusArtifact
+                      ? {
+                          revision: openRequest.revision,
+                          ...openRequest.target.focusArtifact,
+                        }
+                      : null
+                  }
+                />
+              )}
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'files')
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              <FilesPanel />
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'file')
+          .map((tab) => {
+            const snapshot = tab.snapshot;
+            if (!snapshot) return null;
+            return (
+              <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+                <FileViewer
+                  snapshot={snapshot}
+                  onSnapshotChange={(nextSnapshot) =>
+                    dispatch({
+                      type: 'open',
+                      tab: { ...tab, title: nextSnapshot.title, snapshot: nextSnapshot },
+                    })
+                  }
+                />
+              </DetailTabPanel>
+            );
+          })}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'browser' || tab.kind === 'terminal')
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {tab.kind === 'browser' ? (
+                <PartnerBrowserPanel />
+              ) : (
+                <Suspense fallback={<PartnerDetailLoading />}>
+                  <LazyTerminalManager />
+                </Suspense>
+              )}
+            </DetailTabPanel>
+          ))}
+      </div>
+    </aside>
+  );
+}
+
+function detailTabElementId(tabId: string): string {
+  return `${tabId}-tab`;
+}
+
+function detailPanelElementId(tabId: string): string {
+  return `${tabId}-panel`;
+}
+
+function DetailTabPanel({
+  tab,
+  active,
+  children,
+}: {
+  readonly tab: { readonly id: string };
+  readonly active: boolean;
+  readonly children: ReactNode;
+}): JSX.Element {
+  return (
+    <div
+      id={detailPanelElementId(tab.id)}
+      role="tabpanel"
+      aria-labelledby={detailTabElementId(tab.id)}
+      hidden={!active}
+      tabIndex={active ? 0 : -1}
+      className="absolute inset-0"
+    >
+      {children}
+    </div>
+  );
+}
+
+function detailTitle(kind: PartnerDetailTabKind, t: ReturnType<typeof useI18n>['t']): string {
+  if (kind === 'sources') return t('partner.sources.title');
+  if (kind === 'results') return t('partner.results.tab.results');
+  if (kind === 'pendingReview') return t('partner.results.tab.pendingReview');
+  if (kind === 'files' || kind === 'file') return t('files.title');
+  if (kind === 'browser') return t('partner.detail.browser');
+  return t('partner.detail.terminal');
+}
+
+function PartnerDetailLauncher({
+  onLaunch,
+}: {
+  readonly onLaunch: (kind: 'files' | 'browser' | 'terminal') => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div
+      className="flex h-full flex-col items-center justify-center gap-5 p-6"
+      data-testid="partner-detail-launcher"
+    >
+      <div className="text-center">
+        <div className="text-sm font-medium text-fg-primary">
+          {t('partner.detail.launcherTitle')}
+        </div>
+        <div className="mt-1 text-xs leading-relaxed text-fg-muted">
+          {t('partner.detail.launcherBody')}
+        </div>
+      </div>
+      <div className="grid w-full max-w-sm grid-cols-3 gap-2">
+        <LauncherButton
+          icon={<FileText className="h-5 w-5" strokeWidth={1.7} aria-hidden />}
+          label={t('partner.detail.files')}
+          onClick={() => onLaunch('files')}
+          testId="partner-detail-open-files"
+        />
+        <LauncherButton
+          icon={<Globe2 className="h-5 w-5" strokeWidth={1.7} aria-hidden />}
+          label={t('partner.detail.browser')}
+          onClick={() => onLaunch('browser')}
+          testId="partner-detail-open-browser"
+        />
+        <LauncherButton
+          icon={<SquareTerminal className="h-5 w-5" strokeWidth={1.7} aria-hidden />}
+          label={t('partner.detail.terminal')}
+          onClick={() => onLaunch('terminal')}
+          testId="partner-detail-open-terminal"
+        />
+      </div>
+    </div>
+  );
+}
+
+function LauncherButton({
+  icon,
+  label,
+  onClick,
+  testId,
+}: {
+  readonly icon: JSX.Element;
+  readonly label: string;
+  readonly onClick: () => void;
+  readonly testId: string;
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl border border-border-default bg-surface-2 px-2 text-xs text-fg-secondary hover:border-border-strong hover:bg-hover-bg hover:text-fg-primary"
+      data-testid={testId}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function PartnerDetailLoading(): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="flex h-full items-center justify-center text-xs text-fg-muted">
+      {t('common.loading')}
+    </div>
   );
 }

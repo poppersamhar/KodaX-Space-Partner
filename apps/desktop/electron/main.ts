@@ -16,6 +16,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  webFrameMain,
   type IpcMainEvent,
   type MenuItemConstructorOptions,
   type NativeImage,
@@ -82,7 +83,11 @@ import { learningEventBridge, registerLearningChannels } from './ipc/learning.js
 import { workflowController } from './kodax/workflow-controller.js';
 import { workflowPolicyStore } from './kodax/workflow-policy.js';
 import { registerArtifactWindowChannel } from './artifact/artifact-window.js';
-import { installNavigationGuards } from './window/navigation-guards.js';
+import {
+  installNavigationGuards,
+  PartnerBrowserFrameRegistry,
+} from './window/navigation-guards.js';
+import { installRemoteFramePermissionGuards } from './window/remote-frame-permissions.js';
 import { installWindowActivityPublisher } from './window/activity.js';
 import {
   AppBadgeController,
@@ -360,9 +365,14 @@ function repairStaleWindowsPortableShortcut(): void {
 }
 
 // THEME_BOOTSTRAP_INLINE_HASH 抽到 csp-config.ts 让单测无 electron 依赖也能 import
-import { THEME_BOOTSTRAP_INLINE_HASH } from './csp-config.js';
+import {
+  APP_RENDERER_FRAME_SRC,
+  THEME_BOOTSTRAP_INLINE_HASH,
+  shouldPreserveRemoteFrameHeaders,
+} from './csp-config.js';
 
 let mainWindow: BrowserWindow | null = null;
+let mainPartnerBrowserFrames: PartnerBrowserFrameRegistry | null = null;
 const WINDOWS_BACKGROUND_TRAY_ENABLED =
   process.platform === 'win32' && process.env.SPACE_DISABLE_TRAY !== '1';
 let backgroundTray: Tray | null = null;
@@ -536,6 +546,22 @@ function applyCsp(): void {
       callback({ responseHeaders: details.responseHeaders });
       return;
     }
+    // Partner's remote browser frame must keep the destination site's own CSP
+    // and X-Frame-Options. Replacing them with the app-shell policy both breaks
+    // the page and would erase the site's explicit decision not to be embedded.
+    const currentMainContents =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : null;
+    const isMainWindowPartnerFrame = Boolean(
+      currentMainContents &&
+      details.webContentsId === currentMainContents.id &&
+      mainPartnerBrowserFrames?.resolveName(details.frame, currentMainContents.mainFrame),
+    );
+    if (
+      shouldPreserveRemoteFrameHeaders(details.resourceType, details.url, isMainWindowPartnerFrame)
+    ) {
+      callback({ responseHeaders: details.responseHeaders });
+      return;
+    }
     // F009 CSP 扩项：
     //   - worker-src 'self' blob:  → Monaco editor 用 Web Worker（dev 走 module worker；prod 走 blob）
     //   - script-src 加 blob:       → 同上，Monaco esm worker 通过 blob URL 起
@@ -559,7 +585,7 @@ function applyCsp(): void {
             "img-src 'self' data: blob: https:",
             "media-src 'self' data: blob:",
             "font-src 'self' data:",
-            "frame-src 'self' app:",
+            APP_RENDERER_FRAME_SRC,
             "connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*",
           ].join('; ')
         : [
@@ -570,7 +596,7 @@ function applyCsp(): void {
             "img-src 'self' data: blob: https:",
             "media-src 'self' data: blob:",
             "font-src 'self' data:",
-            "frame-src 'self' app:",
+            APP_RENDERER_FRAME_SRC,
             "connect-src 'self'",
           ].join('; ');
 
@@ -678,10 +704,26 @@ function createMainWindow(): BrowserWindow {
   // 避免两处窗口的安全策略漂移。理由：renderer 终会渲染 LLM/MCP 产生的内容，必须
   // 只放行应用自身资源（dev: Vite origin / prod: 精确 app://space origin），https 外链走系统
   // 浏览器，其余一律 deny（防 LLM 注入 file:///etc/passwd 等任意路径）。
+  const partnerBrowserFrames = new PartnerBrowserFrameRegistry();
+  mainPartnerBrowserFrames = partnerBrowserFrames;
+  win.webContents.on('frame-created', (_event, details) => {
+    partnerBrowserFrames.register(details.frame, win.webContents.mainFrame);
+  });
+  win.webContents.once('destroyed', () => {
+    partnerBrowserFrames.clear();
+    if (mainPartnerBrowserFrames === partnerBrowserFrames) mainPartnerBrowserFrames = null;
+  });
   installNavigationGuards(win.webContents, {
     devServerUrl: VITE_DEV_SERVER_URL,
     allowedAppOrigin: APP_PROTOCOL_ORIGIN,
     openExternal: (url) => void shell.openExternal(url),
+    allowPartnerBrowserFrames: true,
+    onPartnerBrowserNavigated: (payload) => {
+      pushToRenderer('partner.browserNavigated', payload);
+    },
+    resolveFrame: (processId, routingId) => webFrameMain.fromId(processId, routingId),
+    resolvePartnerBrowserFrameName: (frame) =>
+      partnerBrowserFrames.resolveName(frame, win.webContents.mainFrame),
   });
 
   const isWindowUnavailable = (): boolean => win.isDestroyed() || win.webContents.isDestroyed();
@@ -2129,6 +2171,7 @@ const startupPromise = app
       origin: APP_PROTOCOL_ORIGIN,
     });
     applyCsp();
+    installRemoteFramePermissionGuards(session.defaultSession);
     logGpuFeatureStatus('app-ready');
     // Show the trusted, dependency-free boot surface before Runtime/SDK/store
     // initialization. The React renderer remains behind rendererStartupGate,

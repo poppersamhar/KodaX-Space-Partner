@@ -252,3 +252,44 @@ No actionable P0, P1, or P2 differences remain in the four external-task states.
 ## Final result
 
 final result: passed
+
+---
+
+# Partner Context and Detail Workspace
+
+## Comparison target
+
+- Source visual truth: `outputs/kodax-space-standalone.html`.
+- Implementation: Partner workspace at `http://127.0.0.1:5174/`.
+- Viewport and state: `1280 x 720`, active task/workspace with the detail-tool launcher open.
+- Reference capture: `artifacts/design-qa/reference-right-tools.png`.
+- Implementation capture: `artifacts/design-qa/implementation-right-tools.png`.
+- Combined comparison: `artifacts/design-qa/comparison-right-tools.png` (reference left, implementation right).
+
+## Intentional product decisions
+
+- The first Partner header control owns Materials, Results, and Pending review context cards.
+- The second header control owns the detail workspace for Files, Browser, and Terminal.
+- The Partner composer does not duplicate the Materials action. “Add material” remains in the Materials context card.
+- The implementation retains KodaX Space theme tokens and existing left navigation instead of copying the standalone prototype's visual theme.
+
+## Findings
+
+No actionable P0, P1, or P2 visual differences remain.
+
+- Hierarchy: the center is limited to conversation and composer; contextual records and detail tools stay in the two right-side surfaces.
+- Interaction: Files, Browser, and Terminal are real detail tabs. Materials, Results, and Pending review open their corresponding live panels.
+- Responsiveness: at `1280 x 720`, the left navigation, center composer, and detail workspace remain usable without overlap. Compact layouts retain both header entry points.
+- Accessibility: both header controls are labelled toggle buttons, detail tabs have unique tab/tabpanel relationships, and externally opened detail tabs receive focus.
+- Composer: Partner exposes Skill, execution permission, delivery format, model, and send/stop controls; the redundant “Add material” control is absent. Coder's attachment control is unaffected.
+- Browser safety: only creation-registered, sandboxed HTTP(S) Partner frames are allowed; their stable frame IDs remain authoritative even if child content mutates `window.name`.
+
+## Verification
+
+- Combined reference/implementation visual review: passed.
+- Focused Partner and navigation tests: passed (`46/46`).
+- Renderer and Electron TypeScript: passed.
+- Production renderer and Electron main builds: passed.
+- Electron accessibility-tree and full-window visual inspection: passed.
+
+final result: passed

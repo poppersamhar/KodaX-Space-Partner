@@ -17,19 +17,36 @@ import { FileProposalsPanel } from './FileProposalsPanel.js';
 import { DeliveriesPanel } from './DeliveriesPanel.js';
 import type { PartnerResultSelectionRequest } from './partnerResultRail.js';
 import { handleTablistKeyDown } from './tablistKeyboard.js';
+import {
+  resolveArtifactPanelDestination,
+  shouldUseLegacyArtifactFileViewer,
+  type ArtifactPanelDestination,
+} from './artifactPanelState.js';
 
-type Destination = 'results' | 'pendingReview';
 type ResultView = 'artifacts' | 'fileViewer' | 'files';
 
 interface ArtifactPanelProps {
   readonly selectionRequest?: PartnerResultSelectionRequest | null;
+  readonly destination?: ArtifactPanelDestination;
+  readonly hideDestinationTabs?: boolean;
+  readonly focusRequest?: {
+    readonly revision: number;
+    readonly id?: string;
+    readonly snapshot?: TransientArtifactSnapshot;
+  } | null;
 }
 
-export function ArtifactPanel({ selectionRequest = null }: ArtifactPanelProps): JSX.Element {
+export function ArtifactPanel({
+  selectionRequest = null,
+  destination,
+  hideDestinationTabs = false,
+  focusRequest = null,
+}: ArtifactPanelProps): JSX.Element {
   const { t } = useI18n();
   const currentProjectPath = useAppStore((state) => state.currentProjectPath);
   const currentSessionId = useAppStore((state) => state.currentSessionId);
-  const [activeDestination, setActiveDestination] = useState<Destination>('results');
+  const [internalDestination, setInternalDestination] =
+    useState<ArtifactPanelDestination>('results');
   const [activeResultView, setActiveResultView] = useState<ResultView>('artifacts');
   const [fileViewerSnapshot, setFileViewerSnapshot] = useState<TransientArtifactSnapshot | null>(
     null,
@@ -37,11 +54,12 @@ export function ArtifactPanel({ selectionRequest = null }: ArtifactPanelProps): 
   const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null);
   const [focusedArtifactSnapshot, setFocusedArtifactSnapshot] =
     useState<TransientArtifactSnapshot | null>(null);
+  const useLegacyFileViewer = shouldUseLegacyArtifactFileViewer(hideDestinationTabs);
 
   useEffect(() => {
     const showFocusedArtifact = (event: Event): void => {
       const detail = (event as CustomEvent<FocusArtifactEventDetail>).detail;
-      setActiveDestination('results');
+      setInternalDestination('results');
       if (isFileViewerSnapshot(detail?.snapshot)) {
         setFileViewerSnapshot(detail.snapshot ?? null);
         setActiveResultView('fileViewer');
@@ -56,23 +74,32 @@ export function ArtifactPanel({ selectionRequest = null }: ArtifactPanelProps): 
   }, []);
 
   useEffect(() => {
+    if (!useLegacyFileViewer) return;
     const showFileViewer = (event: Event): void => {
       const detail = (event as CustomEvent<OpenFileViewerEventDetail>).detail;
       if (!isFileViewerSnapshot(detail?.snapshot)) return;
       setFileViewerSnapshot(detail.snapshot);
-      setActiveDestination('results');
+      setInternalDestination('results');
       setActiveResultView('fileViewer');
     };
     window.addEventListener(OPEN_FILE_VIEWER_EVENT, showFileViewer);
     return () => window.removeEventListener(OPEN_FILE_VIEWER_EVENT, showFileViewer);
-  }, []);
+  }, [useLegacyFileViewer]);
 
   useEffect(() => {
     const selection = selectionRequest?.selection;
     if (!selection) return;
-    setActiveDestination(selection.destination);
+    setInternalDestination(selection.destination);
     if (selection.destination === 'results') setActiveResultView(selection.view);
   }, [selectionRequest]);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    setInternalDestination('results');
+    setFocusedArtifactId(focusRequest.id ?? focusRequest.snapshot?.id ?? null);
+    setFocusedArtifactSnapshot(focusRequest.snapshot ?? null);
+    setActiveResultView('artifacts');
+  }, [focusRequest]);
 
   useEffect(() => {
     setFileViewerSnapshot(null);
@@ -98,55 +125,60 @@ export function ArtifactPanel({ selectionRequest = null }: ArtifactPanelProps): 
   }, [currentSessionId, fileViewerSnapshot]);
 
   useEffect(() => {
-    if (selectionRequest) return;
+    if (!useLegacyFileViewer || selectionRequest) return;
     const snapshot = getLastOpenedFileViewerSnapshot(currentProjectPath, currentSessionId);
     if (!snapshot) return;
     setFileViewerSnapshot(snapshot);
-    setActiveDestination('results');
+    setInternalDestination('results');
     setActiveResultView('fileViewer');
-  }, [currentProjectPath, currentSessionId, selectionRequest]);
+  }, [currentProjectPath, currentSessionId, selectionRequest, useLegacyFileViewer]);
+
+  const activeDestination = resolveArtifactPanelDestination(destination, internalDestination);
 
   return (
     <aside
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface"
       data-testid="partner-artifact-panel"
     >
-      <div className="h-9 flex-shrink-0 border-b border-border-default px-3 flex items-center">
-        <div
-          className="flex min-w-0 items-center gap-1 rounded bg-surface-2 p-0.5"
-          role="tablist"
-          aria-label={t('partner.results.destinations')}
-          onKeyDown={handleTablistKeyDown}
-          data-testid="partner-result-destinations"
-        >
-          <RailTab
-            id="partner-results-tab"
-            controls="partner-results-panel"
-            active={activeDestination === 'results'}
-            onClick={() => setActiveDestination('results')}
-            icon={<FileOutput className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
-            testId="partner-results-tab"
+      {!hideDestinationTabs && (
+        <div className="h-9 flex-shrink-0 border-b border-border-default px-3 flex items-center">
+          <div
+            className="flex min-w-0 items-center gap-1 rounded bg-surface-2 p-0.5"
+            role="tablist"
+            aria-label={t('partner.results.destinations')}
+            onKeyDown={handleTablistKeyDown}
+            data-testid="partner-result-destinations"
           >
-            {t('partner.results.tab.results')}
-          </RailTab>
-          <RailTab
-            id="partner-pending-review-tab"
-            controls="partner-pending-review-panel"
-            active={activeDestination === 'pendingReview'}
-            onClick={() => setActiveDestination('pendingReview')}
-            icon={<FileCheck2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
-            testId="partner-pending-review-tab"
-          >
-            {t('partner.results.tab.pendingReview')}
-          </RailTab>
+            <RailTab
+              id="partner-results-tab"
+              controls="partner-results-panel"
+              active={activeDestination === 'results'}
+              onClick={() => setInternalDestination('results')}
+              icon={<FileOutput className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
+              testId="partner-results-tab"
+            >
+              {t('partner.results.tab.results')}
+            </RailTab>
+            <RailTab
+              id="partner-pending-review-tab"
+              controls="partner-pending-review-panel"
+              active={activeDestination === 'pendingReview'}
+              onClick={() => setInternalDestination('pendingReview')}
+              icon={<FileCheck2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
+              testId="partner-pending-review-tab"
+            >
+              {t('partner.results.tab.pendingReview')}
+            </RailTab>
+          </div>
         </div>
-      </div>
+      )}
 
       {activeDestination === 'results' ? (
         <div
           id="partner-results-panel"
           role="tabpanel"
-          aria-labelledby="partner-results-tab"
+          aria-labelledby={hideDestinationTabs ? undefined : 'partner-results-tab'}
+          aria-label={hideDestinationTabs ? t('partner.results.tab.results') : undefined}
           className="flex min-h-0 flex-1 flex-col"
         >
           <div className="h-8 flex-shrink-0 border-b border-border-default px-3 flex items-center">
@@ -236,7 +268,8 @@ export function ArtifactPanel({ selectionRequest = null }: ArtifactPanelProps): 
         <div
           id="partner-pending-review-panel"
           role="tabpanel"
-          aria-labelledby="partner-pending-review-tab"
+          aria-labelledby={hideDestinationTabs ? undefined : 'partner-pending-review-tab'}
+          aria-label={hideDestinationTabs ? t('partner.results.tab.pendingReview') : undefined}
           className="min-h-0 flex-1"
         >
           <FileProposalsPanel />

@@ -90,7 +90,6 @@ import {
   readPartnerPendingSources,
 } from '../features/partner/partnerWorkbench.js';
 import { PartnerSceneShortcuts } from '../features/partner/PartnerSceneShortcuts.js';
-import { openPartnerMaterialPicker } from '../features/partner/partnerMaterialPicker.js';
 import {
   applyPartnerDeliveryInstruction,
   applyPartnerSceneTemplate,
@@ -2787,36 +2786,17 @@ export function BottomBar(): JSX.Element {
                     startAttachmentOperation(() => attachLocalFiles(files, 'file-picker'));
                   }}
                 />
-                <button
-                  type="button"
-                  data-testid={currentSurface === 'partner' ? 'partner-add-material' : undefined}
-                  onClick={() => {
-                    if (currentSurface === 'partner') {
-                      setAttachOpen(false);
-                      openPartnerMaterialPicker();
-                      return;
-                    }
-                    setAttachOpen((v) => !v);
-                  }}
-                  className={
-                    currentSurface === 'partner'
-                      ? 'h-7 rounded-md border border-border-default px-2 text-fg-secondary hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center gap-1.5'
-                      : 'w-6 h-6 rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center'
-                  }
-                  title={
-                    currentSurface === 'partner'
-                      ? t('partner.material.add')
-                      : t('bottom.attachCommands')
-                  }
-                  aria-label={
-                    currentSurface === 'partner'
-                      ? t('partner.material.add')
-                      : t('bottom.openAttachMenu')
-                  }
-                >
-                  <Plus className="w-4 h-4" />
-                  {currentSurface === 'partner' && <span>{t('partner.material.add')}</span>}
-                </button>
+                {currentSurface !== 'partner' && (
+                  <button
+                    type="button"
+                    onClick={() => setAttachOpen((v) => !v)}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary"
+                    title={t('bottom.attachCommands')}
+                    aria-label={t('bottom.openAttachMenu')}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                )}
                 {currentSurface !== 'partner' && (
                   <AttachMenu
                     open={attachOpen}
