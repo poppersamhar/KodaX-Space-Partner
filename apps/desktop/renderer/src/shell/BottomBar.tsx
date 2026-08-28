@@ -2,7 +2,7 @@
 // Composer footer: chips, textarea, attachments, mode controls, and send/stop.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUp, FileText, Folder, Plus, X } from 'lucide-react';
+import { ArrowUp, FileText, Folder, Plus, Puzzle, X } from 'lucide-react';
 import {
   MAX_SOURCE_IMAGE_BYTES,
   type ChannelInput,
@@ -86,22 +86,39 @@ import {
 } from '../features/session/turnIndex.js';
 import {
   PARTNER_SOURCES_CHANGED_EVENT,
-  PARTNER_WORKBENCH_CONTEXT_EVENT,
-  buildPartnerWorkbenchPrompt,
   clearPartnerPendingSources,
-  getPartnerWorkbenchScenario,
   readPartnerPendingSources,
-  readPartnerWorkbenchContext,
-  type PartnerWorkbenchContextDetail,
-  type PartnerWorkbenchSourceRef,
 } from '../features/partner/partnerWorkbench.js';
+import { PartnerSceneShortcuts } from '../features/partner/PartnerSceneShortcuts.js';
+import { openPartnerMaterialPicker } from '../features/partner/partnerMaterialPicker.js';
+import {
+  applyPartnerDeliveryInstruction,
+  applyPartnerSceneTemplate,
+  hasAcceptedPartnerUserMessage,
+  shouldShowPartnerSceneShortcuts,
+  type PartnerSceneTemplate,
+} from '../features/partner/partnerSceneTemplates.js';
 
 const SLASH_ARGS_MAX = 20;
 
 const EMPTY_INPUT_HISTORY: readonly string[] = [];
 
 type QueueMode = 'interrupt' | 'after-turn';
+type PartnerDeliveryFormat = 'auto' | 'docx' | 'pdf' | 'pptx' | 'xlsx' | 'file-md' | 'file-txt';
 type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+const PARTNER_DELIVERY_FORMATS: readonly {
+  readonly id: PartnerDeliveryFormat;
+  readonly labelKey: MessageKey;
+}[] = [
+  { id: 'auto', labelKey: 'partner.workbench.output.auto' },
+  { id: 'docx', labelKey: 'partner.workbench.output.docx' },
+  { id: 'pdf', labelKey: 'partner.workbench.output.pdf' },
+  { id: 'pptx', labelKey: 'partner.workbench.output.pptx' },
+  { id: 'xlsx', labelKey: 'partner.workbench.output.xlsx' },
+  { id: 'file-md', labelKey: 'partner.workbench.output.fileMd' },
+  { id: 'file-txt', labelKey: 'partner.workbench.output.fileTxt' },
+];
 
 function queuedToastText(queueMode: QueueMode | undefined, t: Translate): string {
   return queueMode === 'after-turn' ? t('bottom.queuedAfterTurn') : t('bottom.queuedNextSafePoint');
@@ -482,6 +499,15 @@ export function BottomBar(): JSX.Element {
   const { t } = useI18n();
   const currentSessionId = useAppStore((s) => s.currentSessionId);
   const currentProjectPath = useAppStore((s) => s.currentProjectPath);
+  const partnerHasAcceptedUserMessage = useAppStore((state) => {
+    if (!currentSessionId) return false;
+    const persistentMessageCount =
+      state.sessions.find((session) => session.sessionId === currentSessionId)?.msgCount ?? 0;
+    return (
+      persistentMessageCount > 0 ||
+      hasAcceptedPartnerUserMessage(state.userMessagesBySession[currentSessionId] ?? [])
+    );
+  });
   const { isStreaming, isCompacting, runtimeActiveRun, runtimeStopIdentity, activityGeneration } =
     useActivityState();
   const currentRuntimePhase = runtimeActiveRun?.phase;
@@ -530,6 +556,7 @@ export function BottomBar(): JSX.Element {
   const [isAttaching, setIsAttaching] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [partnerSkillOpen, setPartnerSkillOpen] = useState(false);
   // Images already persisted to main-process temp storage and awaiting send.
   const [pendingImages, setPendingImages, pendingImagesRef] = useTrackedState<PendingImage[]>([]);
   const [pendingFileRefs, setPendingFileRefs, pendingFileRefsRef] = useTrackedState<
@@ -554,8 +581,14 @@ export function BottomBar(): JSX.Element {
   if (attachmentGateRef.current === null) {
     attachmentGateRef.current = createPendingAttachmentGate(setIsAttaching);
   }
-  const [partnerWorkbenchContext, setPartnerWorkbenchContext] =
-    useState<PartnerWorkbenchContextDetail | null>(() => readPartnerWorkbenchContext());
+  const [generatedPartnerTemplate, setGeneratedPartnerTemplate] = useState<string | null>(null);
+  const [partnerDeliveryFormat, setPartnerDeliveryFormat] = useState<PartnerDeliveryFormat>('auto');
+  const [partnerDeliveryInstruction, setPartnerDeliveryInstruction] = useState<string | null>(null);
+  const partnerDraftScopeRef = useRef({
+    projectPath: currentProjectPath,
+    sessionId: currentSessionId,
+    surface: currentSurface,
+  });
   const handleSendRef = useRef<
     ((queueMode?: QueueMode, promptOverride?: string) => Promise<void>) | null
   >(null);
@@ -659,18 +692,24 @@ export function BottomBar(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const onPartnerWorkbenchContext = (event: Event): void => {
-      setPartnerWorkbenchContext(
-        (event as CustomEvent<PartnerWorkbenchContextDetail>).detail ?? null,
-      );
+    const previous = partnerDraftScopeRef.current;
+    const isLazyPartnerSessionCreation =
+      previous.surface === 'partner' &&
+      currentSurface === 'partner' &&
+      previous.projectPath === currentProjectPath &&
+      previous.sessionId === null &&
+      currentSessionId !== null;
+    partnerDraftScopeRef.current = {
+      projectPath: currentProjectPath,
+      sessionId: currentSessionId,
+      surface: currentSurface,
     };
-    window.addEventListener(PARTNER_WORKBENCH_CONTEXT_EVENT, onPartnerWorkbenchContext);
-    const latest = readPartnerWorkbenchContext();
-    if (latest) setPartnerWorkbenchContext(latest);
-    return () => {
-      window.removeEventListener(PARTNER_WORKBENCH_CONTEXT_EVENT, onPartnerWorkbenchContext);
-    };
-  }, []);
+    if (!isLazyPartnerSessionCreation) {
+      setGeneratedPartnerTemplate(null);
+      setPartnerDeliveryFormat('auto');
+      setPartnerDeliveryInstruction(null);
+    }
+  }, [currentProjectPath, currentSessionId, currentSurface]);
 
   // and focus it (caret at end). Callers may also request an immediate submit
   // when they are launching a structured task through the normal composer path.
@@ -813,51 +852,31 @@ export function BottomBar(): JSX.Element {
     return applyCreatedSession(result.data, 'foreground');
   }
 
-  async function attachPendingPartnerSourcesForSend(
-    sessionId: string,
-  ): Promise<readonly PartnerWorkbenchSourceRef[] | null> {
-    const existingSources = partnerWorkbenchContext?.sources ?? [];
-    if (currentSurface !== 'partner' || !currentProjectPath) return existingSources;
-    const pendingSources = partnerWorkbenchContext?.pendingSources?.length
-      ? partnerWorkbenchContext.pendingSources
-      : readPartnerPendingSources(currentProjectPath);
-    if (pendingSources.length === 0) return existingSources;
+  async function attachPendingPartnerSourcesForSend(sessionId: string): Promise<boolean> {
+    if (currentSurface !== 'partner' || !currentProjectPath) return true;
+    const pendingSources = readPartnerPendingSources(currentProjectPath);
+    if (pendingSources.length === 0) return true;
 
-    const attachedSources: PartnerWorkbenchSourceRef[] = [];
     for (const source of pendingSources) {
       const payload: ChannelInput<'partner.sources.add'> = {
         sessionId,
         projectRoot: currentProjectPath,
         path: source.path,
         ...(source.label ? { label: source.label } : {}),
+        ...(source.targetKind ? { targetKind: source.targetKind } : {}),
       };
       const result = await invokeComposerIpc('partner.sources.add', payload);
       if (!result.ok) {
         setErr(
           `${result.error?.code ?? 'ERR_UNKNOWN'}: ${result.error?.message ?? t('common.unknownError')}`,
         );
-        return null;
+        return false;
       }
-      attachedSources.push({
-        id: result.data.source.id,
-        path: result.data.source.path,
-        label: result.data.source.label,
-      });
     }
 
     clearPartnerPendingSources(currentProjectPath);
     window.dispatchEvent(new Event(PARTNER_SOURCES_CHANGED_EVENT));
-    const mergedSources = [...existingSources];
-    for (const source of attachedSources) {
-      if (
-        !mergedSources.some(
-          (existing) => existing.id === source.id || existing.path === source.path,
-        )
-      ) {
-        mergedSources.push(source);
-      }
-    }
-    return mergedSources;
+    return true;
   }
 
   async function attachImages(blobs: readonly File[], source: InputArtifactSource): Promise<void> {
@@ -2046,21 +2065,7 @@ export function BottomBar(): JSX.Element {
         pendingFileRefs,
         window.kodaxSpace.platform,
       );
-      const partnerSourcesForOverlay =
-        currentSurface === 'partner' ? await attachPendingPartnerSourcesForSend(sid) : null;
-      if (currentSurface === 'partner' && partnerSourcesForOverlay === null) return;
-      const partnerPromptOverlay =
-        currentSurface === 'partner' && partnerWorkbenchContext
-          ? buildPartnerWorkbenchPrompt({
-              projectRoot: currentProjectPath,
-              hasSession: Boolean(sid),
-              scenarioId: partnerWorkbenchContext.scenarioId,
-              outputPreferenceId: partnerWorkbenchContext.outputPreferenceId,
-              targetPath: partnerWorkbenchContext.targetPath,
-              sources: partnerSourcesForOverlay ?? partnerWorkbenchContext.sources,
-              userBrief: effectivePrompt,
-            })
-          : undefined;
+      if (!(await attachPendingPartnerSourcesForSend(sid))) return;
       const promptForAI = effectivePrompt;
       const imagesAtSend = pendingImages;
       const optimisticAttachmentNonce = Date.now();
@@ -2118,7 +2123,6 @@ export function BottomBar(): JSX.Element {
         queueMode: effectiveQueueMode,
         ...(currentProjectPath ? { expectedProjectRoot: currentProjectPath } : {}),
         expectedSurface: currentSurface,
-        ...(partnerPromptOverlay ? { partnerPromptOverlay } : {}),
         ...(attachmentPathsForSend.length > 0
           ? { attachmentPaths: [...attachmentPathsForSend] }
           : {}),
@@ -2278,6 +2282,11 @@ export function BottomBar(): JSX.Element {
         }
         settleSendOperationMessage(sid, sendOperation.operationId);
         settleRetainedSendOperation('accepted');
+        if (currentSurface === 'partner') {
+          setGeneratedPartnerTemplate(null);
+          setPartnerDeliveryFormat('auto');
+          setPartnerDeliveryInstruction(null);
+        }
       };
 
       const result = await invokeComposerIpc('session.send', sendPayload, {
@@ -2471,19 +2480,74 @@ export function BottomBar(): JSX.Element {
       : busy || isAttaching
         ? t('bottom.sendTitle.busy')
         : t('bottom.sendTitle.empty');
-  const partnerModeLabel =
-    currentSurface === 'partner' && partnerWorkbenchContext
-      ? t(getPartnerWorkbenchScenario(partnerWorkbenchContext.scenarioId).labelKey)
-      : 'Partner';
+  const showPartnerSceneShortcuts = shouldShowPartnerSceneShortcuts({
+    surface: currentSurface,
+    hasAcceptedUserMessage: partnerHasAcceptedUserMessage,
+  });
   const placeholderText = !currentProjectPath
     ? t('bottom.placeholder.openFolder')
     : currentSurface === 'partner'
       ? currentSessionId
-        ? t('bottom.placeholder.partnerWithSession', { mode: partnerModeLabel })
-        : t('bottom.placeholder.partnerNewSession', { mode: partnerModeLabel })
+        ? t('bottom.placeholder.partnerWithSession')
+        : t('bottom.placeholder.partnerNewSession')
       : currentSessionId
         ? t('bottom.placeholder.withSession')
         : t('bottom.placeholder.newSession');
+
+  function choosePartnerScene(template: PartnerSceneTemplate): void {
+    const draftWithoutDelivery = applyPartnerDeliveryInstruction({
+      currentDraft: promptRef.current,
+      previousInstruction: partnerDeliveryInstruction,
+      nextInstruction: null,
+    }).draft;
+    const sceneResult = applyPartnerSceneTemplate({
+      currentDraft: draftWithoutDelivery,
+      previousGeneratedTemplate: generatedPartnerTemplate,
+      nextTemplate: t(template.promptTemplateKey),
+    });
+    if (!sceneResult.applied) {
+      pushToast(t('partner.sceneTemplate.preserveEdited'), 'info');
+      focusComposerSoon();
+      return;
+    }
+    const withDelivery = applyPartnerDeliveryInstruction({
+      currentDraft: sceneResult.draft,
+      previousInstruction: null,
+      nextInstruction: partnerDeliveryInstruction,
+    });
+    setPrompt(withDelivery.draft);
+    setGeneratedPartnerTemplate(sceneResult.generatedTemplate);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(withDelivery.draft.length, withDelivery.draft.length);
+      setCaret(withDelivery.draft.length);
+    });
+  }
+
+  function choosePartnerDeliveryFormat(nextFormat: PartnerDeliveryFormat): void {
+    const option = PARTNER_DELIVERY_FORMATS.find((item) => item.id === nextFormat);
+    const nextInstruction =
+      nextFormat === 'auto' || option === undefined
+        ? null
+        : t('partner.deliveryFormat.instruction', { format: t(option.labelKey) });
+    const result = applyPartnerDeliveryInstruction({
+      currentDraft: promptRef.current,
+      previousInstruction: partnerDeliveryInstruction,
+      nextInstruction,
+    });
+    setPartnerDeliveryFormat(nextFormat);
+    setPartnerDeliveryInstruction(result.instruction);
+    setPrompt(result.draft);
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(result.draft.length, result.draft.length);
+      setCaret(result.draft.length);
+    });
+  }
 
   return (
     <div
@@ -2528,6 +2592,8 @@ export function BottomBar(): JSX.Element {
           ].join(' ')}
         >
           <ChipBar />
+
+          {showPartnerSceneShortcuts && <PartnerSceneShortcuts onChoose={choosePartnerScene} />}
 
           {(pendingImages.length > 0 || pendingFileRefs.length > 0 || imageErr) && (
             <div className="space-y-1">
@@ -2723,32 +2789,105 @@ export function BottomBar(): JSX.Element {
                 />
                 <button
                   type="button"
-                  onClick={() => setAttachOpen((v) => !v)}
-                  className="w-6 h-6 rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center"
-                  title={t('bottom.attachCommands')}
-                  aria-label={t('bottom.openAttachMenu')}
+                  data-testid={currentSurface === 'partner' ? 'partner-add-material' : undefined}
+                  onClick={() => {
+                    if (currentSurface === 'partner') {
+                      setAttachOpen(false);
+                      openPartnerMaterialPicker();
+                      return;
+                    }
+                    setAttachOpen((v) => !v);
+                  }}
+                  className={
+                    currentSurface === 'partner'
+                      ? 'h-7 rounded-md border border-border-default px-2 text-fg-secondary hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center gap-1.5'
+                      : 'w-6 h-6 rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center'
+                  }
+                  title={
+                    currentSurface === 'partner'
+                      ? t('partner.material.add')
+                      : t('bottom.attachCommands')
+                  }
+                  aria-label={
+                    currentSurface === 'partner'
+                      ? t('partner.material.add')
+                      : t('bottom.openAttachMenu')
+                  }
                 >
                   <Plus className="w-4 h-4" />
+                  {currentSurface === 'partner' && <span>{t('partner.material.add')}</span>}
                 </button>
-                <AttachMenu
-                  open={attachOpen}
-                  onClose={() => setAttachOpen(false)}
-                  onAddFiles={() => {
-                    const input = fileInputRef.current;
-                    if (!input) return;
-                    input.value = '';
-                    input.click();
-                  }}
-                  onAddFolder={() => startAttachmentOperation(attachFolder)}
-                  onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
-                />
+                {currentSurface !== 'partner' && (
+                  <AttachMenu
+                    open={attachOpen}
+                    onClose={() => setAttachOpen(false)}
+                    onAddFiles={() => {
+                      const input = fileInputRef.current;
+                      if (!input) return;
+                      input.value = '';
+                      input.click();
+                    }}
+                    onAddFolder={() => startAttachmentOperation(attachFolder)}
+                    onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
+                  />
+                )}
               </div>
+              {currentSurface === 'partner' && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    data-testid="partner-skill-picker"
+                    onClick={() => setPartnerSkillOpen((open) => !open)}
+                    className="h-7 w-7 rounded-md border border-border-default text-fg-muted hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center"
+                    title={t('attach.skills')}
+                    aria-label={t('attach.skills')}
+                    aria-haspopup="menu"
+                    aria-expanded={partnerSkillOpen}
+                  >
+                    <Puzzle className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+                  </button>
+                  <AttachMenu
+                    open={partnerSkillOpen}
+                    initialSub="skills"
+                    onClose={() => setPartnerSkillOpen(false)}
+                    onAddFiles={() => undefined}
+                    onAddFolder={() => undefined}
+                    onInsertText={(text) =>
+                      setPrompt((draft) => (draft ? `${draft} ${text}` : text))
+                    }
+                  />
+                </div>
+              )}
               {currentSurface !== 'partner' && <AgentPicker insertAtCaret={insertAtCaret} />}
               <ModeSelector />
+              {currentSurface === 'partner' && (
+                <label className="inline-flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-1.5 text-[11px] text-fg-muted">
+                  <span>{t('partner.deliveryFormat.label')}</span>
+                  <select
+                    value={partnerDeliveryFormat}
+                    onChange={(event) =>
+                      choosePartnerDeliveryFormat(
+                        event.currentTarget.value as PartnerDeliveryFormat,
+                      )
+                    }
+                    className="max-w-24 bg-transparent text-fg-secondary outline-none"
+                    aria-label={t('partner.deliveryFormat.label')}
+                  >
+                    {PARTNER_DELIVERY_FORMATS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {t(option.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               {currentSurface !== 'partner' && <AgentModeSelector />}
             </div>
             <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
-              <ContextWindowIndicator compacting={isCompacting} />
+              <ContextWindowIndicator
+                compacting={isCompacting}
+                attentionOnly={currentSurface === 'partner'}
+              />
               <ModelEffortSelector />
               {runControls.showStop && (
                 <button

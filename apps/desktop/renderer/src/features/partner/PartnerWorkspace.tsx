@@ -18,18 +18,19 @@ import { useI18n } from '../../i18n/I18nProvider.js';
 import { SourcesPanel } from './SourcesPanel.js';
 import { PartnerConversation } from './PartnerConversation.js';
 import { PartnerEvidenceDetail } from './PartnerEvidenceDetail.js';
+import { OPEN_PARTNER_MATERIAL_PICKER_EVENT } from './partnerMaterialPicker.js';
 
-const LS_KEY_SOURCES_OPEN = 'kodax-space.partnerSourcesOpen';
+const LS_KEY_SOURCES_OPEN = 'kodax-space.partnerSourcesOpen.v2';
 // With the shared 320px right sidebar, a 1280px window leaves ~632px for Partner.
 // The 240px sources rail still preserves a >= 360px conversation lane there.
 const SOURCES_MIN_WORKSPACE_PX = 620;
 
 function readPanelOpen(key: string): boolean {
-  if (typeof window === 'undefined') return true;
+  if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(key) !== '0';
+    return window.localStorage.getItem(key) === '1';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -43,12 +44,14 @@ function persistPanelOpen(key: string, open: boolean): void {
 
 interface PartnerWorkspaceProps {
   readonly rightSidebarOpen: boolean;
+  readonly rightSidebarAvailable: boolean;
   readonly workspaceMode?: boolean;
   readonly onToggleRightSidebar: () => void;
 }
 
 export function PartnerWorkspace({
   rightSidebarOpen,
+  rightSidebarAvailable,
   workspaceMode = false,
   onToggleRightSidebar,
 }: PartnerWorkspaceProps): JSX.Element {
@@ -56,6 +59,17 @@ export function PartnerWorkspace({
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null);
   const [sourcesOpen, setSourcesOpen] = useState(() => readPanelOpen(LS_KEY_SOURCES_OPEN));
+  const [sourcePickerRequest, setSourcePickerRequest] = useState(0);
+
+  useEffect(() => {
+    const openMaterialPicker = (): void => {
+      setSourcesOpen(true);
+      persistPanelOpen(LS_KEY_SOURCES_OPEN, true);
+      setSourcePickerRequest((request) => request + 1);
+    };
+    window.addEventListener(OPEN_PARTNER_MATERIAL_PICKER_EVENT, openMaterialPicker);
+    return () => window.removeEventListener(OPEN_PARTNER_MATERIAL_PICKER_EVENT, openMaterialPicker);
+  }, []);
 
   useEffect(() => {
     const node = workspaceRef.current;
@@ -80,10 +94,10 @@ export function PartnerWorkspace({
     sourcesOpen && workspaceWidth !== null && workspaceWidth < SOURCES_MIN_WORKSPACE_PX;
   const showSources = sourcesOpen && !sourcesAutoHidden;
   const sourcesLabel = sourcesAutoHidden
-    ? t('partner.kb.hiddenAtWidth')
+    ? t('partner.sources.hiddenAtWidth')
     : showSources
-      ? t('partner.kb.hide')
-      : t('partner.kb.show');
+      ? t('partner.sources.hidePanel')
+      : t('partner.sources.showPanel');
   const artifactLabel = rightSidebarOpen ? t('partner.artifact.hide') : t('partner.artifact.show');
   const ArtifactToggleIcon = rightSidebarOpen ? PanelRightClose : PanelRightOpen;
 
@@ -111,24 +125,26 @@ export function PartnerWorkspace({
         <Handshake className="w-4 h-4 text-accent-ink" strokeWidth={1.75} aria-hidden />
         <span className="text-[13px] text-fg-primary font-medium flex-shrink-0">Partner</span>
         <span className="text-[11px] text-fg-muted min-w-0 truncate">{t('partner.subtitle')}</span>
-        <button
-          type="button"
-          onClick={onToggleRightSidebar}
-          className={`ix-pop ml-auto w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
-            rightSidebarOpen ? 'text-fg-primary' : 'text-fg-muted hover:text-fg-primary'
-          }`}
-          title={artifactLabel}
-          aria-label={artifactLabel}
-          aria-pressed={rightSidebarOpen}
-          data-testid="partner-artifact-toggle"
-        >
-          <ArtifactToggleIcon className="w-4 h-4" strokeWidth={1.75} aria-hidden />
-        </button>
+        {rightSidebarAvailable && (
+          <button
+            type="button"
+            onClick={onToggleRightSidebar}
+            className={`ix-pop ml-auto w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
+              rightSidebarOpen ? 'text-fg-primary' : 'text-fg-muted hover:text-fg-primary'
+            }`}
+            title={artifactLabel}
+            aria-label={artifactLabel}
+            aria-pressed={rightSidebarOpen}
+            data-testid="partner-artifact-toggle"
+          >
+            <ArtifactToggleIcon className="w-4 h-4" strokeWidth={1.75} aria-hidden />
+          </button>
+        )}
       </div>
       <div className="flex flex-1 min-h-0">
         {sourcesOpen && (
           <div className={sourcesAutoHidden ? 'hidden' : 'contents'}>
-            <SourcesPanel />
+            <SourcesPanel openPickerRequest={sourcePickerRequest} />
           </div>
         )}
         <PartnerConversation />

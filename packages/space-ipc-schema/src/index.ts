@@ -491,6 +491,7 @@ export {
   partnerFileProposalsApplyChannel,
   partnerFileProposalsRejectChannel,
   partnerFileProposalsExportChannel,
+  partnerFileProposalsChangedChannel,
   MAX_PARTNER_FILE_PROPOSAL_CONTENT_BYTES,
   MAX_PARTNER_FILE_PROPOSAL_DIFF_BYTES,
   type PartnerFileProposalOperationT,

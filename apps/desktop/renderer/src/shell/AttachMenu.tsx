@@ -24,6 +24,8 @@ interface AttachMenuProps {
   onAddFiles: () => void;
   onAddFolder: () => void;
   onInsertText: (text: string) => void;
+  /** Opens directly into a low-frequency picker while preserving the shared discovery path. */
+  initialSub?: 'root' | 'skills';
 }
 
 const SLASH_COMMANDS: readonly { cmd: string; descKey: MessageKey }[] = [
@@ -41,6 +43,7 @@ export function AttachMenu({
   onAddFiles,
   onAddFolder,
   onInsertText,
+  initialSub = 'root',
 }: AttachMenuProps): JSX.Element | null {
   const { t } = useI18n();
   const currentProjectPath = useAppStore((s) => s.currentProjectPath);
@@ -61,13 +64,40 @@ export function AttachMenu({
     }
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
-        if (sub === 'root') onClose();
+        if (sub === 'root' || initialSub === 'skills') onClose();
         else setSub('root');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, sub]);
+  }, [initialSub, open, onClose, sub]);
+
+  useEffect(() => {
+    if (!open || initialSub !== 'skills') return;
+    let alive = true;
+    setSub('skills');
+    setDiscoverErr(null);
+    if (!currentProjectPath) {
+      setDiscoverErr(t('attach.openProjectForSkills'));
+      return;
+    }
+    if (!window.kodaxSpace) {
+      setDiscoverErr(t('attach.loadSkillsFailed'));
+      return;
+    }
+    void Promise.all([
+      window.kodaxSpace.invoke('skill.discover', { projectRoot: currentProjectPath }),
+      window.kodaxSpace.invoke('slash.discover', undefined),
+    ]).then(([skillsResult, commandsResult]) => {
+      if (!alive) return;
+      setSlashCommands(commandsResult.ok ? commandsResult.data.commands : []);
+      if (skillsResult.ok) setSkills(skillsResult.data.skills);
+      else setDiscoverErr(skillsResult.error?.message ?? t('attach.loadSkillsFailed'));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [currentProjectPath, initialSub, open, t]);
 
   if (!open) return null;
 
@@ -102,9 +132,13 @@ export function AttachMenu({
   }
 
   async function loadSkills(): Promise<void> {
-    if (!window.kodaxSpace) return;
     if (!currentProjectPath) {
       setDiscoverErr(t('attach.openProjectForSkills'));
+      setSub('skills');
+      return;
+    }
+    if (!window.kodaxSpace) {
+      setDiscoverErr(t('attach.loadSkillsFailed'));
       setSub('skills');
       return;
     }
@@ -173,7 +207,10 @@ export function AttachMenu({
 
   if (sub === 'skills') {
     return (
-      <SubMenuFrame title={t('attach.skills')} onBack={() => setSub('root')}>
+      <SubMenuFrame
+        title={t('attach.skills')}
+        onBack={initialSub === 'skills' ? onClose : () => setSub('root')}
+      >
         {discoverErr && <div className="px-3 py-1 text-[11px] text-warn">{discoverErr}</div>}
         {skills === null && !discoverErr && (
           <div className="px-3 py-1 text-[11px] text-fg-muted">{t('attach.loading')}</div>

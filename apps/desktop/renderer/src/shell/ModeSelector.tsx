@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AutoModeEngine, PermissionMode } from '@kodax-space/space-ipc-schema';
 import { useAppStore } from '../store/appStore.js';
+import { useSurfaceStore } from '../store/surface.js';
 import { pushToast } from '../store/toastStore.js';
 import { useI18n } from '../i18n/I18nProvider.js';
 import type { MessageKey } from '../i18n/messages.js';
@@ -88,6 +89,7 @@ function mutationStateFor<T>(
 
 export function ModeSelector(): JSX.Element {
   const { t } = useI18n();
+  const currentSurface = useSurfaceStore((s) => s.currentSurface);
   const sessions = useAppStore((s) => s.sessions);
   const currentSessionId = useAppStore((s) => s.currentSessionId);
   const upsertSession = useAppStore((s) => s.upsertSession);
@@ -321,7 +323,16 @@ export function ModeSelector(): JSX.Element {
       : t(MODE_LABEL_KEYS[current]);
   // 无 session 时这个选择会直接用于即将创建的会话，所以仍显示普通模式名；
   // 附加“(next) / 下次”会让用户误以为它不会对即将发送的首条消息生效。
-  const statusLabel = baseLabel;
+  const partnerModeLabel =
+    current === 'plan'
+      ? t('partner.permissionMode.plan')
+      : current === 'accept-edits'
+        ? t('partner.permissionMode.acceptEdits')
+        : t('partner.permissionMode.auto');
+  const statusLabel =
+    currentSurface === 'partner'
+      ? t('partner.permissionMode.status', { mode: partnerModeLabel })
+      : baseLabel;
 
   return (
     <div className="relative">
@@ -329,12 +340,18 @@ export function ModeSelector(): JSX.Element {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="text-xs px-2 py-0.5 rounded bg-surface-2 border border-border-default text-fg-secondary hover:bg-hover-bg flex items-center gap-1"
-        title={t('mode.buttonTitle', { status: statusLabel })}
+        title={
+          currentSurface === 'partner'
+            ? t('partner.permissionMode.buttonTitle', { mode: partnerModeLabel })
+            : t('mode.buttonTitle', { status: statusLabel })
+        }
       >
         <span>{statusLabel}</span>
-        <span className="text-fg-muted" aria-hidden>
-          +
-        </span>
+        {currentSurface !== 'partner' && (
+          <span className="text-fg-muted" aria-hidden>
+            +
+          </span>
+        )}
       </button>
 
       {open && (
@@ -343,7 +360,9 @@ export function ModeSelector(): JSX.Element {
           onMouseLeave={() => setOpen(false)}
         >
           <div className="px-3 py-1 flex justify-between items-center text-fg-muted text-[11px] uppercase tracking-wider">
-            <span>{t('mode.header')}</span>
+            <span>
+              {currentSurface === 'partner' ? t('partner.permissionMode.header') : t('mode.header')}
+            </span>
             <span className="font-mono text-fg-muted flex items-center gap-1">
               <kbd className="px-1 border border-border-strong rounded">Ctrl</kbd>
               <kbd className="px-1 border border-border-strong rounded">M</kbd>
@@ -357,9 +376,29 @@ export function ModeSelector(): JSX.Element {
               className={`w-full text-left px-3 py-1 hover:bg-hover-bg flex items-center gap-2 ${
                 current === m ? 'text-fg-primary' : 'text-fg-secondary'
               }`}
-              title={t(MODE_DESCRIPTION_KEYS[m])}
+              title={
+                currentSurface === 'partner'
+                  ? t(
+                      m === 'plan'
+                        ? 'partner.permissionMode.description.plan'
+                        : m === 'accept-edits'
+                          ? 'partner.permissionMode.description.acceptEdits'
+                          : 'partner.permissionMode.description.auto',
+                    )
+                  : t(MODE_DESCRIPTION_KEYS[m])
+              }
             >
-              <span className="flex-1">{t(MODE_LABEL_KEYS[m])}</span>
+              <span className="flex-1">
+                {currentSurface === 'partner'
+                  ? t(
+                      m === 'plan'
+                        ? 'partner.permissionMode.plan'
+                        : m === 'accept-edits'
+                          ? 'partner.permissionMode.acceptEdits'
+                          : 'partner.permissionMode.auto',
+                    )
+                  : t(MODE_LABEL_KEYS[m])}
+              </span>
               {current === m && (
                 <span className="text-ok" aria-hidden>
                   ✓
@@ -397,7 +436,7 @@ export function ModeSelector(): JSX.Element {
 
           {/* 底部说明：Space Auto = KodaX guardrail；Claude Desktop "Bypass" 没有 1:1 对应 */}
           <div className="border-t border-border-default mt-1 pt-1 px-3 py-1 text-[11px] text-fg-muted leading-tight">
-            {t('mode.footer')}
+            {currentSurface === 'partner' ? t('partner.permissionMode.footer') : t('mode.footer')}
           </div>
         </div>
       )}

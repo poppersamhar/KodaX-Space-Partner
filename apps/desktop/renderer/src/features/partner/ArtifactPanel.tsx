@@ -1,10 +1,4 @@
-// ArtifactPanel — Partner 三栏之右栏：产物（artifact）。F059 / F059b。
-//
-// 仅是 Partner 右栏的外壳（aside + 标题）；artifact 展示主体抽到共享 `ArtifactsView`
-// （features/artifact），Coder 的 RightSidebar Artifact section + 全屏 popout 复用同一主体，
-// 让 artifact 真正全局（Coder+Partner）。
-
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ArchiveRestore, FileCheck2, FileOutput, FileSearch } from 'lucide-react';
 import { ArtifactsView } from '../artifact/ArtifactsView';
 import {
@@ -21,44 +15,77 @@ import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
 import { FileProposalsPanel } from './FileProposalsPanel.js';
 import { DeliveriesPanel } from './DeliveriesPanel.js';
+import type { PartnerResultSelectionRequest } from './partnerResultRail.js';
+import { handleTablistKeyDown } from './tablistKeyboard.js';
 
-export function ArtifactPanel(): JSX.Element {
+type Destination = 'results' | 'pendingReview';
+type ResultView = 'artifacts' | 'fileViewer' | 'files';
+
+interface ArtifactPanelProps {
+  readonly selectionRequest?: PartnerResultSelectionRequest | null;
+}
+
+export function ArtifactPanel({ selectionRequest = null }: ArtifactPanelProps): JSX.Element {
   const { t } = useI18n();
   const currentProjectPath = useAppStore((state) => state.currentProjectPath);
   const currentSessionId = useAppStore((state) => state.currentSessionId);
-  const [activeTab, setActiveTab] = useState<
-    'artifacts' | 'fileViewer' | 'deliveries' | 'fileProposals'
-  >('artifacts');
+  const [activeDestination, setActiveDestination] = useState<Destination>('results');
+  const [activeResultView, setActiveResultView] = useState<ResultView>('artifacts');
   const [fileViewerSnapshot, setFileViewerSnapshot] = useState<TransientArtifactSnapshot | null>(
     null,
   );
+  const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null);
+  const [focusedArtifactSnapshot, setFocusedArtifactSnapshot] =
+    useState<TransientArtifactSnapshot | null>(null);
+
   useEffect(() => {
     const showFocusedArtifact = (event: Event): void => {
       const detail = (event as CustomEvent<FocusArtifactEventDetail>).detail;
+      setActiveDestination('results');
       if (isFileViewerSnapshot(detail?.snapshot)) {
         setFileViewerSnapshot(detail.snapshot ?? null);
-        setActiveTab('fileViewer');
+        setActiveResultView('fileViewer');
         return;
       }
-      setActiveTab('artifacts');
+      setFocusedArtifactId(detail?.id ?? detail?.snapshot?.id ?? null);
+      setFocusedArtifactSnapshot(detail?.snapshot ?? null);
+      setActiveResultView('artifacts');
     };
     window.addEventListener(FOCUS_ARTIFACT_EVENT, showFocusedArtifact);
     return () => window.removeEventListener(FOCUS_ARTIFACT_EVENT, showFocusedArtifact);
   }, []);
+
   useEffect(() => {
     const showFileViewer = (event: Event): void => {
       const detail = (event as CustomEvent<OpenFileViewerEventDetail>).detail;
       if (!isFileViewerSnapshot(detail?.snapshot)) return;
       setFileViewerSnapshot(detail.snapshot);
-      setActiveTab('fileViewer');
+      setActiveDestination('results');
+      setActiveResultView('fileViewer');
     };
     window.addEventListener(OPEN_FILE_VIEWER_EVENT, showFileViewer);
     return () => window.removeEventListener(OPEN_FILE_VIEWER_EVENT, showFileViewer);
   }, []);
+
+  useEffect(() => {
+    const selection = selectionRequest?.selection;
+    if (!selection) return;
+    setActiveDestination(selection.destination);
+    if (selection.destination === 'results') setActiveResultView(selection.view);
+  }, [selectionRequest]);
+
   useEffect(() => {
     setFileViewerSnapshot(null);
-    setActiveTab((current) => (current === 'fileViewer' ? 'artifacts' : current));
+    setFocusedArtifactId(null);
+    setFocusedArtifactSnapshot(null);
+    setActiveResultView((current) => (current === 'fileViewer' ? 'artifacts' : current));
   }, [currentProjectPath]);
+
+  useEffect(() => {
+    setFocusedArtifactId(null);
+    setFocusedArtifactSnapshot(null);
+  }, [currentSessionId]);
+
   useEffect(() => {
     if (
       fileViewerSnapshot?.source !== 'session-attachment-preview' ||
@@ -67,100 +94,193 @@ export function ArtifactPanel(): JSX.Element {
       return;
     }
     setFileViewerSnapshot(null);
-    setActiveTab((current) => (current === 'fileViewer' ? 'artifacts' : current));
+    setActiveResultView((current) => (current === 'fileViewer' ? 'artifacts' : current));
   }, [currentSessionId, fileViewerSnapshot]);
+
   useEffect(() => {
+    if (selectionRequest) return;
     const snapshot = getLastOpenedFileViewerSnapshot(currentProjectPath, currentSessionId);
     if (!snapshot) return;
     setFileViewerSnapshot(snapshot);
-    setActiveTab('fileViewer');
-  }, [currentProjectPath, currentSessionId]);
+    setActiveDestination('results');
+    setActiveResultView('fileViewer');
+  }, [currentProjectPath, currentSessionId, selectionRequest]);
+
   return (
     <aside
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface"
       data-testid="partner-artifact-panel"
     >
-      <div className="px-3 h-9 flex items-center gap-2 border-b border-border-default flex-shrink-0">
-        <div className="flex min-w-0 items-center gap-1 rounded bg-surface-2 p-0.5">
-          <button
-            type="button"
-            onClick={() => setActiveTab('artifacts')}
-            className={`h-6 inline-flex items-center gap-1 rounded px-1.5 text-[11px] ${
-              activeTab === 'artifacts'
-                ? 'bg-surface-raised text-fg-primary'
-                : 'text-fg-muted hover:bg-hover-bg hover:text-fg-primary'
-            }`}
-            title={t('partner.fileProposals.tab.artifacts')}
-            aria-label={t('partner.fileProposals.tab.artifacts')}
-            aria-pressed={activeTab === 'artifacts'}
+      <div className="h-9 flex-shrink-0 border-b border-border-default px-3 flex items-center">
+        <div
+          className="flex min-w-0 items-center gap-1 rounded bg-surface-2 p-0.5"
+          role="tablist"
+          aria-label={t('partner.results.destinations')}
+          onKeyDown={handleTablistKeyDown}
+          data-testid="partner-result-destinations"
+        >
+          <RailTab
+            id="partner-results-tab"
+            controls="partner-results-panel"
+            active={activeDestination === 'results'}
+            onClick={() => setActiveDestination('results')}
+            icon={<FileOutput className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
+            testId="partner-results-tab"
           >
-            <FileOutput className="w-3.5 h-3.5" strokeWidth={1.75} aria-hidden />
-            <span>{t('partner.fileProposals.tab.artifacts')}</span>
-          </button>
-          {fileViewerSnapshot && (
-            <button
-              type="button"
-              onClick={() => setActiveTab('fileViewer')}
-              className={`h-6 inline-flex items-center gap-1 rounded px-1.5 text-[11px] ${
-                activeTab === 'fileViewer'
-                  ? 'bg-surface-raised text-fg-primary'
-                  : 'text-fg-muted hover:bg-hover-bg hover:text-fg-primary'
-              }`}
-              title={t('partner.fileViewer.tab')}
-              aria-label={t('partner.fileViewer.tab')}
-              aria-pressed={activeTab === 'fileViewer'}
-              data-testid="partner-file-viewer-tab"
-            >
-              <FileSearch className="w-3.5 h-3.5" strokeWidth={1.75} aria-hidden />
-              <span>{t('partner.fileViewer.tab')}</span>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setActiveTab('fileProposals')}
-            className={`h-6 inline-flex items-center gap-1 rounded px-1.5 text-[11px] ${
-              activeTab === 'fileProposals'
-                ? 'bg-surface-raised text-fg-primary'
-                : 'text-fg-muted hover:bg-hover-bg hover:text-fg-primary'
-            }`}
-            title={t('partner.fileProposals.tab.files')}
-            aria-label={t('partner.fileProposals.tab.files')}
-            aria-pressed={activeTab === 'fileProposals'}
-            data-testid="partner-file-proposals-tab"
+            {t('partner.results.tab.results')}
+          </RailTab>
+          <RailTab
+            id="partner-pending-review-tab"
+            controls="partner-pending-review-panel"
+            active={activeDestination === 'pendingReview'}
+            onClick={() => setActiveDestination('pendingReview')}
+            icon={<FileCheck2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
+            testId="partner-pending-review-tab"
           >
-            <FileCheck2 className="w-3.5 h-3.5" strokeWidth={1.75} aria-hidden />
-            <span>{t('partner.fileProposals.tab.files')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('deliveries')}
-            className={`h-6 inline-flex items-center gap-1 rounded px-1.5 text-[11px] ${
-              activeTab === 'deliveries'
-                ? 'bg-surface-raised text-fg-primary'
-                : 'text-fg-muted hover:bg-hover-bg hover:text-fg-primary'
-            }`}
-            title={t('partner.fileProposals.tab.deliveries')}
-            aria-label={t('partner.fileProposals.tab.deliveries')}
-            aria-pressed={activeTab === 'deliveries'}
-            data-testid="partner-deliveries-tab"
-          >
-            <ArchiveRestore className="w-3.5 h-3.5" strokeWidth={1.75} aria-hidden />
-            <span>{t('partner.fileProposals.tab.deliveries')}</span>
-          </button>
+            {t('partner.results.tab.pendingReview')}
+          </RailTab>
         </div>
       </div>
-      {/* ArtifactsView 根用 h-full：需一个有界高度的 flex 子容器（aside 满高减去 header）。 */}
-      <div className="flex-1 min-h-0">
-        {activeTab === 'fileViewer' && fileViewerSnapshot ? (
-          <FileViewer snapshot={fileViewerSnapshot} onSnapshotChange={setFileViewerSnapshot} />
-        ) : activeTab === 'artifacts' ? (
-          <ArtifactsView />
-        ) : activeTab === 'fileProposals' ? (
+
+      {activeDestination === 'results' ? (
+        <div
+          id="partner-results-panel"
+          role="tabpanel"
+          aria-labelledby="partner-results-tab"
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="h-8 flex-shrink-0 border-b border-border-default px-3 flex items-center">
+            <div
+              className="flex min-w-0 items-center gap-1"
+              role="tablist"
+              aria-label={t('partner.results.views')}
+              onKeyDown={handleTablistKeyDown}
+            >
+              <RailTab
+                id="partner-results-artifacts-tab"
+                controls="partner-results-artifacts-panel"
+                active={activeResultView === 'artifacts'}
+                onClick={() => setActiveResultView('artifacts')}
+                testId="partner-results-artifacts-tab"
+              >
+                {t('partner.results.view.artifacts')}
+              </RailTab>
+              <RailTab
+                id="partner-results-files-tab"
+                controls="partner-results-files-panel"
+                active={activeResultView === 'files'}
+                onClick={() => setActiveResultView('files')}
+                icon={<ArchiveRestore className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
+                testId="partner-results-files-tab"
+              >
+                {t('partner.results.view.files')}
+              </RailTab>
+              {fileViewerSnapshot && (
+                <RailTab
+                  id="partner-file-viewer-tab"
+                  controls="partner-file-viewer-panel"
+                  active={activeResultView === 'fileViewer'}
+                  onClick={() => setActiveResultView('fileViewer')}
+                  icon={<FileSearch className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
+                  testId="partner-file-viewer-tab"
+                >
+                  {t('partner.fileViewer.tab')}
+                </RailTab>
+              )}
+            </div>
+          </div>
+
+          {activeResultView === 'fileViewer' && fileViewerSnapshot ? (
+            <div
+              id="partner-file-viewer-panel"
+              role="tabpanel"
+              aria-labelledby="partner-file-viewer-tab"
+              className="min-h-0 flex-1"
+            >
+              <FileViewer snapshot={fileViewerSnapshot} onSnapshotChange={setFileViewerSnapshot} />
+            </div>
+          ) : activeResultView === 'artifacts' ? (
+            <div
+              id="partner-results-artifacts-panel"
+              role="tabpanel"
+              aria-labelledby="partner-results-artifacts-tab"
+              className="min-h-0 flex-1"
+            >
+              <ArtifactsView
+                focusedId={focusedArtifactId}
+                focusedSnapshot={focusedArtifactSnapshot}
+              />
+            </div>
+          ) : (
+            <div
+              id="partner-results-files-panel"
+              role="tabpanel"
+              aria-labelledby="partner-results-files-tab"
+              className="min-h-0 flex-1"
+            >
+              <DeliveriesPanel
+                selectionRequest={
+                  selectionRequest?.selection.destination === 'results' &&
+                  selectionRequest.selection.view === 'files'
+                    ? {
+                        revision: selectionRequest.revision,
+                        tab: selectionRequest.selection.filesView,
+                      }
+                    : null
+                }
+              />
+            </div>
+          )}
+        </div>
+      ) : (
+        <div
+          id="partner-pending-review-panel"
+          role="tabpanel"
+          aria-labelledby="partner-pending-review-tab"
+          className="min-h-0 flex-1"
+        >
           <FileProposalsPanel />
-        ) : (
-          <DeliveriesPanel />
-        )}
-      </div>
+        </div>
+      )}
     </aside>
+  );
+}
+
+function RailTab({
+  id,
+  controls,
+  active,
+  onClick,
+  icon,
+  testId,
+  children,
+}: {
+  readonly id: string;
+  readonly controls: string;
+  readonly active: boolean;
+  readonly onClick: () => void;
+  readonly icon?: ReactNode;
+  readonly testId?: string;
+  readonly children: ReactNode;
+}): JSX.Element {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="tab"
+      aria-controls={controls}
+      aria-selected={active}
+      tabIndex={active ? 0 : -1}
+      onClick={onClick}
+      className={`h-6 inline-flex items-center gap-1 rounded px-1.5 text-[11px] ${
+        active
+          ? 'bg-surface-raised text-fg-primary'
+          : 'text-fg-muted hover:bg-hover-bg hover:text-fg-primary'
+      }`}
+      data-testid={testId}
+    >
+      {icon}
+      <span>{children}</span>
+    </button>
   );
 }

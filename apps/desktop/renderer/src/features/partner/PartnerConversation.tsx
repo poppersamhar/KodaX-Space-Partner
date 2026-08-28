@@ -10,7 +10,6 @@ import { useAppStore } from '../../store/appStore.js';
 import { ConversationStreamV2 } from '../../shell/ConversationStreamV2.js';
 import { BottomBar } from '../../shell/BottomBar.js';
 import { PartnerWelcome } from './PartnerWelcome.js';
-import { PartnerWorkbenchPanel } from './PartnerWorkbenchPanel.js';
 
 export function PartnerConversation(): JSX.Element {
   const currentSessionId = useAppStore((s) => s.currentSessionId);
@@ -19,7 +18,6 @@ export function PartnerConversation(): JSX.Element {
       className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden relative"
       data-testid="partner-conversation"
     >
-      <PartnerWorkbenchPanel />
       {currentSessionId ? <ConversationStreamV2 key={currentSessionId} /> : <PartnerWelcome />}
       <BottomBar />
     </div>

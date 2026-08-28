@@ -72,6 +72,13 @@ import { pushToast } from '../store/toastStore.js';
 import { useSurfaceStore } from '../store/surface.js';
 import { PartnerWorkspace } from '../features/partner/PartnerWorkspace.js';
 import { PartnerRightSidebar } from '../features/partner/PartnerRightSidebar.js';
+import { AdminAuditPanel } from '../features/partner/AdminAuditPanel.js';
+import {
+  destinationForPartnerResultSignal,
+  isPartnerResultRailPresenceConclusive,
+  projectPartnerResultRail,
+  type PartnerResultSelectionRequest,
+} from '../features/partner/partnerResultRail.js';
 import { HandoffInbox } from './HandoffInbox.js';
 import { SettingsModal, type SettingsTab } from '../features/settings/SettingsModal.js';
 import {
@@ -262,6 +269,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   // 侧栏开/关：button 放在 breadcrumb 行最左 / 最右；侧栏关掉时 0 占位（不再 28px 竖条）
   const leftSidebarOpen = useAppStore((s) => s.leftSidebarOpen);
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
+  const currentSessionIdForPlan = useAppStore((s) => s.currentSessionId);
+  const currentProjectPathForPartnerResults = useAppStore((s) => s.currentProjectPath);
   const mascotMode = useAppStore((s) => s.mascotMode);
   const setLeftSidebarOpen = useAppStore((s) => s.setLeftSidebarOpen);
   const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen);
@@ -296,17 +305,28 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     section: null,
     nonce: 0,
   });
+  const [partnerResultRailScope, setPartnerResultRailScope] = useState<{
+    readonly sessionId: string | null;
+    readonly available: boolean;
+  }>({ sessionId: null, available: false });
+  const [partnerResultSelectionRequest, setPartnerResultSelectionRequest] =
+    useState<PartnerResultSelectionRequest | null>(null);
+  const partnerResultSelectionRevisionRef = useRef(0);
   const [viewportWidth, setViewportWidth] = useState(() => getViewportWidth());
   const leftWidth = clampSidebarWidthPx(leftWidthDraft ?? persistedLeftWidth);
+  const partnerResultRailPreferredOpenRef = useRef(readPartnerRightSidebarOpen());
   const rightSidebarOpenBySurfaceRef = useRef<Record<'code' | 'partner', boolean>>({
     code: rightSidebarOpen,
-    partner: readPartnerRightSidebarOpen(),
+    partner: partnerResultRailPreferredOpenRef.current,
   });
   const activeRightSidebarSurfaceRef = useRef<'code' | 'partner' | null>(null);
   const setRightSidebarOpenForCurrentSurface = useCallback(
     (open: boolean): void => {
       rightSidebarOpenBySurfaceRef.current[currentSurface] = open;
-      if (currentSurface === 'partner') persistPartnerRightSidebarOpen(open);
+      if (currentSurface === 'partner') {
+        partnerResultRailPreferredOpenRef.current = open;
+        persistPartnerRightSidebarOpen(open);
+      }
       setRightSidebarOpen(open);
     },
     [currentSurface, setRightSidebarOpen],
@@ -413,8 +433,15 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [currentSurface]);
 
+  const partnerResultRailAvailable =
+    currentSurface === 'partner' &&
+    partnerResultRailScope.sessionId === currentSessionIdForPlan &&
+    partnerResultRailScope.available;
   const preferredLeftSidebarVisible = leftSidebarOpen && !fullscreenRead;
-  const preferredRightSidebarVisible = rightSidebarOpen && !fullscreenRead;
+  const preferredRightSidebarVisible =
+    rightSidebarOpen &&
+    !fullscreenRead &&
+    (currentSurface === 'code' || partnerResultRailAvailable);
   const preliminaryRightSidebarHalfWidth = rightSidebarOpenWidth(
     preferredLeftSidebarVisible,
     leftWidth,
@@ -486,6 +513,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     setRightSidebarOpenForCurrentSurface,
     viewportWidth,
   ]);
+  const openRightSidebarAtDefaultWidthRef = useRef(openRightSidebarAtDefaultWidth);
+  openRightSidebarAtDefaultWidthRef.current = openRightSidebarAtDefaultWidth;
 
   const openRightSidebarAtMaxWidth = useCallback((): void => {
     pulseRightSidebarWidthSettling();
@@ -591,7 +620,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   // 右侧栏跟 KodaX 计划列表（todoListBySession）联动：plan 出现 → 自动打开；
   // plan 清空 → 自动折叠。只在 hasPlan 状态切换的瞬间动一次，中间段用户的手动 toggle 不会被打扰。
   // 首次挂载只记录状态、不覆盖 localStorage 持久化值——避免用户上次手动设置被开屏一瞬间冲掉。
-  const currentSessionIdForPlan = useAppStore((s) => s.currentSessionId);
   const currentHistoryPaging = useSessionHistoryPaging(currentSessionIdForPlan);
   const currentHistoryWarning =
     currentHistoryPaging.conversationStatus === 'partial' ||
@@ -603,6 +631,10 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     return sid
       ? (s.liveProjectionBySession[sid]?.todos.length ?? s.todoListBySession[sid]?.length ?? 0)
       : 0;
+  });
+  const transcriptArtifactCount = useAppStore((s) => {
+    const sid = s.currentSessionId;
+    return sid ? (s.transientArtifactsBySession[sid]?.length ?? 0) : 0;
   });
   const smartPopoutEnabled = useAppStore((s) => s.smartPopoutEnabled);
   const lastAutoPlanRef = useRef<{ sessionId: string | null; hasPlan: boolean } | null>(null);
@@ -642,10 +674,169 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     setRightSidebarOpenForCurrentSurface,
   ]);
 
+  useEffect(() => {
+    if (currentSurface !== 'partner') return;
+
+    const sessionId = currentSessionIdForPlan;
+    const projectRoot = currentProjectPathForPartnerResults;
+    let alive = true;
+    let loadSequence = 0;
+
+    setPartnerResultRailScope({ sessionId, available: false });
+    setPartnerResultSelectionRequest(null);
+    rightSidebarOpenBySurfaceRef.current.partner = false;
+    setRightSidebarOpen(false);
+
+    const bridge = window.kodaxSpace;
+    if (!bridge || !sessionId || !projectRoot) return;
+
+    const selected = { sessionId, projectRoot };
+    const loadPresence = async (preferredOpen: () => boolean): Promise<void> => {
+      const requestSequence = ++loadSequence;
+      try {
+        const [artifactsSettled, deliveriesSettled, proposalsSettled] = await Promise.allSettled([
+          bridge.invoke('artifact.list', { sessionId }),
+          bridge.invoke('partner.deliveries.list', { sessionId, projectRoot }),
+          bridge.invoke('partner.fileProposals.list', {
+            sessionId,
+            projectRoot,
+          }),
+        ]);
+        if (!alive || requestSequence !== loadSequence) return;
+        const artifactsResult =
+          artifactsSettled.status === 'fulfilled' ? artifactsSettled.value : null;
+        const deliveriesResult =
+          deliveriesSettled.status === 'fulfilled' ? deliveriesSettled.value : null;
+        const proposalsResult =
+          proposalsSettled.status === 'fulfilled' ? proposalsSettled.value : null;
+        const successfulResultCount = [
+          artifactsResult?.ok === true,
+          deliveriesResult?.ok === true,
+          proposalsResult?.ok === true,
+        ].filter(Boolean).length;
+        const transcriptCount =
+          useAppStore.getState().transientArtifactsBySession[sessionId]?.length ?? 0;
+        const presence = {
+          artifactCount:
+            (artifactsResult?.ok ? artifactsResult.data.artifacts.length : 0) + transcriptCount,
+          deliveryCount: deliveriesResult?.ok ? deliveriesResult.data.deliveries.length : 0,
+          fileProposalCount: proposalsResult?.ok ? proposalsResult.data.proposals.length : 0,
+        };
+        if (!isPartnerResultRailPresenceConclusive(presence, successfulResultCount)) return;
+        const next = projectPartnerResultRail(presence, preferredOpen());
+        setPartnerResultRailScope({ sessionId, available: next.available });
+        rightSidebarOpenBySurfaceRef.current.partner = next.open;
+        setRightSidebarOpen(next.open);
+      } catch (error) {
+        if (alive && requestSequence === loadSequence) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[partner-result-rail] failed to inspect result presence: ${message}`);
+        }
+      }
+    };
+
+    const refreshPresence = (): void => {
+      void loadPresence(() => useAppStore.getState().rightSidebarOpen);
+    };
+    const reveal = (): void => {
+      setPartnerResultRailScope({ sessionId, available: true });
+      openRightSidebarAtDefaultWidthRef.current();
+    };
+    const revealForSignal = (
+      signal: Parameters<typeof destinationForPartnerResultSignal>[1],
+    ): void => {
+      const selection = destinationForPartnerResultSignal(selected, signal);
+      if (!selection) return;
+      setPartnerResultSelectionRequest({
+        revision: ++partnerResultSelectionRevisionRef.current,
+        selection,
+      });
+      reveal();
+    };
+
+    void loadPresence(() => partnerResultRailPreferredOpenRef.current);
+    const offArtifacts = bridge.on('artifact.changed', (payload) => {
+      revealForSignal({
+        source: 'artifact',
+        sessionId: payload.sessionId,
+        reason: payload.reason,
+      });
+      if (payload.sessionId === undefined || payload.sessionId === sessionId) refreshPresence();
+    });
+    const offDeliveries = bridge.on('partner.deliveries.changed', (payload) => {
+      if (payload.sessionId !== sessionId) return;
+      revealForSignal({
+        source: 'delivery',
+        sessionId: payload.sessionId,
+        reason: payload.reason,
+      });
+      refreshPresence();
+    });
+    const offProposals = bridge.on('partner.fileProposals.changed', (payload) => {
+      if (payload.sessionId !== sessionId || payload.projectRoot !== projectRoot) return;
+      revealForSignal({
+        source: 'file-proposal',
+        sessionId: payload.sessionId,
+        projectRoot: payload.projectRoot,
+        status: payload.status,
+        reason: payload.reason,
+      });
+      refreshPresence();
+    });
+    return () => {
+      alive = false;
+      offArtifacts();
+      offDeliveries();
+      offProposals();
+    };
+  }, [
+    currentProjectPathForPartnerResults,
+    currentSessionIdForPlan,
+    currentSurface,
+    setRightSidebarOpen,
+  ]);
+
+  const lastTranscriptArtifactCountRef = useRef<{
+    readonly sessionId: string | null;
+    readonly count: number;
+  } | null>(null);
+  useEffect(() => {
+    const previous = lastTranscriptArtifactCountRef.current;
+    lastTranscriptArtifactCountRef.current = {
+      sessionId: currentSessionIdForPlan,
+      count: transcriptArtifactCount,
+    };
+    if (
+      currentSurface !== 'partner' ||
+      currentSessionIdForPlan === null ||
+      previous === null ||
+      previous.sessionId !== currentSessionIdForPlan ||
+      previous.count > 0 ||
+      transcriptArtifactCount === 0
+    ) {
+      return;
+    }
+    setPartnerResultRailScope({ sessionId: currentSessionIdForPlan, available: true });
+    openRightSidebarAtDefaultWidth();
+  }, [
+    currentSessionIdForPlan,
+    currentSurface,
+    openRightSidebarAtDefaultWidth,
+    transcriptArtifactCount,
+  ]);
+
   // F059c: 对话里点 artifact 卡片 → 若右侧栏关着先打开它（RightSidebar 内部再切到 Artifact
   // tab + 选中）。否则点了卡片"什么都没发生"。
   useEffect(() => {
     const onFocus = (): void => {
+      if (currentSurface === 'partner') {
+        setPartnerResultRailScope({
+          sessionId: currentSessionIdForPlan,
+          available: true,
+        });
+        openRightSidebarAtDefaultWidth();
+        return;
+      }
       openRightSidebarAtBalancedWidth();
     };
     window.addEventListener('kodax-space.focus-artifact', onFocus);
@@ -654,7 +845,12 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       window.removeEventListener('kodax-space.focus-artifact', onFocus);
       window.removeEventListener('kodax-space.open-file-viewer', onFocus);
     };
-  }, [openRightSidebarAtBalancedWidth]);
+  }, [
+    currentSessionIdForPlan,
+    currentSurface,
+    openRightSidebarAtBalancedWidth,
+    openRightSidebarAtDefaultWidth,
+  ]);
 
   useEffect(() => {
     const onOpenFilesWorkspace = (): void => {
@@ -867,6 +1063,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       viewportWidth,
     ) >= CODER_MIN_CENTER_PX;
   const toggleRightSidebar = useCallback((): void => {
+    if (currentSurface === 'partner' && !partnerResultRailAvailable) return;
     if (fullscreenRead) setFullscreenRead(false);
     const action = resolveRightSidebarToggleAction(
       rightSidebarVisible,
@@ -877,9 +1074,11 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     else if (action === 'open-balanced') openRightSidebarAtBalancedWidth();
     else openRightSidebarAtDefaultWidth();
   }, [
+    currentSurface,
     fullscreenRead,
     openRightSidebarAtBalancedWidth,
     openRightSidebarAtDefaultWidth,
+    partnerResultRailAvailable,
     rightSidebarDefaultWidthFits,
     rightSidebarOpen,
     rightSidebarVisible,
@@ -918,6 +1117,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         <AppTopMenu
           leftSidebarOpen={leftSidebarVisible}
           rightSidebarOpen={rightSidebarVisible}
+          rightSidebarAvailable={currentSurface === 'code' || partnerResultRailAvailable}
+          showHistoryNavigation={currentSurface === 'code'}
           focusMode={fullscreenRead}
           diagnosticsOpen={diagnosticsOpen}
           onToggleLeftSidebar={toggleLeftSidebar}
@@ -1006,6 +1207,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
           // （项目 / session / SurfaceTabs），两 surface 共用；右侧栏外壳也由 Shell 统一托管。
           <PartnerWorkspace
             rightSidebarOpen={rightSidebarVisible}
+            rightSidebarAvailable={partnerResultRailAvailable}
             workspaceMode={rightSidebarWorkspaceMode}
             onToggleRightSidebar={toggleRightSidebar}
           />
@@ -1102,8 +1304,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
               <PartnerRightSidebar
                 width={rightWidth}
                 widthMode={rightSidebarWidthMode}
-                onDefaultWidth={openRightSidebarAtDefaultWidth}
-                onHalfWidth={openRightSidebarAtBalancedWidth}
+                selectionRequest={partnerResultSelectionRequest}
+                onRestoreWidth={openRightSidebarAtDefaultWidth}
                 onMaxWidth={openRightSidebarAtMaxWidth}
                 onClose={() => setRightSidebarOpenForCurrentSurface(false)}
               />
@@ -1169,6 +1371,8 @@ type AppMenuId = 'file' | 'edit' | 'view' | 'help';
 interface AppTopMenuProps {
   readonly leftSidebarOpen: boolean;
   readonly rightSidebarOpen: boolean;
+  readonly rightSidebarAvailable: boolean;
+  readonly showHistoryNavigation: boolean;
   readonly focusMode: boolean;
   readonly diagnosticsOpen: boolean;
   readonly onToggleLeftSidebar: () => void;
@@ -1218,6 +1422,8 @@ function isEditableTarget(target: EventTarget | null): target is HTMLElement {
 function AppTopMenu({
   leftSidebarOpen,
   rightSidebarOpen,
+  rightSidebarAvailable,
+  showHistoryNavigation,
   focusMode,
   diagnosticsOpen,
   onToggleLeftSidebar,
@@ -1417,6 +1623,7 @@ function AppTopMenu({
           id: 'right-sidebar',
           label: t('menu.view.rightSidebar'),
           checked: rightSidebarOpen,
+          disabled: !rightSidebarAvailable,
           onSelect: onToggleRightSidebar,
         },
         {
@@ -1528,12 +1735,16 @@ function AppTopMenu({
       >
         <PanelLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
       </TitlebarIconButton>
-      <TitlebarIconButton label={t('menu.nav.back')} disabled onClick={() => undefined}>
-        <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-      </TitlebarIconButton>
-      <TitlebarIconButton label={t('menu.nav.forward')} disabled onClick={() => undefined}>
-        <ArrowRight className="h-4 w-4" strokeWidth={1.75} aria-hidden />
-      </TitlebarIconButton>
+      {showHistoryNavigation && (
+        <>
+          <TitlebarIconButton label={t('menu.nav.back')} disabled onClick={() => undefined}>
+            <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </TitlebarIconButton>
+          <TitlebarIconButton label={t('menu.nav.forward')} disabled onClick={() => undefined}>
+            <ArrowRight className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+          </TitlebarIconButton>
+        </>
+      )}
       <div className="mx-1 h-4 w-px bg-border-default/70" aria-hidden />
 
       {menus.map((menu) => (
@@ -1786,6 +1997,7 @@ function RuntimeDiagnostics({
   onClose,
 }: RuntimeDiagnosticsProps): JSX.Element {
   const { t } = useI18n();
+  const currentSurface = useSurfaceStore((state) => state.currentSurface);
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return;
@@ -1859,6 +2071,11 @@ function RuntimeDiagnostics({
           </div>
         )}
       </div>
+      {currentSurface === 'partner' && (
+        <div className="mt-2 max-h-48 overflow-auto rounded-md border border-border-default bg-surface-2">
+          <AdminAuditPanel />
+        </div>
+      )}
     </div>
   );
 }

@@ -42,9 +42,13 @@ function resolveViteBin() {
 }
 const VITE_BIN = resolveViteBin();
 
-const VITE_URL = 'http://127.0.0.1:5173';
 const VITE_HOST = '127.0.0.1';
-const VITE_PORT = 5173;
+const VITE_PORT = Number.parseInt(process.env.KODAX_SPACE_DEV_PORT ?? '5173', 10);
+if (!Number.isInteger(VITE_PORT) || VITE_PORT < 1 || VITE_PORT > 65_535) {
+  console.error('[dev] KODAX_SPACE_DEV_PORT must be an integer between 1 and 65535.');
+  process.exit(1);
+}
+const VITE_URL = `http://${VITE_HOST}:${VITE_PORT}`;
 const procs = [];
 let shuttingDown = false;
 
@@ -133,7 +137,11 @@ function killTree(pid) {
       process.kill(-pid, 'SIGTERM'); // POSIX: kill 进程组
     } catch {
       // 没分组就单杀
-      try { process.kill(pid, 'SIGTERM'); } catch { /* gone already */ }
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* gone already */
+      }
     }
   }
 }
@@ -155,12 +163,16 @@ process.on('SIGTERM', () => shutdown(0));
 // keep alive; dev no longer depends on LC being linked. The link:livecanvas
 // helper scripts are likewise dead and pending removal.)
 
-// A stale Vite process on 5173 makes wait-on succeed before this run's Vite has
+// A stale Vite process on the selected port makes wait-on succeed before this run's Vite has
 // started. Electron then opens against the stale server and the new Vite exits
 // with "Port 5173 is already in use", which presents as a blank window.
 if (await isPortOpen(VITE_HOST, VITE_PORT)) {
-  console.error(`[dev] ${VITE_URL} is already in use. Stop the stale dev server, then run npm run dev again.`);
-  console.error(`[dev] Windows helper: Get-NetTCPConnection -LocalPort ${VITE_PORT} | Select OwningProcess`);
+  console.error(
+    `[dev] ${VITE_URL} is already in use. Stop the stale dev server, then run npm run dev again.`,
+  );
+  console.error(
+    `[dev] Windows helper: Get-NetTCPConnection -LocalPort ${VITE_PORT} | Select OwningProcess`,
+  );
   process.exit(1);
 }
 
@@ -180,7 +192,13 @@ try {
 
 // 1. Vite dev server —— 直接 node 跑 vite.js，cwd=apps/desktop（等价 `npm run dev -w
 //    @kodax-space/desktop`，vite 从该 cwd 解析 vite.config）。去掉 npm 包装层，proc.pid 即 vite。
-const viteProc = spawnProc('vite', NODE, [VITE_BIN], {}, { cwd: APPS_DESKTOP });
+const viteProc = spawnProc(
+  'vite',
+  NODE,
+  [VITE_BIN, '--host', VITE_HOST, '--port', String(VITE_PORT)],
+  {},
+  { cwd: APPS_DESKTOP },
+);
 
 // 2. esbuild watch —— 直接 node 跑 build-main。显式传 NODE_ENV=development，让 build-main 出带
 //    sourcemap 的 dev 产物（build-main 默认 production，不靠外层 shell；dev 体验靠这里显式开启）。

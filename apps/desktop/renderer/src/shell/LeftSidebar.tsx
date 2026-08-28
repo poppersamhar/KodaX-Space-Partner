@@ -49,6 +49,7 @@ import {
   type SessionLoadPhase,
   type SessionLoadStateByScope,
 } from './sidebarSessionLoading.js';
+import { projectShellChrome } from './shellChromeProjection.js';
 
 interface LeftSidebarProps {
   /** 2026-06: 动态宽度（px）。Shell 拖 ResizeHandle 实时改这个值。 */
@@ -72,6 +73,7 @@ export function LeftSidebar({
   const currentProjectPath = useAppStore((s) => s.currentProjectPath);
   // F045: 当前工作面（Coder / Partner）。session 列表按 surface 分面——切 surface 重新拉。
   const currentSurface = useSurfaceStore((s) => s.currentSurface);
+  const shellChrome = projectShellChrome(currentSurface);
   const visibleSessions = useMemo(
     () => sessions.filter((s) => (s.surface ?? 'code') === currentSurface),
     [sessions, currentSurface],
@@ -173,7 +175,7 @@ export function LeftSidebar({
           <Plus className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden />
           {t('sidebar.newSession')}
         </button>
-        <WorkflowNavPanel />
+        {shellChrome.showWorkflowNavigation && <WorkflowNavPanel />}
         <button
           type="button"
           onClick={handleOpenFiles}
@@ -187,7 +189,7 @@ export function LeftSidebar({
           <FolderTree className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden />
           {t('files.openProjectFiles')}
         </button>
-        <FutureFeaturesDisclosure />
+        {shellChrome.showFutureFeatures && <FutureFeaturesDisclosure />}
       </div>
 
       {/* F017 Running peers — 其他 KodaX 进程（CLI / 别的 Space 窗口）当前活动的 session。
@@ -1101,34 +1103,38 @@ function SessionRow({
                 title={t('session.deleting')}
               />
             ) : status === 'running' ? (
-          <span className="sidebar-status-spinner" aria-hidden title={statusLabel ?? undefined} />
-        ) : (
-          <>
-            {flags?.unread && (
               <span
-                className="h-1.5 w-1.5 rounded-full bg-ok shadow-[0_0_0_2px_rgb(var(--ok)/0.12)]"
-                aria-label={t('sidebar.status.unread')}
-                title={t('sidebar.status.unread')}
-              />
-            )}
-            {status === 'awaiting' && statusLabel && (
-              <SessionAwaitingIndicator label={statusLabel} />
-            )}
-            {status === 'error' && (
-              <span
-                className="h-1.5 w-1.5 rounded-full bg-danger"
-                aria-label={statusLabel ?? undefined}
+                className="sidebar-status-spinner"
+                aria-hidden
                 title={statusLabel ?? undefined}
               />
+            ) : (
+              <>
+                {flags?.unread && (
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-ok shadow-[0_0_0_2px_rgb(var(--ok)/0.12)]"
+                    aria-label={t('sidebar.status.unread')}
+                    title={t('sidebar.status.unread')}
+                  />
+                )}
+                {status === 'awaiting' && statusLabel && (
+                  <SessionAwaitingIndicator label={statusLabel} />
+                )}
+                {status === 'error' && (
+                  <span
+                    className="h-1.5 w-1.5 rounded-full bg-danger"
+                    aria-label={statusLabel ?? undefined}
+                    title={statusLabel ?? undefined}
+                  />
+                )}
+                {flags?.pinned && (
+                  <span aria-label={t('sidebar.status.pinned')} title={t('sidebar.status.pinned')}>
+                    <Pin className="h-3 w-3 text-fg-muted" strokeWidth={1.9} aria-hidden />
+                  </span>
+                )}
+                <span className="tnum min-w-[2.15rem] text-right leading-none">{timeLabel}</span>
+              </>
             )}
-            {flags?.pinned && (
-              <span aria-label={t('sidebar.status.pinned')} title={t('sidebar.status.pinned')}>
-                <Pin className="h-3 w-3 text-fg-muted" strokeWidth={1.9} aria-hidden />
-              </span>
-            )}
-            <span className="tnum min-w-[2.15rem] text-right leading-none">{timeLabel}</span>
-          </>
-        )}
           </span>
         </button>
       </div>

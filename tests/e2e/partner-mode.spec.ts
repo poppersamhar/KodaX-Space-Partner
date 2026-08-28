@@ -25,12 +25,7 @@ interface SourceListEnvelope {
   error?: { message?: string };
 }
 
-interface PartnerWorkbenchContextSnapshot {
-  readonly scenarioId?: string;
-  readonly outputPreferenceId?: string;
-  readonly sources?: Array<{ id: string; label?: string | null; path: string }>;
-  readonly pendingSources?: Array<{ label?: string | null; path: string }>;
-}
+type PartnerSourceSummary = NonNullable<NonNullable<SourceListEnvelope['data']>['sources']>[number];
 
 function sha256(content: string | Buffer): string {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`;
@@ -85,11 +80,25 @@ async function onlySessionId(page: Page, projectRoot: string, surface: Surface):
   return sessions[0].sessionId;
 }
 
+async function createPartnerSession(page: Page, projectRoot: string): Promise<string> {
+  const result = await page.evaluate(async (root) => {
+    const bridge = window.kodaxSpace;
+    if (!bridge) throw new Error('KodaX Space bridge unavailable');
+    return bridge.invoke('session.create', {
+      projectRoot: root,
+      provider: 'mock',
+      surface: 'partner',
+    });
+  }, projectRoot);
+  if (!result.ok) throw new Error(result.error.message);
+  return result.data.sessionId;
+}
+
 async function readPartnerSources(
   page: Page,
   sessionId: string,
   projectRoot: string,
-): Promise<SourceListEnvelope['data']['sources']> {
+): Promise<PartnerSourceSummary[]> {
   return page.evaluate(
     async ({ sid, root }) => {
       const bridge = (
@@ -106,19 +115,6 @@ async function readPartnerSources(
     },
     { sid: sessionId, root: projectRoot },
   );
-}
-
-async function readPartnerWorkbenchContext(
-  page: Page,
-): Promise<PartnerWorkbenchContextSnapshot | null> {
-  return page.evaluate(() => {
-    const context = (
-      window as unknown as {
-        __kodaxPartnerWorkbenchContext?: PartnerWorkbenchContextSnapshot;
-      }
-    ).__kodaxPartnerWorkbenchContext;
-    return context ?? null;
-  });
 }
 
 async function sendPartnerPrompt(page: Page, prompt: string): Promise<void> {
@@ -281,7 +277,7 @@ async function seedPartnerDeliveries(options: {
   );
 }
 
-test('Partner shares Coder sidebar chrome, width controls, max-mode close, and Files access', async () => {
+test('Partner keeps the result rail absent until file preview focus, then offers compact width controls', async () => {
   test.setTimeout(60_000); // Electron boot + window resize settle is slow on Windows CI
   const testId = `partner-artifact-rail-${Date.now()}`;
   const projectDir = await createProject(testId);
@@ -292,51 +288,46 @@ test('Partner shares Coder sidebar chrome, width controls, max-mode close, and F
     await space.seedProject(projectDir);
     await switchSurface(page, 'Partner');
     await expect(page.getByTestId('partner-workspace')).toBeVisible({ timeout: 10_000 });
-    // The Partner artifact panel auto-hides when the workspace is narrower than
-    // ~900px. Linux CI runs under a 1280-wide xvfb screen, but the headless
-    // Windows runner can clamp the launch window narrower, hiding the panel and
-    // stalling this assertion. Force a wide window so the rail shows
-    // deterministically on every runner, then allow the ResizeObserver to settle.
     await space.app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1440, 880);
     });
-    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible({ timeout: 15_000 });
-
-    const sidebar = page.getByTestId('right-sidebar');
     const workspace = page.getByTestId('partner-workspace');
-    await expect(sidebar).toBeVisible();
-
-    await page.getByLabel('Half width').click();
-    await expect
-      .poll(async () => {
-        const sidebarBox = await sidebar.boundingBox();
-        const workspaceBox = await workspace.boundingBox();
-        return Math.abs((sidebarBox?.width ?? 0) - (workspaceBox?.width ?? 0));
-      })
-      .toBeLessThanOrEqual(2);
-
-    await page.getByLabel('Max width').click();
-    await expect(workspace).toBeHidden();
-    await expect(page.getByTestId('partner-artifact-panel-close')).toBeVisible();
-    await page.getByTestId('partner-artifact-panel-close').click();
-    await expect(sidebar).toHaveCount(0);
-    await expect(workspace).toBeVisible();
-
-    const artifactToggle = page.getByTestId('partner-artifact-toggle');
-    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'false');
-
-    await expect(page.getByTestId('partner-artifact-edge-toggle')).toHaveCount(0);
-    await artifactToggle.click();
-    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
-    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByLabel('Default width')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('right-sidebar')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
 
     await page
       .getByTestId('left-sidebar')
       .getByRole('button', { name: 'Files', exact: true })
       .click();
-    await expect(page.getByTestId('files-panel')).toBeVisible();
-    await expect(page.getByTestId('files-panel').getByText('brief.md').first()).toBeVisible();
+    const filesPanel = page.getByTestId('files-panel');
+    await expect(filesPanel).toBeVisible();
+    await filesPanel.getByRole('button', { name: 'brief.md', exact: true }).click();
+
+    const sidebar = page.getByTestId('right-sidebar');
+    await expect(sidebar).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
+    await expect(page.getByTestId('file-viewer')).toContainText('brief.md');
+    const artifactToggle = page.getByTestId('partner-artifact-toggle');
+    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'true');
+
+    await expect(page.getByLabel('Half width')).toHaveCount(0);
+    await expect(page.getByLabel('Max width')).toBeVisible();
+    await expect(page.getByLabel('Default width')).toHaveCount(0);
+    await page.getByLabel('Max width').click();
+    await expect(workspace).toBeHidden();
+    await expect(page.getByLabel('Half width')).toHaveCount(0);
+    await expect(page.getByLabel('Default width')).toBeVisible();
+    await page.getByLabel('Default width').click();
+    await expect(workspace).toBeVisible();
+
+    await expect(page.getByTestId('partner-artifact-panel-close')).toBeVisible();
+    await page.getByTestId('partner-artifact-panel-close').click();
+    await expect(sidebar).toHaveCount(0);
+    await expect(workspace).toBeVisible();
+    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'false');
+    await artifactToggle.click();
+    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
   } finally {
     await space.close();
     await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {});
@@ -358,15 +349,18 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
       BrowserWindow.getAllWindows()[0]?.setSize(1440, 880);
     });
     await expect(page.getByTestId('partner-workspace')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByTestId('partner-sources-panel')).toBeVisible();
-    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
+    await expect(page.getByTestId('partner-sources-panel')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
 
     const sourcesToggle = page.getByTestId('partner-sources-toggle');
-    await expect(sourcesToggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(sourcesToggle).toHaveAttribute('aria-pressed', 'false');
+    await sourcesToggle.click();
+    await expect(page.getByTestId('partner-sources-panel')).toBeVisible();
     await sourcesToggle.click();
     await expect(page.getByTestId('partner-sources-panel')).toHaveCount(0);
     await expect(page.getByTestId('partner-conversation')).toBeVisible();
-    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
+    await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
 
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
@@ -375,19 +369,18 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
       'aria-pressed',
       'false',
     );
-    await page.getByTestId('partner-sources-toggle').click();
+    await page.getByTestId('partner-add-material').click();
     await expect(page.getByTestId('partner-sources-panel')).toBeVisible();
+    await expect(page.getByTestId('partner-source-picker')).toBeVisible();
+    await page
+      .getByTestId('partner-source-picker')
+      .getByRole('button', { name: 'Cancel', exact: true })
+      .click();
 
-    const artifactToggle = page.getByTestId('partner-artifact-toggle');
-    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'true');
-    await page.getByTestId('partner-artifact-panel-close').click();
     await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
-    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'false');
-    await expect(page.getByTestId('partner-artifact-edge-toggle')).toHaveCount(0);
-    await artifactToggle.click();
-    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
 
-    const modeLabel = /^(Plan|Accept edits|Auto)/;
+    const modeLabel = /^Execution: (Plan only|Accept edits|Automatic)$/;
     await expect(page.getByText(modeLabel).first()).toBeVisible({ timeout: 10_000 });
     const initialMode = await page.getByText(modeLabel).first().textContent();
     await page.keyboard.press('Shift+Tab');
@@ -403,6 +396,8 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
       .poll(() => readSessions(page, projectDir, 'partner'), { timeout: 10_000 })
       .toHaveLength(1);
     await expect(await readSessions(page, projectDir, 'code')).toHaveLength(0);
+    await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
 
     const partnerRow = page.getByTestId('sidebar-session-row').filter({ hasText: prompt }).first();
     await expect(partnerRow).toBeVisible({ timeout: 10_000 });
@@ -444,7 +439,7 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
   }
 });
 
-test('Partner outputs show arbitrary deliveries and rollback checkpointed workspace writes', async () => {
+test('Partner Results keeps deliveries, history, rollback, and dynamic previews behind two top-level destinations', async () => {
   test.setTimeout(90_000);
 
   const testId = `partner-deliveries-${Date.now()}`;
@@ -454,18 +449,38 @@ test('Partner outputs show arbitrary deliveries and rollback checkpointed worksp
   try {
     const { page } = space;
     await space.seedProject(projectDir);
+    // Seed the persistent delivery/checkpoint stores before Partner mounts them.
+    // This mirrors an already-existing authoritative result on session resume and
+    // avoids mutating the stores behind their in-process caches.
+    const sessionId = await createPartnerSession(page, projectDir);
+    await seedPartnerDeliveries({ testDataDir: space.testDataDir, projectDir, sessionId });
+
     await switchSurface(page, 'Partner');
     await space.app.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.setSize(1440, 880);
     });
     await expect(page.getByTestId('partner-workspace')).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() => readSessions(page, projectDir, 'partner')).toHaveLength(1);
+    const sessionRow = page.getByTestId('sidebar-session-row').first();
+    await expect(sessionRow).toBeVisible({ timeout: 10_000 });
+    await sessionRow.click();
 
-    const prompt = 'partner e2e deliveries and rollback check';
-    await sendPartnerPrompt(page, prompt);
-    const sessionId = await onlySessionId(page, projectDir, 'partner');
-    await seedPartnerDeliveries({ testDataDir: space.testDataDir, projectDir, sessionId });
+    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    const destinations = page.getByTestId('partner-result-destinations');
+    await expect(destinations.getByRole('tab')).toHaveCount(2);
+    await expect(destinations.getByRole('tab', { name: 'Results', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(
+      destinations.getByRole('tab', { name: 'Pending review', exact: true }),
+    ).toHaveAttribute('aria-selected', 'false');
 
-    await page.getByTestId('partner-deliveries-tab').click();
+    await page.getByTestId('partner-results-files-tab').click();
     const panel = page.getByTestId('partner-deliveries-panel');
     await expect(panel).toBeVisible({ timeout: 10_000 });
     await expect(panel.getByText('src/partner-note.txt').first()).toBeVisible();
@@ -473,7 +488,7 @@ test('Partner outputs show arbitrary deliveries and rollback checkpointed worksp
     await expect(panel.getByText('reports/partner-preview.md').first()).toBeVisible();
     await expect(panel.getByText('application/octet-stream').first()).toBeVisible();
 
-    await panel.getByRole('button', { name: 'Checkpoints' }).click();
+    await panel.getByRole('tab', { name: 'History', exact: true }).click();
     await expect(panel.getByText('pc-e2e').first()).toBeVisible();
     await expect(panel.getByText('src/partner-note.txt').first()).toBeVisible();
     await expect(panel.getByText('after checkpoint content').first()).toBeVisible();
@@ -486,7 +501,7 @@ test('Partner outputs show arbitrary deliveries and rollback checkpointed worksp
       })
       .toBe('before checkpoint content\n');
 
-    await panel.getByRole('button', { name: 'Outputs', exact: true }).click();
+    await panel.getByRole('tab', { name: 'Delivered files', exact: true }).click();
     await panel.locator('button', { hasText: 'src/partner-note.txt' }).first().click();
     await expect(
       panel.getByText(shortHash(sha256('before checkpoint content\n'))).first(),
@@ -503,16 +518,31 @@ test('Partner outputs show arbitrary deliveries and rollback checkpointed worksp
     await panel.getByLabel('Open in File Viewer').click();
     await expect(page.getByTestId('file-viewer')).toBeVisible();
     await expect(page.getByTestId('partner-file-viewer-tab')).toBeVisible();
+    await expect(page.getByTestId('partner-file-viewer-tab')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect(destinations.getByRole('tab', { name: 'Results', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await expect(page.getByTestId('file-viewer')).toContainText('partner-preview.md');
     await expect(page.getByTestId('markdown-file-preview')).toBeVisible();
     await expect(page.getByTestId('markdown-artifact-preview')).toBeVisible();
+
+    await destinations.getByRole('tab', { name: 'Pending review', exact: true }).click();
+    await expect(page.getByTestId('partner-file-proposals-panel')).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Proposal filter' })).toBeVisible();
+    await expect(
+      destinations.getByRole('tab', { name: 'Pending review', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true');
   } finally {
     await space.close();
     await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {});
   }
 });
 
-test('Partner project files open in File Viewer and keep their selection after responsive hiding', async () => {
+test('Partner material picker previews a project file and keeps the selection after closing Results', async () => {
   const testId = `partner-project-preview-${Date.now()}`;
   const projectDir = await createProject(testId);
   const space = await launchSpace(testId);
@@ -525,17 +555,23 @@ test('Partner project files open in File Viewer and keep their selection after r
       BrowserWindow.getAllWindows()[0]?.setSize(1440, 880);
     });
 
+    await page.getByTestId('partner-add-material').click();
     const sourcesPanel = page.getByTestId('partner-sources-panel');
     await expect(sourcesPanel).toBeVisible({ timeout: 10_000 });
-    await sourcesPanel.getByRole('button', { name: 'brief.md' }).click();
+    const sourcePicker = sourcesPanel.getByTestId('partner-source-picker');
+    await expect(sourcePicker).toBeVisible();
+    await sourcePicker.getByRole('button', { name: 'brief.md', exact: true }).click();
     await expect(page.getByTestId('file-viewer')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('file-viewer')).toContainText('brief.md');
+    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
 
-    await page.getByTestId('partner-artifact-toggle').click();
+    await page.getByTestId('partner-artifact-panel-close').click();
     await expect(sourcesPanel).toBeVisible({ timeout: 10_000 });
     await expect(
-      sourcesPanel.getByRole('button', { name: 'Stage for first message' }),
+      sourcePicker.getByRole('button', { name: 'Stage for first message' }),
     ).toBeEnabled();
+    await sourcePicker.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(page.getByTestId('partner-source-picker')).toHaveCount(0);
   } finally {
     await space.close();
     await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {});
@@ -551,30 +587,30 @@ test('Partner sources can be attached and removed, and deleting the session reco
     const { page } = space;
     await space.seedProject(projectDir);
     await switchSurface(page, 'Partner');
+    await space.app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1440, 880);
+    });
 
     const prompt = 'partner e2e source management check';
     await sendPartnerPrompt(page, prompt);
     const sessionId = await onlySessionId(page, projectDir, 'partner');
 
+    await page.getByTestId('partner-add-material').click();
     const sourcesPanel = page.getByTestId('partner-sources-panel');
-    await sourcesPanel.getByRole('button', { name: 'brief.md' }).click();
+    const sourcePicker = sourcesPanel.getByTestId('partner-source-picker');
+    await sourcePicker.getByRole('button', { name: 'brief.md', exact: true }).click();
     await expect(page.getByTestId('file-viewer')).toBeVisible();
-    await page.getByTestId('partner-artifact-toggle').click();
-    await expect(sourcesPanel).toBeVisible();
-    await sourcesPanel.getByRole('button', { name: 'Attach selected file' }).click();
+    await sourcePicker.getByRole('button', { name: 'Attach selected file', exact: true }).click();
+    await expect(page.getByTestId('partner-source-picker')).toHaveCount(0);
     await expect
       .poll(() => readPartnerSources(page, sessionId, projectDir), { timeout: 10_000 })
       .toHaveLength(1);
     await expect(sourcesPanel.getByText('brief.md').first()).toBeVisible();
-    await expect
-      .poll(async () => (await readPartnerWorkbenchContext(page))?.sources?.length ?? -1, {
-        timeout: 10_000,
-      })
-      .toBe(1);
-    const contextAfterAttach = await readPartnerWorkbenchContext(page);
-    expect(contextAfterAttach?.sources?.[0]?.path.replace(/\\/g, '/')).toMatch(/(^|\/)brief\.md$/);
 
-    await sourcesPanel.locator('button[title="Remove from project materials"]').click();
+    await sourcesPanel.getByRole('button', { name: 'Actions for brief.md', exact: true }).click();
+    await sourcesPanel
+      .getByRole('menuitem', { name: 'Remove from project materials', exact: true })
+      .click();
     await page
       .getByRole('dialog')
       .getByRole('button', { name: 'Remove from project materials' })
@@ -585,7 +621,9 @@ test('Partner sources can be attached and removed, and deleting the session reco
         () =>
           page.evaluate(
             async ({ sid, root }) => {
-              const result = await window.kodaxSpace.invoke('partner.materials.catalog', {
+              const bridge = window.kodaxSpace;
+              if (!bridge) throw new Error('KodaX Space bridge unavailable');
+              const result = await bridge.invoke('partner.materials.catalog', {
                 sessionId: sid,
                 projectRoot: root,
               });
@@ -603,11 +641,6 @@ test('Partner sources can be attached and removed, and deleting the session reco
     await expect
       .poll(() => readPartnerSources(page, sessionId, projectDir), { timeout: 10_000 })
       .toHaveLength(1);
-    await expect
-      .poll(async () => (await readPartnerWorkbenchContext(page))?.sources?.length ?? -1, {
-        timeout: 10_000,
-      })
-      .toBe(1);
 
     const row = page.getByTestId('sidebar-session-row').filter({ hasText: prompt }).first();
     await expect(row).toBeVisible();
@@ -624,7 +657,7 @@ test('Partner sources can be attached and removed, and deleting the session reco
     const composer = page.locator('textarea').first();
     await expect(composer).toHaveAttribute(
       'placeholder',
-      /Document processing task - sending will create a Partner session/,
+      /Describe a task - sending will create a Partner session/,
     );
     await expect(composer).toBeEnabled();
     await composer.fill('typing after partner delete still works');
@@ -644,21 +677,22 @@ test('Partner can stage sources before the first composer send creates the sessi
     const { page } = space;
     await space.seedProject(projectDir);
     await switchSurface(page, 'Partner');
+    await space.app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1440, 880);
+    });
 
     await expect.poll(() => readSessions(page, projectDir, 'partner')).toHaveLength(0);
+    await page.getByTestId('partner-add-material').click();
     const sourcesPanel = page.getByTestId('partner-sources-panel');
     await expect(sourcesPanel.getByText(/No staged sources/)).toBeVisible();
-    await sourcesPanel.getByRole('button', { name: 'brief.md' }).click();
+    const sourcePicker = sourcesPanel.getByTestId('partner-source-picker');
+    await sourcePicker.getByRole('button', { name: 'brief.md', exact: true }).click();
     await expect(page.getByTestId('file-viewer')).toBeVisible();
-    await page.getByTestId('partner-artifact-toggle').click();
-    await expect(sourcesPanel).toBeVisible();
-    await sourcesPanel.getByRole('button', { name: 'Stage for first message' }).click();
+    await sourcePicker
+      .getByRole('button', { name: 'Stage for first message', exact: true })
+      .click();
+    await expect(page.getByTestId('partner-source-picker')).toHaveCount(0);
     await expect(sourcesPanel.getByText('brief.md').first()).toBeVisible();
-    await expect
-      .poll(async () => (await readPartnerWorkbenchContext(page))?.pendingSources?.length ?? -1, {
-        timeout: 10_000,
-      })
-      .toBe(1);
 
     const prompt = 'use the staged brief to write a source-backed summary';
     await sendPartnerPrompt(page, prompt);
@@ -667,16 +701,7 @@ test('Partner can stage sources before the first composer send creates the sessi
     await expect
       .poll(() => readPartnerSources(page, sessionId, projectDir), { timeout: 10_000 })
       .toHaveLength(1);
-    await expect
-      .poll(async () => (await readPartnerWorkbenchContext(page))?.sources?.length ?? -1, {
-        timeout: 10_000,
-      })
-      .toBe(1);
-    await expect
-      .poll(async () => (await readPartnerWorkbenchContext(page))?.pendingSources?.length ?? -1, {
-        timeout: 10_000,
-      })
-      .toBe(0);
+    await expect(sourcesPanel.getByText('brief.md').first()).toBeVisible();
   } finally {
     await space.close();
     await fs.rm(projectDir, { recursive: true, force: true }).catch(() => {});

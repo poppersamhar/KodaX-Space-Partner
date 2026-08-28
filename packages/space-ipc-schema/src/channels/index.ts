@@ -165,6 +165,7 @@ import {
   partnerFileProposalsApplyChannel,
   partnerFileProposalsRejectChannel,
   partnerFileProposalsExportChannel,
+  partnerFileProposalsChangedChannel,
 } from './partner-file-proposal.js';
 import {
   partnerDeliveriesListChannel,
@@ -512,6 +513,7 @@ export const pushChannels = {
   [spaceControlRequestedChannel.name]: spaceControlRequestedChannel,
   [sessionEventChannel.name]: sessionEventChannel,
   [artifactChangedChannel.name]: artifactChangedChannel,
+  [partnerFileProposalsChangedChannel.name]: partnerFileProposalsChangedChannel,
   [partnerDeliveriesChangedChannel.name]: partnerDeliveriesChangedChannel,
   [partnerCheckpointsChangedChannel.name]: partnerCheckpointsChangedChannel,
   [permissionRequestChannel.name]: permissionRequestChannel,
