@@ -277,7 +277,7 @@ async function seedPartnerDeliveries(options: {
   );
 }
 
-test('Partner keeps the result rail absent until file preview focus, then offers compact width controls', async () => {
+test('Partner keeps a results button while the rail stays closed until requested', async () => {
   test.setTimeout(60_000); // Electron boot + window resize settle is slow on Windows CI
   const testId = `partner-artifact-rail-${Date.now()}`;
   const projectDir = await createProject(testId);
@@ -294,7 +294,14 @@ test('Partner keeps the result rail absent until file preview focus, then offers
     const workspace = page.getByTestId('partner-workspace');
     await expect(page.getByTestId('right-sidebar')).toHaveCount(0);
     await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
-    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
+    const artifactToggle = page.getByTestId('partner-artifact-toggle');
+    await expect(artifactToggle).toBeVisible();
+    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'false');
+    await artifactToggle.click();
+    await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
+    await expect(artifactToggle).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('partner-artifact-panel-close').click();
+    await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
 
     await page
       .getByTestId('left-sidebar')
@@ -308,7 +315,6 @@ test('Partner keeps the result rail absent until file preview focus, then offers
     await expect(sidebar).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('partner-artifact-panel')).toBeVisible();
     await expect(page.getByTestId('file-viewer')).toContainText('brief.md');
-    const artifactToggle = page.getByTestId('partner-artifact-toggle');
     await expect(artifactToggle).toHaveAttribute('aria-pressed', 'true');
 
     await expect(page.getByLabel('Half width')).toHaveCount(0);
@@ -351,7 +357,10 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
     await expect(page.getByTestId('partner-workspace')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('partner-sources-panel')).toHaveCount(0);
     await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
-    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
 
     const sourcesToggle = page.getByTestId('partner-sources-toggle');
     await expect(sourcesToggle).toHaveAttribute('aria-pressed', 'false');
@@ -378,7 +387,10 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
       .click();
 
     await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
-    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
 
     const modeLabel = /^Execution: (Plan only|Accept edits|Automatic)$/;
     await expect(page.getByText(modeLabel).first()).toBeVisible({ timeout: 10_000 });
@@ -397,7 +409,10 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
       .toHaveLength(1);
     await expect(await readSessions(page, projectDir, 'code')).toHaveLength(0);
     await expect(page.getByTestId('partner-artifact-panel')).toHaveCount(0);
-    await expect(page.getByTestId('partner-artifact-toggle')).toHaveCount(0);
+    await expect(page.getByTestId('partner-artifact-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
 
     const partnerRow = page.getByTestId('sidebar-session-row').filter({ hasText: prompt }).first();
     await expect(partnerRow).toBeVisible({ timeout: 10_000 });

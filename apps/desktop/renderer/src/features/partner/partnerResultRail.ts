@@ -6,7 +6,7 @@ export interface PartnerResultRailPresence {
 }
 
 export interface PartnerResultRailState {
-  readonly available: boolean;
+  readonly hasContent: boolean;
   readonly open: boolean;
 }
 
@@ -59,9 +59,9 @@ export function projectPartnerResultRail(
   presence: PartnerResultRailPresence,
   preferredOpen: boolean,
 ): PartnerResultRailState {
-  const available =
+  const hasContent =
     presence.artifactCount > 0 || presence.deliveryCount > 0 || presence.fileProposalCount > 0;
-  return { available, open: available && preferredOpen };
+  return { hasContent, open: hasContent && preferredOpen };
 }
 
 export function shouldRevealPartnerResultRail(

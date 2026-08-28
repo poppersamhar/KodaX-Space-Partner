@@ -53,25 +53,25 @@ test('new result signals select the result view that contains the new content', 
   );
 });
 
-test('an empty Partner session has no result rail even when the saved preference was open', () => {
+test('an empty Partner session does not auto-open the result rail', () => {
   assert.deepEqual(
     projectPartnerResultRail({ artifactCount: 0, deliveryCount: 0, fileProposalCount: 0 }, true),
-    { available: false, open: false },
+    { hasContent: false, open: false },
   );
 });
 
 test('an existing result makes the rail available while preserving the user open preference', () => {
   assert.deepEqual(
     projectPartnerResultRail({ artifactCount: 1, deliveryCount: 0, fileProposalCount: 0 }, false),
-    { available: true, open: false },
+    { hasContent: true, open: false },
   );
   assert.deepEqual(
     projectPartnerResultRail({ artifactCount: 0, deliveryCount: 1, fileProposalCount: 0 }, true),
-    { available: true, open: true },
+    { hasContent: true, open: true },
   );
   assert.deepEqual(
     projectPartnerResultRail({ artifactCount: 0, deliveryCount: 0, fileProposalCount: 1 }, true),
-    { available: true, open: true },
+    { hasContent: true, open: true },
   );
 });
 

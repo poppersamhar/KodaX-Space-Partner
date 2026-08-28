@@ -305,10 +305,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     section: null,
     nonce: 0,
   });
-  const [partnerResultRailScope, setPartnerResultRailScope] = useState<{
-    readonly sessionId: string | null;
-    readonly available: boolean;
-  }>({ sessionId: null, available: false });
   const [partnerResultSelectionRequest, setPartnerResultSelectionRequest] =
     useState<PartnerResultSelectionRequest | null>(null);
   const partnerResultSelectionRevisionRef = useRef(0);
@@ -433,15 +429,8 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [currentSurface]);
 
-  const partnerResultRailAvailable =
-    currentSurface === 'partner' &&
-    partnerResultRailScope.sessionId === currentSessionIdForPlan &&
-    partnerResultRailScope.available;
   const preferredLeftSidebarVisible = leftSidebarOpen && !fullscreenRead;
-  const preferredRightSidebarVisible =
-    rightSidebarOpen &&
-    !fullscreenRead &&
-    (currentSurface === 'code' || partnerResultRailAvailable);
+  const preferredRightSidebarVisible = rightSidebarOpen && !fullscreenRead;
   const preliminaryRightSidebarHalfWidth = rightSidebarOpenWidth(
     preferredLeftSidebarVisible,
     leftWidth,
@@ -682,7 +671,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     let alive = true;
     let loadSequence = 0;
 
-    setPartnerResultRailScope({ sessionId, available: false });
     setPartnerResultSelectionRequest(null);
     rightSidebarOpenBySurfaceRef.current.partner = false;
     setRightSidebarOpen(false);
@@ -724,9 +712,10 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         };
         if (!isPartnerResultRailPresenceConclusive(presence, successfulResultCount)) return;
         const next = projectPartnerResultRail(presence, preferredOpen());
-        setPartnerResultRailScope({ sessionId, available: next.available });
-        rightSidebarOpenBySurfaceRef.current.partner = next.open;
-        setRightSidebarOpen(next.open);
+        if (next.hasContent) {
+          rightSidebarOpenBySurfaceRef.current.partner = next.open;
+          setRightSidebarOpen(next.open);
+        }
       } catch (error) {
         if (alive && requestSequence === loadSequence) {
           const message = error instanceof Error ? error.message : String(error);
@@ -739,7 +728,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       void loadPresence(() => useAppStore.getState().rightSidebarOpen);
     };
     const reveal = (): void => {
-      setPartnerResultRailScope({ sessionId, available: true });
       openRightSidebarAtDefaultWidthRef.current();
     };
     const revealForSignal = (
@@ -816,7 +804,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     ) {
       return;
     }
-    setPartnerResultRailScope({ sessionId: currentSessionIdForPlan, available: true });
     openRightSidebarAtDefaultWidth();
   }, [
     currentSessionIdForPlan,
@@ -830,10 +817,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   useEffect(() => {
     const onFocus = (): void => {
       if (currentSurface === 'partner') {
-        setPartnerResultRailScope({
-          sessionId: currentSessionIdForPlan,
-          available: true,
-        });
         openRightSidebarAtDefaultWidth();
         return;
       }
@@ -1063,7 +1046,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       viewportWidth,
     ) >= CODER_MIN_CENTER_PX;
   const toggleRightSidebar = useCallback((): void => {
-    if (currentSurface === 'partner' && !partnerResultRailAvailable) return;
     if (fullscreenRead) setFullscreenRead(false);
     const action = resolveRightSidebarToggleAction(
       rightSidebarVisible,
@@ -1074,11 +1056,9 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
     else if (action === 'open-balanced') openRightSidebarAtBalancedWidth();
     else openRightSidebarAtDefaultWidth();
   }, [
-    currentSurface,
     fullscreenRead,
     openRightSidebarAtBalancedWidth,
     openRightSidebarAtDefaultWidth,
-    partnerResultRailAvailable,
     rightSidebarDefaultWidthFits,
     rightSidebarOpen,
     rightSidebarVisible,
@@ -1117,7 +1097,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         <AppTopMenu
           leftSidebarOpen={leftSidebarVisible}
           rightSidebarOpen={rightSidebarVisible}
-          rightSidebarAvailable={currentSurface === 'code' || partnerResultRailAvailable}
+          rightSidebarAvailable
           showHistoryNavigation={currentSurface === 'code'}
           focusMode={fullscreenRead}
           diagnosticsOpen={diagnosticsOpen}
@@ -1207,7 +1187,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
           // （项目 / session / SurfaceTabs），两 surface 共用；右侧栏外壳也由 Shell 统一托管。
           <PartnerWorkspace
             rightSidebarOpen={rightSidebarVisible}
-            rightSidebarAvailable={partnerResultRailAvailable}
             workspaceMode={rightSidebarWorkspaceMode}
             onToggleRightSidebar={toggleRightSidebar}
           />

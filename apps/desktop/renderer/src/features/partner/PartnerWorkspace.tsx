@@ -44,14 +44,12 @@ function persistPanelOpen(key: string, open: boolean): void {
 
 interface PartnerWorkspaceProps {
   readonly rightSidebarOpen: boolean;
-  readonly rightSidebarAvailable: boolean;
   readonly workspaceMode?: boolean;
   readonly onToggleRightSidebar: () => void;
 }
 
 export function PartnerWorkspace({
   rightSidebarOpen,
-  rightSidebarAvailable,
   workspaceMode = false,
   onToggleRightSidebar,
 }: PartnerWorkspaceProps): JSX.Element {
@@ -125,21 +123,19 @@ export function PartnerWorkspace({
         <Handshake className="w-4 h-4 text-accent-ink" strokeWidth={1.75} aria-hidden />
         <span className="text-[13px] text-fg-primary font-medium flex-shrink-0">Partner</span>
         <span className="text-[11px] text-fg-muted min-w-0 truncate">{t('partner.subtitle')}</span>
-        {rightSidebarAvailable && (
-          <button
-            type="button"
-            onClick={onToggleRightSidebar}
-            className={`ix-pop ml-auto w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
-              rightSidebarOpen ? 'text-fg-primary' : 'text-fg-muted hover:text-fg-primary'
-            }`}
-            title={artifactLabel}
-            aria-label={artifactLabel}
-            aria-pressed={rightSidebarOpen}
-            data-testid="partner-artifact-toggle"
-          >
-            <ArtifactToggleIcon className="w-4 h-4" strokeWidth={1.75} aria-hidden />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onToggleRightSidebar}
+          className={`ix-pop ml-auto w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
+            rightSidebarOpen ? 'text-fg-primary' : 'text-fg-muted hover:text-fg-primary'
+          }`}
+          title={artifactLabel}
+          aria-label={artifactLabel}
+          aria-pressed={rightSidebarOpen}
+          data-testid="partner-artifact-toggle"
+        >
+          <ArtifactToggleIcon className="w-4 h-4" strokeWidth={1.75} aria-hidden />
+        </button>
       </div>
       <div className="flex flex-1 min-h-0">
         {sourcesOpen && (
