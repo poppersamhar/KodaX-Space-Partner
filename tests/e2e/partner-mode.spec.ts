@@ -362,6 +362,15 @@ test('Partner supports normal composer use, slash clear, mode shortcut, and resu
       'false',
     );
 
+    const navigationToggle = page.getByTestId('partner-left-sidebar-toggle');
+    await expect(navigationToggle).toHaveAttribute('aria-pressed', 'true');
+    await navigationToggle.click();
+    await expect(page.getByTestId('left-sidebar')).toHaveCount(0);
+    await expect(navigationToggle).toHaveAttribute('aria-pressed', 'false');
+    await navigationToggle.click();
+    await expect(page.getByTestId('left-sidebar')).toBeVisible();
+    await expect(navigationToggle).toHaveAttribute('aria-pressed', 'true');
+
     const sourcesToggle = page.getByTestId('partner-sources-toggle');
     await expect(sourcesToggle).toHaveAttribute('aria-pressed', 'false');
     await sourcesToggle.click();

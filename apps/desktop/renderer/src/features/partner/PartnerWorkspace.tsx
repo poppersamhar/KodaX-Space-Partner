@@ -13,8 +13,9 @@
 // 由 Shell 渲染。per-surface 当前 session 由 store/surface.ts 的 setSurface 维护。
 
 import { useEffect, useRef, useState } from 'react';
-import { Handshake, PanelLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { FolderOpen, Handshake, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
+import { SidebarToggleButton } from '../../shell/SidebarToggleButton.js';
 import { SourcesPanel } from './SourcesPanel.js';
 import { PartnerConversation } from './PartnerConversation.js';
 import { PartnerEvidenceDetail } from './PartnerEvidenceDetail.js';
@@ -43,14 +44,18 @@ function persistPanelOpen(key: string, open: boolean): void {
 }
 
 interface PartnerWorkspaceProps {
+  readonly leftSidebarOpen: boolean;
   readonly rightSidebarOpen: boolean;
   readonly workspaceMode?: boolean;
+  readonly onToggleLeftSidebar: () => void;
   readonly onToggleRightSidebar: () => void;
 }
 
 export function PartnerWorkspace({
+  leftSidebarOpen,
   rightSidebarOpen,
   workspaceMode = false,
+  onToggleLeftSidebar,
   onToggleRightSidebar,
 }: PartnerWorkspaceProps): JSX.Element {
   const { t } = useI18n();
@@ -106,11 +111,17 @@ export function PartnerWorkspace({
       data-testid="partner-workspace"
       style={workspaceMode ? { display: 'none' } : undefined}
     >
-      <div className="flex items-center gap-2 px-4 h-10 border-b border-border-default flex-shrink-0">
+      <div className="flex items-center gap-1 px-3 h-10 border-b border-border-default flex-shrink-0">
+        <SidebarToggleButton
+          side="left"
+          open={leftSidebarOpen}
+          onClick={onToggleLeftSidebar}
+          testId="partner-left-sidebar-toggle"
+        />
         <button
           type="button"
           onClick={toggleSources}
-          className={`ix-pop w-7 h-7 -ml-1 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
+          className={`ix-pop w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
             showSources ? 'text-fg-primary' : 'text-fg-muted hover:text-fg-primary'
           }`}
           title={sourcesLabel}
@@ -118,9 +129,9 @@ export function PartnerWorkspace({
           aria-pressed={showSources}
           data-testid="partner-sources-toggle"
         >
-          <PanelLeft className="w-4 h-4" strokeWidth={1.75} aria-hidden />
+          <FolderOpen className="w-4 h-4" strokeWidth={1.75} aria-hidden />
         </button>
-        <Handshake className="w-4 h-4 text-accent-ink" strokeWidth={1.75} aria-hidden />
+        <Handshake className="ml-1 w-4 h-4 text-accent-ink" strokeWidth={1.75} aria-hidden />
         <span className="text-[13px] text-fg-primary font-medium flex-shrink-0">Partner</span>
         <span className="text-[11px] text-fg-muted min-w-0 truncate">{t('partner.subtitle')}</span>
         <button

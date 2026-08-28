@@ -32,7 +32,6 @@ import {
   Info,
   Minus,
   PanelLeft,
-  PanelRight,
   PawPrint,
   Square,
   X,
@@ -97,6 +96,7 @@ import {
 } from './taskDockControl.js';
 import type { RightSidebarWidthMode } from './RightSidebarFrame.js';
 import { resolveRightSidebarToggleAction } from './sidebarToggle.js';
+import { SidebarToggleButton } from './SidebarToggleButton.js';
 import {
   activateSessionHistoryPaging,
   deactivateSessionHistoryPaging,
@@ -1186,8 +1186,10 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
           // F045: Partner surface 只替换主区（对话区）。LeftSidebar 是全局导航
           // （项目 / session / SurfaceTabs），两 surface 共用；右侧栏外壳也由 Shell 统一托管。
           <PartnerWorkspace
+            leftSidebarOpen={leftSidebarVisible}
             rightSidebarOpen={rightSidebarVisible}
             workspaceMode={rightSidebarWorkspaceMode}
+            onToggleLeftSidebar={toggleLeftSidebar}
             onToggleRightSidebar={toggleRightSidebar}
           />
         ) : (
@@ -1337,12 +1339,6 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       <UpdateBanner />
     </div>
   );
-}
-
-interface SidebarToggleButtonProps {
-  side: 'left' | 'right';
-  open: boolean;
-  onClick: () => void;
 }
 
 type AppMenuId = 'file' | 'edit' | 'view' | 'help';
@@ -2056,31 +2052,5 @@ function RuntimeDiagnostics({
         </div>
       )}
     </div>
-  );
-}
-
-/**
- * 侧栏切换按钮 — 放在 breadcrumb 行的两端，常驻显示。
- * - icon: ◧ (left) / ◨ (right)，对应侧的紧凑指示
- * - open 时图标 text-fg-primary；close 时 text-fg-muted（让用户一眼看出当前状态）
- */
-function SidebarToggleButton({ side, open, onClick }: SidebarToggleButtonProps): JSX.Element {
-  const { t } = useI18n();
-  const Icon = side === 'left' ? PanelLeft : PanelRight;
-  const sideLabel = t(side === 'left' ? 'shell.side.left' : 'shell.side.right');
-  const label = t(open ? 'shell.hideSidebar' : 'shell.showSidebar', { side: sideLabel });
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`ix-pop w-7 h-7 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-hover-bg ${
-        open ? 'text-fg-primary' : 'text-fg-muted hover:text-fg-primary'
-      }`}
-      title={label}
-      aria-label={label}
-      aria-pressed={open}
-    >
-      <Icon className="w-4 h-4" strokeWidth={1.75} />
-    </button>
   );
 }
