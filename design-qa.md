@@ -382,3 +382,43 @@ No actionable P0, P1, or P2 differences remain.
 - Production renderer build: passed.
 
 final result: passed
+
+---
+
+# Partner Context List Icon
+
+## Comparison target
+
+- Source/current icon capture: `/var/folders/6r/d_8jkq_j46b5y5bzyc6jhfhr0000gn/T/codex-clipboard-b8a69ea7-bd11-46dc-9f2c-2f3b43c4be2b.png`.
+- User target: replace the standalone vertical ellipsis with three vertically stacked “dot + horizontal line” rows.
+- Before capture: `artifacts/design-qa/implementation-context-header-removed.png`.
+- Implementation capture: `artifacts/design-qa/implementation-context-list-icon.png`.
+- Full-view comparison: `artifacts/design-qa/comparison-context-list-icon.png` (before left, implementation right).
+- Focused comparison: `artifacts/design-qa/comparison-context-list-icon-focused.png` (source/current icon left, implementation right).
+- State and viewport: Partner active, context cards visible, detail sidebar closed, dark theme, `1280 x 720` CSS pixels and `1280 x 720` output pixels.
+- Focused density normalization: the implementation header region was cropped and normalized to the source capture's `90 x 86` pixels.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain.
+
+- Icon fidelity: the control now uses Lucide `List`, whose six paths render three point marks and three corresponding horizontal lines at matching vertical positions.
+- Affordance: the list-shaped icon communicates that the control owns a stack of context cards more clearly than the former overflow-menu ellipsis.
+- Spacing and layout rhythm: the icon remains centered in the existing 30px header control; adjacent detail-panel control spacing is unchanged.
+- Fonts and typography: no text or type hierarchy changed.
+- Colors and visual tokens: active, hover, focus, and muted states continue to use the existing Partner header tokens.
+- Image quality and asset fidelity: the established Lucide dependency supplies the icon; no handcrafted SVG, CSS drawing, raster replacement, or text glyph was introduced.
+- Copy and content: accessible show/hide labels remain unchanged.
+- Interaction: clicking the new icon hides the context rail, and clicking it again restores the three cards.
+- Runtime: no browser warnings or errors were present after the icon replacement.
+
+## Verification
+
+- Browser structure check: `lucide-list` present with three dot paths and three line paths; `lucide-ellipsis-vertical` absent.
+- Browser interaction check: hide and restore both passed.
+- Focused Partner regressions: passed (`45/45`).
+- Focused ESLint: passed.
+- Full renderer and Electron TypeScript checks: passed.
+- Production renderer build: passed.
+
+final result: passed

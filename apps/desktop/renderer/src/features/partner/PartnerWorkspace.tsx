@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { EllipsisVertical, Handshake, PanelRight } from 'lucide-react';
+import { Handshake, List, PanelRight } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { SidebarToggleButton } from '../../shell/SidebarToggleButton.js';
 import { PartnerContextRail } from './PartnerContextRail.js';
@@ -150,7 +150,7 @@ export function PartnerWorkspace({
             aria-pressed={compact ? undefined : contextRailVisible}
             data-testid="partner-context-toggle"
           >
-            <EllipsisVertical className="h-4 w-4" strokeWidth={1.75} aria-hidden />
+            <List className="h-4 w-4" strokeWidth={1.75} aria-hidden />
           </button>
           <button
             type="button"
