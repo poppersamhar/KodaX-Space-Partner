@@ -345,3 +345,40 @@ No actionable P0, P1, or P2 differences remain.
 - Browser interaction check: 资料, 待审核, and 成果 each open the expected detail panel.
 
 final result: passed
+
+---
+
+# Partner Context Header Removal
+
+## Comparison target
+
+- User-provided deletion target: `/var/folders/6r/d_8jkq_j46b5y5bzyc6jhfhr0000gn/T/codex-clipboard-4d5e1768-f96e-4307-a04b-01e9bb95188a.png`.
+- User decision: remove both the duplicated “文档工作区 · 知识工作” label and manual refresh control above the three context cards.
+- Before capture: `artifacts/design-qa/implementation-context-cards.png`.
+- Implementation capture: `artifacts/design-qa/implementation-context-header-removed.png`.
+- Full-view comparison: `artifacts/design-qa/comparison-context-header-removal.png` (before left, implementation right).
+- Focused comparison: `artifacts/design-qa/comparison-context-header-removal-focused.png`.
+- State and viewport: Partner active, context cards visible, detail sidebar closed, dark theme, `1280 x 720` CSS pixels and `1280 x 720` output pixels.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain.
+
+- Spacing and layout rhythm: the first card now begins 12px below the rail top; the removed row leaves no dead placeholder height or accidental gap.
+- Copy and content: the duplicated subtitle is absent from the card rail while the primary Partner header remains unchanged.
+- Interaction: the manual refresh button is absent. Initial loading, source-change events, artifact changes, delivery changes, proposal changes, and project/session changes still invoke the existing automatic refresh path.
+- Fonts and typography: no card text styles changed; 资料, 待审核, and 成果 retain their established hierarchy.
+- Colors and visual tokens: card surfaces, borders, hover states, and focus rings remain on existing KodaX Space semantic tokens.
+- Image quality and asset fidelity: no image or icon assets were added, changed, or approximated.
+- Accessibility: the rail retains `aria-busy` for automatic loading state, and all three detail-entry buttons keep their accessible names and counts.
+- Runtime: no browser warnings or errors were present after hot reload.
+
+## Verification
+
+- Browser structure check: subtitle absent, refresh control absent, first-card top inset `12px`.
+- Focused Partner regressions: passed (`45/45`).
+- Focused ESLint: passed.
+- Full renderer and Electron TypeScript checks: passed.
+- Production renderer build: passed.
+
+final result: passed

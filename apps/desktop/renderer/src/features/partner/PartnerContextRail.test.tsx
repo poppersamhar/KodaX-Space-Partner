@@ -27,6 +27,8 @@ test('renders a divider-free 300px rail with three independent context cards', (
   assert.ok(pendingReviewCardIndex > sourcesCardIndex);
   assert.ok(resultsCardIndex > pendingReviewCardIndex);
 
+  assert.doesNotMatch(html, /aria-label="Refresh"/);
+  assert.doesNotMatch(html, /doc-workspace · knowledge work/);
   assert.match(html, /data-testid="partner-context-sources"/);
   assert.match(html, /data-testid="partner-context-results"/);
   assert.match(html, /data-testid="partner-context-pending-review"/);

@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import {
-  AlertCircle,
-  ChevronRight,
-  FileCheck2,
-  FileOutput,
-  FolderOpen,
-  Loader2,
-  Plus,
-  RefreshCw,
-} from 'lucide-react';
+import { AlertCircle, ChevronRight, FileCheck2, FileOutput, FolderOpen, Plus } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
 import {
@@ -250,23 +241,6 @@ export function PartnerContextRail({
       aria-busy={loading}
       data-testid="partner-context-rail"
     >
-      <div className="mb-2 flex h-7 flex-shrink-0 items-center justify-between px-1">
-        <span className="truncate text-[11px] text-fg-muted">{t('partner.subtitle')}</span>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-hover-bg hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
-          title={t('common.refresh')}
-          aria-label={t('common.refresh')}
-        >
-          {loading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
-          )}
-        </button>
-      </div>
-
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
         <div
           className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
