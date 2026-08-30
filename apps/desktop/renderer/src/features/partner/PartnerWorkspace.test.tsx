@@ -43,6 +43,7 @@ test('compact Partner keeps context and detail entries reachable', () => {
     );
 
     assert.match(html, /data-testid="partner-context-toggle"/);
+    assert.match(html, /lucide-ellipsis-vertical/);
     assert.match(html, /data-testid="partner-detail-toggle"/);
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);

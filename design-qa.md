@@ -293,3 +293,55 @@ No actionable P0, P1, or P2 visual differences remain.
 - Electron accessibility-tree and full-window visual inspection: passed.
 
 final result: passed
+
+---
+
+# Partner Independent Context Cards
+
+## Comparison target
+
+- Source visual truth: `/Users/samharadelijiang/Documents/kodax Space/outputs/kodax-space-standalone.html`, including its 28px header/menu controls and 300px context rail behavior.
+- User override: the Partner context rail must contain three independent cards in the order 资料 → 待审核 → 成果, even though the standalone reference groups its sample 产物/来源 content.
+- Implementation: `http://127.0.0.1:5174/?qa=partner-context-cards`.
+- State: Partner active, context cards visible, detail sidebar closed, dark theme, no project selected.
+- CSS viewport: `1280 x 720`; browser `devicePixelRatio: 2`.
+- Source and implementation captures: `1280 x 720` PNG, normalized by the browser capture to one output pixel per CSS pixel.
+
+## Evidence
+
+- Reference capture: `artifacts/design-qa/reference-context-cards.png`.
+- Implementation capture: `artifacts/design-qa/implementation-context-cards.png`.
+- Full-view comparison: `artifacts/design-qa/comparison-context-cards.png` (reference left, implementation right).
+- Focused context comparison: `artifacts/design-qa/comparison-context-cards-focused.png`.
+- Focused vertical-ellipsis comparison: `artifacts/design-qa/comparison-vertical-ellipsis-focused.png`.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain.
+
+- Icons: the first Partner header control now uses the existing Lucide `EllipsisVertical` icon inside the product's 28px control. The focused comparison confirms the same vertical three-dot affordance used by the standalone reference.
+- Spacing and layout rhythm: the 300px rail contains three 268px independent cards with 12px gaps, 12px corner radii, and the existing Partner card padding. Measured gaps are exactly `12px`.
+- Divider: the context rail's computed left border is `0px`; there is no vertical separator between the conversation and the cards.
+- Fonts and typography: the implementation intentionally retains KodaX Space's current font stack and Partner text tokens. Title, count, and summary hierarchy remain consistent across all three cards.
+- Colors and visual tokens: dark/light behavior continues to use the existing semantic surface, foreground, border, hover, and focus tokens instead of hard-coded reference colors.
+- Image quality and asset fidelity: this change contains no raster assets or bespoke illustrations. All controls use the product's existing Lucide icon dependency and render sharply at the captured density.
+- Copy and content: the required order is 资料 → 待审核 → 成果. Each card retains its live count and empty-state copy; 添加资料 remains only inside the 资料 card.
+- Interaction: clicking each card opens its real 资料, 待审核, or 成果 detail panel. At widths where the detail panel needs space, the context rail auto-hides and remains reachable from the vertical-ellipsis control.
+- Runtime: browser logs contain only Vite debug and React development information; there are no warnings or errors.
+
+## Comparison history
+
+- Pre-capture measurement found an 8px provisional card gap. It was aligned to the standalone reference's 12px rhythm before the final source/implementation captures.
+- The standalone sample combines 产物 and 来源 in one card. The three-card implementation is an intentional user-requested override, not unresolved visual drift.
+- Theme and sample-content differences are expected product-state differences; structure, controls, spacing, and interaction were compared directly.
+
+## Verification
+
+- Focused Partner regressions: passed (`45/45`).
+- Focused ESLint: passed.
+- Full renderer and Electron TypeScript checks: passed.
+- Production renderer build: passed.
+- Browser structure check: three cards, correct order, `12px` gaps, `0px` left border.
+- Browser interaction check: 资料, 待审核, and 成果 each open the expected detail panel.
+
+final result: passed

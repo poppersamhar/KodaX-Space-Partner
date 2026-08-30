@@ -245,7 +245,7 @@ export function PartnerContextRail({
 
   return (
     <aside
-      className="flex h-full min-h-0 w-[300px] flex-shrink-0 flex-col border-l border-border-default bg-surface px-4 py-3"
+      className="flex h-full min-h-0 w-[300px] flex-shrink-0 flex-col bg-surface px-4 py-3"
       aria-label={`${t('partner.sources.title')}, ${t('partner.results.tab.results')}, ${t('partner.results.tab.pendingReview')}`}
       aria-busy={loading}
       data-testid="partner-context-rail"
@@ -267,37 +267,36 @@ export function PartnerContextRail({
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm">
-        <ContextEntry
-          testId="partner-context-sources"
-          title={t('partner.sources.title')}
-          emptyLabel={t('partner.sources.none')}
-          summary={summary.sources}
-          icon={<FolderOpen className="h-4 w-4" strokeWidth={1.75} />}
-          onClick={() => onOpenDetail('sources')}
-        />
-        <div className="border-t border-border-default px-3 pb-2">
-          <button
-            type="button"
-            onClick={onAddMaterial}
-            className="mt-2 inline-flex min-h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-border-default bg-surface px-2 text-xs text-fg-secondary hover:bg-hover-bg hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
-            data-testid="partner-context-add-material"
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
-            {t('partner.sources.add')}
-          </button>
-        </div>
-        <div className="border-t border-border-default">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <div
+          className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
+          data-testid="partner-context-sources-card"
+        >
           <ContextEntry
-            testId="partner-context-results"
-            title={t('partner.results.tab.results')}
-            emptyLabel={t('artifact.emptyTitle')}
-            summary={summary.results}
-            icon={<FileOutput className="h-4 w-4" strokeWidth={1.75} />}
-            onClick={() => onOpenDetail('results')}
+            testId="partner-context-sources"
+            title={t('partner.sources.title')}
+            emptyLabel={t('partner.sources.none')}
+            summary={summary.sources}
+            icon={<FolderOpen className="h-4 w-4" strokeWidth={1.75} />}
+            onClick={() => onOpenDetail('sources')}
           />
+          <div className="border-t border-border-default px-3 pb-2">
+            <button
+              type="button"
+              onClick={onAddMaterial}
+              className="mt-2 inline-flex min-h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-border-default bg-surface px-2 text-xs text-fg-secondary hover:bg-hover-bg hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
+              data-testid="partner-context-add-material"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
+              {t('partner.sources.add')}
+            </button>
+          </div>
         </div>
-        <div className="border-t border-border-default">
+
+        <div
+          className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
+          data-testid="partner-context-pending-review-card"
+        >
           <ContextEntry
             testId="partner-context-pending-review"
             title={t('partner.results.tab.pendingReview')}
@@ -305,6 +304,20 @@ export function PartnerContextRail({
             summary={summary.pendingReview}
             icon={<FileCheck2 className="h-4 w-4" strokeWidth={1.75} />}
             onClick={() => onOpenDetail('pendingReview')}
+          />
+        </div>
+
+        <div
+          className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
+          data-testid="partner-context-results-card"
+        >
+          <ContextEntry
+            testId="partner-context-results"
+            title={t('partner.results.tab.results')}
+            emptyLabel={t('artifact.emptyTitle')}
+            summary={summary.results}
+            icon={<FileOutput className="h-4 w-4" strokeWidth={1.75} />}
+            onClick={() => onOpenDetail('results')}
           />
         </div>
       </div>
