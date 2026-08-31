@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Link2, Settings2 } from 'lucide-react';
+import { Link2, Settings2 } from 'lucide-react';
 import type {
   PartnerConnectorConnectionT,
   SpaceConnectorDefinitionT,
@@ -13,6 +13,7 @@ import {
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { FloatingSurfaceHost } from '../../shell/FloatingSurfaceHost.js';
 import type { FloatingSurfaceDescriptor } from '../../shell/floatingSurfacePolicy.js';
+import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
 
 const popoverSurface: FloatingSurfaceDescriptor = {
   id: 'partner-connectors',
@@ -170,7 +171,10 @@ export function PartnerConnectorChips(): JSX.Element | null {
                   className="border-b border-border-default/60 py-3 last:border-b-0"
                 >
                   <div className="flex items-center gap-3">
-                    <FileText className="h-5 w-5 shrink-0 text-accent-ink" aria-hidden />
+                    <PartnerConnectorIcon
+                      adapter={connector.adapter}
+                      className="h-5 w-5 shrink-0 text-accent-ink"
+                    />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm">{connector.name}</p>
                       <p
@@ -229,7 +233,10 @@ export function PartnerConnectorChips(): JSX.Element | null {
                   key={`${entry.extensionId}:${entry.connector.id}`}
                   className="flex items-center gap-3 py-3"
                 >
-                  <FileText className="h-5 w-5 text-accent-ink" aria-hidden />
+                  <PartnerConnectorIcon
+                    adapter={entry.connector.adapter}
+                    className="h-5 w-5 shrink-0 text-accent-ink"
+                  />
                   <span className="flex-1 text-sm">{entry.connector.name}</span>
                   <button
                     type="button"

@@ -68,6 +68,7 @@ test(
       format: 'iife',
       platform: 'browser',
       jsx: 'automatic',
+      loader: { '.png': 'dataurl' },
       logLevel: 'silent',
       define: { 'import.meta.env': '{}' },
     });
@@ -94,6 +95,23 @@ test(
       );
       throw error;
     }
+    const details = page.getByTestId('partner-connector-details');
+    await details.getByRole('heading', { name: 'Feishu documents', exact: true }).waitFor();
+    const logo = details.locator('header img[data-testid="partner-connector-icon"]');
+    await logo.waitFor();
+    assert.deepEqual(
+      await logo.evaluate(async (element) => {
+        const image = element as HTMLImageElement;
+        await image.decode();
+        return [
+          image.naturalWidth,
+          image.naturalHeight,
+          image.alt,
+          image.getAttribute('aria-hidden'),
+        ];
+      }),
+      [700, 700, '', 'true'],
+    );
     assert.equal(await page.locator('[data-testid="partner-connector-chips"]').count(), 1);
     await page
       .getByText('Account connected; not selected for this conversation', { exact: true })

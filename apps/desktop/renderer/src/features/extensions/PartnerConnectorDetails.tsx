@@ -12,6 +12,7 @@ import { invokeExtensionHost, useSpaceExtensions } from './SpaceExtensionsProvid
 import { requestPartnerConnectorDialog, usePartnerConnectors } from './PartnerConnectorProvider.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { PartnerRemoteComposer } from './PartnerRemoteComposer.js';
+import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
 
 export const connectorButtonClass =
   'rounded-md border border-border-default px-2.5 py-1.5 text-xs hover:bg-hover-bg disabled:opacity-40';
@@ -187,7 +188,13 @@ function ConnectorDetailsContent({
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4" data-testid="partner-connector-details">
       <header>
-        <h2 className="text-base font-medium">{connector.name}</h2>
+        <div className="flex items-center gap-2.5">
+          <PartnerConnectorIcon
+            adapter={connector.adapter}
+            className="h-6 w-6 shrink-0 text-accent-ink"
+          />
+          <h2 className="text-base font-medium">{connector.name}</h2>
+        </div>
         <p className="mt-2 text-xs leading-5 text-fg-muted">{t('connectors.scopeHint')}</p>
       </header>
       {!installed?.enabled && (

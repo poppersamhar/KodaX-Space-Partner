@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronDown, ExternalLink, FileText, Loader2, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronDown, ExternalLink, Loader2, X } from 'lucide-react';
 import type {
   PartnerConnectorConnectionT,
   PartnerConnectorOnboardingT,
@@ -18,6 +18,7 @@ import { invokeExtensionHost, useSpaceExtensions } from './SpaceExtensionsProvid
 import { usePartnerConnectors } from './PartnerConnectorProvider.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { PartnerConnectorAdvanced } from './PartnerConnectorAdvanced.js';
+import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
 
 const surface = floatingSurfaceForBlockingModal(
   'partner-connector-dialog',
@@ -260,7 +261,7 @@ export function PartnerConnectorDialog({
           <X className="h-4 w-4" aria-hidden />
         </button>
         <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl bg-accent/10 text-accent-ink">
-          <FileText className="h-6 w-6" aria-hidden />
+          <PartnerConnectorIcon adapter={connector.adapter} className="h-6 w-6" />
         </div>
         <h2 id="partner-connector-title" className="text-xl font-semibold text-fg-primary">
           {connector.name}

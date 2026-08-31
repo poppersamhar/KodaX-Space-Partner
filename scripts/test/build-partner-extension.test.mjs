@@ -71,6 +71,7 @@ test('builds an independently installable, self-contained Partner library archiv
   const manifest = JSON.parse(await zip.file('manifest.json').async('string'));
   const html = await zip.file('ui/index.html').async('string');
   assert.equal(manifest.id, 'kodax.partner-library');
+  assert.equal(manifest.version, '0.5.1');
   assert.equal(manifest.experts.length, 9);
   assert.equal(manifest.experts[0].id, 'writing-mentor');
   assert.equal(manifest.experts[0].revision, 1);
@@ -80,7 +81,7 @@ test('builds an independently installable, self-contained Partner library archiv
     {
       id: 'feishu-docs',
       adapter: 'feishu-cli',
-      name: '飞书文档',
+      name: '飞书',
       description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
     },
   ]);
@@ -88,6 +89,12 @@ test('builds an independently installable, self-contained Partner library archiv
   assert.match(html, /专家/);
   assert.match(html, /连接器/);
   assert.match(html, /role="tablist"/);
+  const embeddedLogo = html.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+  assert.ok(embeddedLogo, 'The official Feishu logo must load without network access');
+  assert.deepEqual(
+    Buffer.from(embeddedLogo[1], 'base64'),
+    await fs.readFile(new URL('../../resources/brands/feishu.png', import.meta.url)),
+  );
   assert.doesNotMatch(html, /(?:src|href)\s*=\s*["'](?:https?:|\/\/)|\bimport\s*\(/i);
   assert.doesNotMatch(html, /window\.kodaxSpace|require\(['"]electron/);
 });
@@ -96,7 +103,7 @@ test('the library contains eight stable scene experts with original tasks and re
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'partner-scene-experts-'));
   t.after(() => fs.rm(outDir, { recursive: true, force: true }));
   const { manifest } = await buildPartnerExtension({ outDir });
-  assert.equal(manifest.version, '0.5.0');
+  assert.equal(manifest.version, '0.5.1');
   assert.deepEqual(
     manifest.experts.map((expert) => expert.id),
     ['writing-mentor', ...migratedScenes.map(([id]) => id)],

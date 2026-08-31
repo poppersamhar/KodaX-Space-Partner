@@ -67,6 +67,7 @@ async function openFixture(
     format: 'iife',
     platform: 'browser',
     jsx: 'automatic',
+    loader: { '.png': 'dataurl' },
     logLevel: 'silent',
     define: { 'import.meta.env': '{}' },
   });
@@ -83,6 +84,86 @@ async function openFixture(
   await page.addScriptTag({ content: output.outputFiles[0].text });
   return { page, errors };
 }
+
+test(
+  'the Feishu connection dialog loads its decorative brand image and retains the catalog name',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t);
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('heading', { name: 'Feishu documents', exact: true }).waitFor();
+    const logo = dialog.locator('img[data-testid="partner-connector-icon"]');
+    await logo.waitFor();
+    assert.deepEqual(
+      await logo.evaluate(async (element) => {
+        const image = element as HTMLImageElement;
+        await image.decode();
+        return [
+          image.naturalWidth,
+          image.naturalHeight,
+          image.alt,
+          image.getAttribute('aria-hidden'),
+        ];
+      }),
+      [700, 700, '', 'true'],
+    );
+    assert.equal(
+      ((await page.evaluate(() => Reflect.get(window, 'calls'))) as { channel: string }[]).some(
+        ({ channel }) =>
+          channel.includes('onboarding.') || channel === 'partner.connectors.resolve',
+      ),
+      false,
+    );
+    assert.deepEqual(errors, []);
+  },
+);
+
+test(
+  'conversation connector rows show the Feishu brand before and after connection without replacing the aggregate icon',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t);
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await dialog.waitFor({ state: 'detached' });
+    const chips = page.getByTestId('partner-connector-chips');
+    assert.equal(await chips.locator('img').count(), 0);
+    assert.equal(await chips.locator('svg').count(), 1);
+    await chips.getByRole('button', { name: 'Conversation connectors', exact: true }).click();
+    const popover = page.getByRole('dialog', { name: 'Conversation connectors', exact: true });
+    await popover.getByRole('button', { name: 'Connect', exact: true }).waitFor();
+    const logo = popover.locator('img[data-testid="partner-connector-icon"]');
+    await logo.waitFor();
+    assert.deepEqual(
+      await logo.evaluate(async (element) => {
+        const image = element as HTMLImageElement;
+        await image.decode();
+        return [
+          image.naturalWidth,
+          image.naturalHeight,
+          image.alt,
+          image.getAttribute('aria-hidden'),
+        ];
+      }),
+      [700, 700, '', 'true'],
+    );
+    await page.evaluate(() => Reflect.get(window, 'finishConnection')());
+    await popover.getByText('Test account', { exact: true }).waitFor();
+    assert.equal(await popover.getByText('Feishu documents', { exact: true }).count(), 1);
+    assert.equal(await logo.count(), 1);
+    assert.equal(await logo.evaluate((element) => (element as HTMLImageElement).naturalWidth), 700);
+    assert.equal(
+      ((await page.evaluate(() => Reflect.get(window, 'calls'))) as { channel: string }[]).some(
+        ({ channel }) =>
+          channel.includes('onboarding.') ||
+          channel === 'partner.connectors.connect' ||
+          channel === 'partner.connectors.resolve',
+      ),
+      false,
+    );
+    assert.deepEqual(errors, []);
+  },
+);
 
 test(
   'connection modal requires explicit installation, cancels durably, and never changes a draft or auto-selects an account',

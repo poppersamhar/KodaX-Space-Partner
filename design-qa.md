@@ -422,3 +422,49 @@ No actionable P0, P1, or P2 differences remain.
 - Production renderer build: passed.
 
 final result: passed
+
+---
+
+# Partner Feishu Connector Card — 2026-09-01
+
+## Comparison target and evidence
+
+- Source visual truth: `/var/folders/6r/d_8jkq_j46b5y5bzyc6jhfhr0000gn/T/codex-clipboard-ae3b68ad-55e0-4369-962c-93b06e3e7456.png` (user-supplied WorkBuddy connected Feishu card).
+- Implementation: `/Users/samharadelijiang/Documents/KodaX-Space-Partner/artifacts/partner-feishu-brand/electron-card.jpg` — actual packaged Electron, host 0.1.45, independent extension 0.5.1, light theme, connector connected, management modal closed.
+- Full-view evidence: `artifacts/partner-feishu-brand/reference-full.png` and `artifacts/partner-feishu-brand/electron-card.jpg`, opened together in the same comparison input.
+- Focused evidence: `artifacts/partner-feishu-brand/reference-card.png` and `artifacts/partner-feishu-brand/implementation-card.png`, opened together in that same input.
+- Source capture: 2400 × 1600 pixels; Electron capture: 1229 × 768 pixels. Source CSS viewport and device density were not supplied, and Computer Use's capture does not establish an exact CSS viewport. No pixel-perfect whole-window claim is made.
+- Normalization: source full view reduced to 1229px wide; source card cropped to 880 × 198 and implementation card to 430 × 130, both resized proportionally to 440px wide. Component tests independently exercise 1100px and 390px frame widths, with a 400–460px desktop card and a 128px minimum height.
+
+## Intentional product differences
+
+The requested match is the horizontal connector card, brand icon and display name, not WorkBuddy's full navigation or catalog. Space retains its existing typography, 12px card radius, border, accessible visible status text and roomier padding. The description accurately limits the connector to supported document operations; it does not claim WorkBuddy's full Feishu product coverage. The pre-existing post-dialog helper line and library header are unchanged and outside this card restyling.
+
+## Findings
+
+No actionable P0, P1 or P2 differences remain within the requested scope.
+
+- Fonts and typography: existing system stack, 16px heading and 13px two-line description remain legible; title and action do not collide. No font package or unrelated expert styling changed.
+- Spacing and layout rhythm: official logo left, name/status and description center, round action right now share a horizontal card. Two columns fit on wide frames; narrow frames stack cards without pushing the action outside the card.
+- Colors and tokens: neutral Space surfaces, border and amber focus treatment are retained. Connected text now uses separate light/dark colors; measured component tests require at least 4.5:1 contrast, including the hovered surface.
+- Image quality and asset fidelity: the unmodified official 700 × 700 transparent Feishu PNG is clear at 32px on the card. The same local asset is used by trusted modal, menu and details; the isolated HTML embeds identical bytes and remains network-free. Plus and chevron shapes are sourced from the existing Lucide icon family.
+- Copy and content: the catalog name is `飞书`; stable internal IDs and the accurate document description remain unchanged. Existing user-defined names and saved snapshots are not rewritten.
+- Interaction/accessibility: card click and Enter open only trusted configuration; focus is visible, busy actions disable, and connection status is readable without relying on color. Decorative brand images have empty alternative text.
+
+## Verification and comparison history
+
+- Actual Electron inspection confirmed extension 0.5.1, the horizontal official-brand card and the existing connected state. Opening “管理连接” displayed the matching Feishu logo/name and connected account; closing returned to the library. No authorization, document read/write, disconnect or permission change was performed.
+- The extension update preserved the connection-record file byte for byte. The account was not disconnected or re-authorized.
+- Implementation-stage contrast regression first measured a failing 4.36:1 on the previous status color. Theme-specific colors fixed it before the final visual comparison; both light and dark component assertions pass.
+- Final full-view and focused comparisons were performed together once. No further visual correction was required. Desktop dark/narrow states are covered by isolated component checks, not claimed as additional native-window captures.
+- Independent targeted review: 24 tests passed. Full suite: 3516 passed, 4 conditional skips, 0 failures. Typecheck, final full lint, production build, independent archive and macOS arm64 package smoke passed.
+- Initial parallel lint hit a deleted release-test temporary directory; lint was rerun successfully after that test phase. No lint rule or test assertion was relaxed.
+- Packaged startup reached renderer dom-ready and visual-ready. Component fixtures recorded no page errors; this is not a claim to have inspected a complete native DevTools console.
+
+## Review and remaining scope
+
+- Standards: 0 actionable findings in an independent diff review.
+- Spec: 0 actionable findings against the requested long card, official icon, shortened name, independent extension and preserved connection boundaries.
+- Windows/Linux desktop visuals, complete F146/P6 and real remote document operations remain outside this pass.
+
+final result: passed

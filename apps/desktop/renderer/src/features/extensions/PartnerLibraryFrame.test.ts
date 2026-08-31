@@ -22,10 +22,23 @@ const preset: SpaceExpertDefinitionT = {
   starterTasks: ['请检查这份提纲'],
 };
 
+function luminance(color: string): number {
+  const channels = color
+    .match(/[\d.]+/g)!
+    .slice(0, 3)
+    .map(Number)
+    .map((value) => {
+      const normalized = value / 255;
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
 async function openLibrary(
   t: TestContext,
   initialExperts: SpaceExpertDefinitionT[] = [preset],
   initialTab: 'experts' | 'connectors' = 'experts',
+  options: { twoConnectors?: boolean; holdConfiguration?: boolean } = {},
 ) {
   const browser = await chromium.launch({ executablePath: browserPath, headless: true });
   t.after(() => browser.close());
@@ -34,6 +47,7 @@ async function openLibrary(
   const requests: ExtensionFrameRequest[] = [];
   let experts = initialExperts;
   let connected = false;
+  let finishConfiguration: (() => void) | undefined;
   await page.exposeFunction('partnerTestHost', (data: unknown) => {
     const request = parseExtensionFrameRequest(data);
     if (!request) throw new Error('Unbounded package request');
@@ -42,15 +56,17 @@ async function openLibrary(
     if (request.method === 'connector.catalog')
       return {
         connectedIds: connected ? ['feishu-docs'] : [],
-        connectors: [
-          {
-            id: 'feishu-docs',
-            adapter: 'feishu-cli',
-            name: '飞书文档',
-            description: '读取资料并审核写入。',
-          },
-        ],
+        connectors: Array.from({ length: options.twoConnectors ? 2 : 1 }, (_, index) => ({
+          id: index === 0 ? 'feishu-docs' : 'feishu-secondary',
+          adapter: 'feishu-cli',
+          name: index === 0 ? '飞书' : '飞书备用',
+          description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
+        })),
       };
+    if (request.method === 'connector.configure' && options.holdConfiguration)
+      return new Promise((resolve) => {
+        finishConfiguration = () => resolve({ configured: true });
+      });
     if (request.method === 'expert.save') {
       const saved = {
         ...request.values,
@@ -108,13 +124,20 @@ async function openLibrary(
   const frame = page.frameLocator('iframe');
   await frame
     .getByRole('heading', {
-      name: initialTab === 'connectors' ? '飞书文档' : '写作导师',
+      name: initialTab === 'connectors' ? '飞书' : '写作导师',
       exact: true,
     })
     .waitFor();
   return {
     frame,
     requests,
+    setTheme: (colorScheme: 'light' | 'dark') => page.emulateMedia({ colorScheme }),
+    finishConfiguration: () => finishConfiguration?.(),
+    resize: async (width: number) => {
+      await page.locator('iframe').evaluate((element, width) => {
+        element.style.width = `${width}px`;
+      }, width);
+    },
     changeConnected: async () => {
       connected = true;
       await page.evaluate(() =>
@@ -133,18 +156,35 @@ test(
   'the independent connector card opens only trusted configuration and never receives secrets or document content',
   { skip: !browserPath },
   async (t) => {
-    const { frame, requests, changeConnected } = await openLibrary(t, [preset], 'connectors');
+    const { frame, requests, changeConnected, setTheme } = await openLibrary(
+      t,
+      [preset],
+      'connectors',
+    );
     assert.equal(
       await frame.getByRole('tab', { name: '连接器' }).getAttribute('aria-selected'),
       'true',
     );
-    await frame.getByRole('heading', { name: '飞书文档', exact: true }).waitFor();
+    await frame.getByRole('heading', { name: '飞书', exact: true }).waitFor();
     await frame.getByText('未连接', { exact: true }).waitFor();
-    await frame.getByRole('button', { name: '连接', exact: true }).click();
+    await frame.getByRole('button', { name: '连接', exact: true }).waitFor();
+    await frame.getByRole('article').click();
     await frame.getByText('请在连接弹窗中继续。', { exact: true }).waitFor();
     await changeConnected();
     await frame.getByText('已连接', { exact: true }).waitFor();
     await frame.getByRole('button', { name: '管理连接', exact: true }).waitFor();
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(theme);
+      const colors = await frame.getByText('已连接', { exact: true }).evaluate((element) => ({
+        foreground: getComputedStyle(element).color,
+        background: getComputedStyle(element.closest('article')!).backgroundColor,
+      }));
+      const foreground = luminance(colors.foreground);
+      const background = luminance(colors.background);
+      const contrast =
+        (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      assert.ok(contrast >= 4.5, `${theme} connected status contrast: ${contrast}`);
+    }
     assert.deepEqual(
       requests
         .filter((item) => item.method === 'connector.configure')
@@ -154,6 +194,71 @@ test(
     assert.equal(await frame.locator('#connectors-panel input').count(), 0);
     assert.equal(
       requests.some((item) => item.method === 'expert.select'),
+      false,
+    );
+  },
+);
+
+test(
+  'connector cards are horizontal, responsive, offline-branded, and open only configuration with an accessible action',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, requests, resize, finishConfiguration } = await openLibrary(
+      t,
+      [preset],
+      'connectors',
+      {
+        twoConnectors: true,
+        holdConfiguration: true,
+      },
+    );
+    const card = frame
+      .getByRole('article')
+      .filter({ has: frame.getByRole('heading', { name: '飞书', exact: true }) });
+    const nextCard = frame
+      .getByRole('article')
+      .filter({ has: frame.getByRole('heading', { name: '飞书备用', exact: true }) });
+    const wide = await card.boundingBox();
+    const nextWide = await nextCard.boundingBox();
+    assert.ok(wide && nextWide);
+    assert.ok(wide.width >= 400 && wide.width <= 460, `Desktop card width: ${wide.width}`);
+    assert.ok(wide.height >= 112 && wide.height <= 136, `Desktop card height: ${wide.height}`);
+    assert.equal(wide.y, nextWide.y, 'Cards share a row when two columns fit');
+    assert.ok(nextWide.x >= wide.x + wide.width);
+    const logo = card.locator('img');
+    await logo.evaluate((image: HTMLImageElement) => image.decode());
+    assert.equal(await logo.evaluate((image: HTMLImageElement) => image.naturalWidth), 700);
+    assert.match((await logo.getAttribute('src')) ?? '', /^data:image\/png;base64,/);
+    const logoBox = await logo.boundingBox();
+    const headingBox = await card.getByRole('heading').boundingBox();
+    const action = card.getByRole('button', { name: '连接', exact: true });
+    const actionBox = await action.boundingBox();
+    assert.ok(logoBox && headingBox && actionBox);
+    assert.equal(logoBox.width, 32);
+    assert.ok(logoBox.x < headingBox.x && headingBox.x < actionBox.x);
+    assert.ok(Math.abs(logoBox.y + logoBox.height / 2 - (actionBox.y + actionBox.height / 2)) <= 1);
+    assert.equal(await action.locator('svg').count(), 1);
+    assert.equal(requests.filter((request) => request.method === 'connector.configure').length, 0);
+    await resize(390);
+    const narrow = await card.boundingBox();
+    const nextNarrow = await nextCard.boundingBox();
+    assert.ok(narrow && nextNarrow);
+    assert.ok(narrow.width <= 354);
+    assert.equal(narrow.x, nextNarrow.x);
+    assert.ok(nextNarrow.y >= narrow.y + narrow.height);
+    await action.focus();
+    assert.equal(await action.evaluate((element) => element.matches(':focus-visible')), true);
+    await action.press('Enter');
+    assert.equal(await action.isDisabled(), true);
+    assert.equal(requests.filter((request) => request.method === 'connector.configure').length, 1);
+    finishConfiguration();
+    await frame.getByText('请在连接弹窗中继续。', { exact: true }).waitFor();
+    assert.equal(await action.isDisabled(), false);
+    assert.equal(
+      requests.some(
+        (request) =>
+          !['catalog.list', 'connector.catalog', 'connector.configure'].includes(request.method),
+      ),
       false,
     );
   },

@@ -2,12 +2,12 @@
 
 This is an independently built UI package, not a module imported by the trusted
 desktop renderer. The archive contains exactly `manifest.json` and a
-self-contained `ui/index.html`. Version 0.5.0 retains the writing mentor and
+self-contained `ui/index.html`. Version 0.5.1 retains the writing mentor and
 eight scene experts: document processing, research, data analysis, presentations,
 finance, product management, design, and email editing. Their persistent role
 prompts are separate from the original task templates, which remain starter tasks.
 No built-in expert configures a Skill by default. This version declares the
-Feishu documents connector, backed by the trusted host's supported `feishu-cli`
+Feishu connector (displayed as `飞书`), backed by the trusted host's supported `feishu-cli`
 adapter. A declaration is not a connected account. The package does not include
 or install Skills, authenticate CLI accounts, or receive credentials/documents.
 
@@ -20,7 +20,7 @@ npm run build:packages
 node scripts/build-partner-extension.mjs
 ```
 
-The default output is `out/extensions/kodax.partner-library-0.5.0.space-extension`.
+The default output is `out/extensions/kodax.partner-library-0.5.1.space-extension`.
 Use `--out-dir <directory>` for another artifact directory. The archive is a ZIP;
 the builder computes the HTML SHA-256 and replaces the placeholder from the
 source manifest in the archive only.
@@ -29,6 +29,14 @@ Install the archive through Space's extension manager, then explicitly enable
 it. Installation neither executes the UI nor connects services. Disable removes
 the UI contribution; uninstall removes only this package and its registration,
 not conversation history, user documents, or existing Skills.
+
+Version 0.5.1 changes only the connector's horizontal card and brand presentation.
+It retains `kodax.partner-library` / `feishu-docs` / `feishu-cli`, so updating and
+explicitly re-enabling the package does not require disconnecting or reconnecting
+existing accounts. This rename does not grant access to additional Feishu products
+or rewrite saved conversation snapshots. The official logo is embedded as a data
+URL for offline loading under the existing frame CSP; its source and ownership
+are recorded in [brand assets](../../resources/brands/README.md).
 
 The v1 loader accepts host API version 1, a fixed `ui/index.html` entry, at most
 2 MiB of HTML, a 64 KiB manifest, and a 4 MiB archive. Paths, entry types, duplicate
