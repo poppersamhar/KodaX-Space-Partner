@@ -125,6 +125,100 @@ test('start is single-flight, exposes no authorization URL and commits only the 
   assert.equal((await f.tasks.cancel(first)).phase, 'connected');
 });
 
+test('a slow private installation leaves time for both official authorization stages', async (t) => {
+  const base = Date.parse('2026-09-01T00:00:00.000Z');
+  let clock = base;
+  t.mock.method(Date, 'now', () => clock);
+  const authorizationUrl = 'https://accounts.feishu.cn/oauth/v1/device/verify?user_code=fixture';
+  const opened: string[] = [];
+  const tasks = new PartnerConnectorTasks({
+    service: {
+      assertConnectionAllowed: async () => undefined,
+      connect: async () => assert.fail('A waiting authorization must not connect an account'),
+    },
+    run: async (input) => {
+      input.onProgress({ phase: 'installing' });
+      clock = base + 15 * 60000;
+      input.onProgress({
+        phase: 'waiting_app',
+        authorizationUrl: url,
+        expiresAt: '2026-09-01T00:25:00.000Z',
+      });
+      clock = base + 24 * 60000;
+      input.onProgress({
+        phase: 'waiting_authorization',
+        authorizationUrl,
+        expiresAt: '2026-09-01T00:34:00.000Z',
+      });
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    },
+    openExternal: async (value, assertActive) => {
+      assertActive();
+      opened.push(value);
+    },
+  });
+  t.after(() => tasks.dispose());
+  const job = tasks.start({ ...owner, installCli: true });
+  await settleUntil(() => ['waiting_authorization', 'failed'].includes(tasks.get(job).phase));
+  assert.equal(tasks.get(job).phase, 'waiting_authorization');
+  assert.equal(tasks.get(job).expiresAt, '2026-09-01T00:34:00.000Z');
+  await tasks.reopen(job);
+  assert.deepEqual(opened, [url, authorizationUrl, authorizationUrl]);
+  assert.equal((await tasks.cancel(job)).phase, 'cancelled');
+});
+
+test('official URL expiry is capped at the original task deadline and progress never extends it', async (t) => {
+  const base = Date.parse('2026-09-01T00:00:00.000Z');
+  let clock = base;
+  t.mock.method(Date, 'now', () => clock);
+  let started: FeishuOnboardingInput | undefined;
+  let opens = 0;
+  const tasks = new PartnerConnectorTasks({
+    service: {
+      assertConnectionAllowed: async () => undefined,
+      connect: async () => assert.fail('An expired authorization must not connect an account'),
+    },
+    run: async (input) => {
+      started = input;
+      clock = base + 35 * 60000;
+      input.onProgress({
+        phase: 'waiting_authorization',
+        authorizationUrl: url,
+        expiresAt: '2026-09-01T00:45:00.000Z',
+      });
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    },
+    openExternal: async (_value, assertActive) => {
+      assertActive();
+      opens++;
+    },
+  });
+  t.after(() => tasks.dispose());
+  const job = tasks.start(owner);
+  await settleUntil(() => ['waiting_authorization', 'failed'].includes(tasks.get(job).phase));
+  assert.equal(tasks.get(job).phase, 'waiting_authorization');
+  assert.equal(tasks.get(job).expiresAt, '2026-09-01T00:40:00.000Z');
+  clock = base + 39 * 60000;
+  started!.onProgress({
+    phase: 'waiting_authorization',
+    authorizationUrl: url,
+    expiresAt: '2026-09-01T00:49:00.000Z',
+  });
+  assert.equal(tasks.get(job).expiresAt, '2026-09-01T00:40:00.000Z');
+  await tasks.reopen(job);
+  assert.equal(opens, 3);
+  clock = base + 40 * 60000;
+  await assert.rejects(tasks.reopen(job), /超时/);
+  await settleUntil(() => tasks.get(job).phase === 'expired');
+  assert.equal(started!.signal.aborted, true);
+  assert.equal(tasks.get(job).canReopen, false);
+  assert.equal(opens, 3);
+});
+
 test('cancel and plugin deactivation revoke late authorization and cannot be reopened or rebound', async (t) => {
   const f = await fixture(t);
   const job = f.tasks.start(owner);
@@ -201,6 +295,8 @@ test('invalid/expired URLs and a missing installation stay safe and terminal; on
       authorizationUrl: url,
       expiresAt: new Date(Date.now() - 1000).toISOString(),
     },
+    { phase: 'waiting_app' as const, authorizationUrl: url, expiresAt: 'not-a-date' },
+    { phase: 'waiting_app' as const, authorizationUrl: url, expiresAt: '' },
   ];
   for (const [index, progress] of cases.entries()) {
     const tasks = new PartnerConnectorTasks({
@@ -214,7 +310,7 @@ test('invalid/expired URLs and a missing installation stay safe and terminal; on
     });
     t.after(() => tasks.dispose());
     const job = tasks.start(owner);
-    await settleUntil(() => tasks.get(job).phase === (index === 0 ? 'failed' : 'expired'));
+    await settleUntil(() => tasks.get(job).phase === (index === 1 ? 'expired' : 'failed'));
     assert.equal(tasks.get(job).canReopen, false);
     assert.equal(JSON.stringify(tasks.get(job)).includes('secret'), false);
   }

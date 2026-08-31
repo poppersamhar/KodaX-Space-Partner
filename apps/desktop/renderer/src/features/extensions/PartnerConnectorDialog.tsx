@@ -28,6 +28,18 @@ const actionClass =
   'rounded-lg border border-border-default px-4 py-2 text-sm hover:bg-hover-bg disabled:opacity-40';
 const finished = (job: PartnerConnectorOnboardingT): boolean =>
   ['needs_install', 'connected', 'cancelled', 'expired', 'failed'].includes(job.phase);
+const onboardingHints = {
+  preparing: 'connectors.localPreparationHint',
+  needs_install: 'connectors.privateInstall',
+  installing: 'connectors.localPreparationHint',
+  waiting_app: 'connectors.appSetupHint',
+  waiting_authorization: 'connectors.browserHint',
+  verifying: 'connectors.verificationHint',
+  connected: 'connectors.connectedHint',
+  cancelled: 'connectors.cancelledHint',
+  expired: 'connectors.expiredHint',
+  failed: 'connectors.failedHint',
+} as const;
 
 /** Browser authorization and credentials are owned by main. This dialog receives only safe job metadata. */
 export function PartnerConnectorDialog({
@@ -349,9 +361,7 @@ export function PartnerConnectorDialog({
                   {t(`connectors.phase.${job.phase}`)}
                 </p>
                 <p className="mt-2 text-xs leading-5 text-fg-muted">
-                  {job.phase === 'needs_install'
-                    ? t('connectors.privateInstall')
-                    : t('connectors.browserHint')}
+                  {t(onboardingHints[job.phase])}
                 </p>
                 {job.error && <p className="mt-2 text-xs text-danger">{job.error}</p>}
               </div>

@@ -110,6 +110,158 @@ test('installer follows only official release redirects and reuses a verified pr
   }
 });
 
+test('a progressing eight-minute official download completes instead of failing at three minutes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  // Node's native AbortSignal clock is not covered by MockTimers.
+  t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), ms);
+    return controller.signal;
+  });
+  const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-slow-test-'));
+  const data = archive('slow but valid native executable');
+  let part = 0;
+  const installer = createFeishuCliInstaller({
+    root,
+    expectedDigest: createHash('sha256').update(data).digest('hex'),
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (part === 8) return controller.close();
+              t.mock.timers.tick(60000);
+              controller.enqueue(
+                data.subarray(
+                  Math.floor((part * data.length) / 8),
+                  Math.floor((++part * data.length) / 8),
+                ),
+              );
+            },
+          },
+          { highWaterMark: 0 },
+        ),
+      ),
+    verifyBinary: async () => true,
+  });
+  try {
+    const binary = await installer.install(new AbortController().signal);
+    assert.equal(await readFile(binary, 'utf8'), 'slow but valid native executable');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a valid official redirect counts as download progress before the next response arrives', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-redirect-test-'));
+  const data = archive('native executable');
+  let requests = 0;
+  const installer = createFeishuCliInstaller({
+    root,
+    expectedDigest: createHash('sha256').update(data).digest('hex'),
+    fetch: async (_url, options) => {
+      requests++;
+      t.mock.timers.tick(requests === 1 ? 90000 : 40000);
+      options?.signal?.throwIfAborted();
+      return requests === 1
+        ? new Response(null, {
+            status: 302,
+            headers: { Location: 'https://release-assets.githubusercontent.com/official-asset' },
+          })
+        : new Response(new Uint8Array(data));
+    },
+    verifyBinary: async () => true,
+  });
+  try {
+    await installer.install(new AbortController().signal);
+    assert.equal(requests, 2);
+    assert.equal(await readFile(installer.executable, 'utf8'), 'native executable');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+for (const scenario of ['headers-stalled', 'body-stalled', 'total-deadline'] as const) {
+  test(`installer bounds ${scenario} and reports a safe download timeout without publishing`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException('SECRET URL', 'TimeoutError')), ms);
+      return controller.signal;
+    });
+    const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-timeout-test-'));
+    const data = archive('download must not be installed');
+    let offset = 0;
+    const installer = createFeishuCliInstaller({
+      root,
+      expectedDigest: createHash('sha256').update(data).digest('hex'),
+      fetch: async (_url, options) => {
+        if (scenario === 'headers-stalled') {
+          t.mock.timers.tick(120001);
+          options?.signal?.throwIfAborted();
+          return new Response(new Uint8Array(data));
+        }
+        return new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                if (offset === data.length) return controller.close();
+                t.mock.timers.tick(scenario === 'body-stalled' ? 120001 : 60000);
+                options?.signal?.throwIfAborted();
+                controller.enqueue(data.subarray(offset, ++offset));
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+        );
+      },
+      verifyBinary: async () => true,
+    });
+    try {
+      await assert.rejects(
+        installer.install(new AbortController().signal),
+        (error: unknown) =>
+          error instanceof FeishuOnboardingError &&
+          error.code === 'download_timeout' &&
+          error.message.includes('尚未进入网页授权') &&
+          !error.message.includes('SECRET'),
+      );
+      await assert.rejects(readFile(installer.executable), { code: 'ENOENT' });
+      assert.deepEqual(await readdir(path.join(root, 'feishu-cli', '1.0.92')), []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('network errors are actionable without disclosing URLs or losing user cancellation', async () => {
+  for (const scenario of ['network', 'http', 'cancel'] as const) {
+    const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-network-test-'));
+    const controller = new AbortController();
+    const installer = createFeishuCliInstaller({
+      root,
+      fetch: async () => {
+        if (scenario === 'http') return new Response('SECRET', { status: 503 });
+        if (scenario === 'cancel') controller.abort();
+        throw new TypeError('fetch failed: https://example.test/SECRET');
+      },
+    });
+    try {
+      await assert.rejects(
+        installer.install(controller.signal),
+        (error: unknown) =>
+          error instanceof FeishuOnboardingError &&
+          error.code === (scenario === 'cancel' ? 'cancelled' : 'download_failed') &&
+          !error.message.includes('SECRET'),
+      );
+      assert.deepEqual(await readdir(path.join(root, 'feishu-cli', '1.0.92')), []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('Windows installations extract only the expected native exe from the verified official zip shape', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-install-test-'));
   const zip = new JSZip();

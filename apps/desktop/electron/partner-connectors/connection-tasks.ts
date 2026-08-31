@@ -27,7 +27,8 @@ interface Dependencies {
   changed?(job: PartnerConnectorOnboardingT): void;
 }
 const MAX_TASKS = 32;
-const MAX_TASK_MS = 25 * 60 * 1000;
+// Private installation plus both official authorization stages and verification.
+const MAX_TASK_MS = 40 * 60 * 1000;
 const terminal = (job: PartnerConnectorOnboardingT): boolean =>
   ['needs_install', 'connected', 'cancelled', 'expired', 'failed'].includes(job.phase);
 const sameOwner = (a: Owner, b: Owner): boolean =>
@@ -145,15 +146,16 @@ export class PartnerConnectorTasks {
         !isFeishuOnboardingAuthorizationUrl(progress.authorizationUrl))
     )
       throw new FeishuOnboardingError('invalid_response');
-    const deadline = progress.expiresAt ? Date.parse(progress.expiresAt) : task.deadline;
-    if (!Number.isFinite(deadline) || deadline > task.deadline)
-      throw new FeishuOnboardingError('invalid_response');
+    const requestedDeadline =
+      progress.expiresAt === undefined ? task.deadline : Date.parse(progress.expiresAt);
+    if (!Number.isFinite(requestedDeadline)) throw new FeishuOnboardingError('invalid_response');
+    const deadline = Math.min(requestedDeadline, task.deadline);
     if (deadline <= Date.now()) throw new FeishuOnboardingError('expired');
     task.authorizationUrl = progress.authorizationUrl;
     this.publish(task, {
       phase: progress.phase,
       canReopen: !!progress.authorizationUrl,
-      expiresAt: progress.expiresAt,
+      expiresAt: progress.expiresAt === undefined ? undefined : new Date(deadline).toISOString(),
       error: undefined,
     });
     this.scheduleExpiry(task, deadline);

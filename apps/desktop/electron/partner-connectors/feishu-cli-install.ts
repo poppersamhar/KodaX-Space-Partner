@@ -9,6 +9,8 @@ import { FeishuOnboardingError } from './feishu-auth-process.js';
 const VERSION = '1.0.92';
 const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_BINARY = 128 * 1024 * 1024;
+const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
+const DOWNLOAD_IDLE_MS = 2 * 60 * 1000;
 const METADATA = new Set(['README.md', 'LICENSE', 'CHANGELOG.md']);
 // Official v1.0.92 release assets, cross-checked against the npm package checksums.txt.
 const ASSETS: Readonly<Record<string, { name: string; digest: string }>> = {
@@ -189,6 +191,7 @@ async function releaseResponse(
   initial: string,
   signal: AbortSignal,
   fetcher: typeof fetch,
+  progressed: () => void,
 ): Promise<Response> {
   let url = initial;
   for (let count = 0; count <= 3; count++) {
@@ -207,7 +210,11 @@ async function releaseResponse(
       ].includes(target.hostname)
     )
       throw new Error('unsafe redirect');
-    const response = await fetcher(url, { signal, redirect: 'manual' });
+    const response = await fetcher(url, { signal, redirect: 'manual' }).catch(() => {
+      throw new FeishuOnboardingError('download_failed');
+    });
+    active(signal);
+    progressed();
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     await response.body?.cancel();
     const location = response.headers.get('location');
@@ -218,24 +225,43 @@ async function releaseResponse(
 }
 
 async function download(url: string, signal: AbortSignal, fetcher: typeof fetch): Promise<Buffer> {
-  const response = await releaseResponse(url, signal, fetcher);
-  if (!response.ok || !response.body) throw new Error('download failed');
-  const reader = response.body.getReader();
-  const chunks: Buffer[] = [];
-  let bytes = 0;
+  const idle = new AbortController();
+  const bounded = AbortSignal.any([signal, idle.signal]);
+  let timer: ReturnType<typeof setTimeout>;
+  const progressed = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => idle.abort(), DOWNLOAD_IDLE_MS);
+    timer.unref();
+  };
+  progressed();
   try {
-    for (;;) {
-      active(signal);
-      const { value, done } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > MAX_ARCHIVE) throw new Error('archive too large');
-      chunks.push(Buffer.from(value));
+    const response = await releaseResponse(url, bounded, fetcher, progressed);
+    if (!response.ok || !response.body) throw new FeishuOnboardingError('download_failed');
+    active(bounded);
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    try {
+      for (;;) {
+        active(bounded);
+        const { value, done } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > MAX_ARCHIVE) throw new Error('archive too large');
+        if (value.byteLength) progressed();
+        chunks.push(Buffer.from(value));
+      }
+    } finally {
+      await reader.cancel();
     }
+    active(bounded);
+    return Buffer.concat(chunks);
+  } catch (error) {
+    if (idle.signal.aborted && !signal.aborted) throw new FeishuOnboardingError('download_timeout');
+    throw error;
   } finally {
-    await reader.cancel();
+    clearTimeout(timer!);
   }
-  return Buffer.concat(chunks);
 }
 
 async function verifyNative(file: string, signal: AbortSignal): Promise<boolean> {
@@ -293,7 +319,7 @@ export function createFeishuCliInstaller(options: FeishuCliInstallerOptions): {
       active(signal);
       if (!asset) throw new FeishuOnboardingError('unsupported_platform');
       let staging: string | undefined;
-      const timeout = AbortSignal.timeout(180000);
+      const timeout = AbortSignal.timeout(INSTALL_TIMEOUT_MS);
       const bounded = AbortSignal.any([signal, timeout]);
       try {
         if (!path.isAbsolute(options.root) || options.root === path.parse(options.root).root)
@@ -328,7 +354,7 @@ export function createFeishuCliInstaller(options: FeishuCliInstallerOptions): {
         return executable;
       } catch (error) {
         if (signal.aborted) throw new FeishuOnboardingError('cancelled');
-        if (timeout.aborted) throw new FeishuOnboardingError('installation_failed');
+        if (timeout.aborted) throw new FeishuOnboardingError('download_timeout');
         if (error instanceof FeishuOnboardingError) throw error;
         throw new FeishuOnboardingError('installation_failed');
       } finally {

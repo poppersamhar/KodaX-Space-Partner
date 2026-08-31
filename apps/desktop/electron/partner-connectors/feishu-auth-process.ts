@@ -8,7 +8,9 @@ const MESSAGES = {
   expired: '本次飞书连接已超时，请重新发起。',
   missing_permissions: '飞书授权未包含所需文档权限，请检查授权结果。',
   unsupported_platform: '当前系统暂不支持自动安装飞书 CLI。',
-  installation_failed: '飞书 CLI 安装或校验失败，请稍后重试。',
+  installation_failed: '飞书连接组件安装或校验失败，尚未进入网页授权。请重新连接。',
+  download_failed: '飞书连接组件下载失败，尚未进入网页授权。请检查网络后重新连接。',
+  download_timeout: '飞书连接组件下载超时，尚未进入网页授权。请检查网络后重新连接。',
   authorization_failed: '飞书连接未完成，请检查官方网页上的结果。',
   invalid_response: '飞书连接返回了无法验证的结果，请重新检查。',
 } as const;

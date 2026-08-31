@@ -19,6 +19,17 @@ export const messages = {
       'Install official @larksuite/cli 1.0.92 into Space’s private directory. This does not change your global CLI or Skills. Continue only if you agree to install it.',
     'connectors.browserHint':
       'Continue in the system browser. Space will update this dialog after authorization; no token needs to be pasted here.',
+    'connectors.localPreparationHint':
+      'Space is preparing the local connector components. First-time setup can take a few minutes; the official Feishu page opens automatically after preparation succeeds.',
+    'connectors.appSetupHint':
+      'Complete app setup on the official Feishu page that opened. Space will guide you through account authorization next.',
+    'connectors.verificationHint':
+      'Space is checking the account and permissions. Wait for the result here; opening a webpage alone does not mean the connection succeeded.',
+    'connectors.cancelledHint':
+      'Space has stopped waiting for this connection. Permissions already granted in Feishu are not revoked.',
+    'connectors.expiredHint': 'This connection attempt expired. Reconnect to start a new attempt.',
+    'connectors.failedHint':
+      'This connection attempt has stopped. Check the reason below, then reconnect to try again.',
     'connectors.reopen': 'Reopen authorization page',
     'connectors.cancelConnection': 'Cancel connection',
     'connectors.cancelling': 'Cancelling…',
@@ -2819,6 +2830,15 @@ export const messages = {
     'connectors.privateInstall':
       '将官方 @larksuite/cli 1.0.92 安装到 Space 私有目录，不修改全局 CLI 或 Skill。确认同意安装后再继续。',
     'connectors.browserHint': '请在系统浏览器完成操作，授权结果会自动更新到这里，无需粘贴 token。',
+    'connectors.localPreparationHint':
+      'Space 正在准备本地连接组件，首次准备可能需要几分钟；准备完成后会自动打开飞书官方网页。',
+    'connectors.appSetupHint':
+      '请在已打开的飞书官方网页完成应用配置，完成后 Space 会继续引导你授权账号。',
+    'connectors.verificationHint':
+      'Space 正在校验账号和权限，请在这里等待结果；仅打开网页不代表已经连接成功。',
+    'connectors.cancelledHint': 'Space 已停止等待本次连接，不会撤销你已经在飞书授予的权限。',
+    'connectors.expiredHint': '本次连接已过期，请重新连接以开始新的流程。',
+    'connectors.failedHint': '本次连接流程已停止，请根据下方原因处理后重新连接。',
     'connectors.reopen': '重新打开授权页',
     'connectors.cancelConnection': '取消连接',
     'connectors.cancelling': '正在取消…',

@@ -29,12 +29,13 @@ window.calls=[];
 window.emit=(channel,data)=>{for(const cb of listeners[channel]??[])cb(data);};
 window.finishConnection=()=>{accounts=[connection];job={...job,phase:'connected',connection};window.emit('partner.connectors.onboarding.changed',{job});window.emit('partner.connectors.changed',{extensionId:'library'});};
 window.revokeConnection=()=>{accounts=[{...connection,connected:false,revision:2}];window.emit('partner.connectors.changed',{extensionId:'library'});};
+window.progressOnboarding=(phase,error)=>{job={...job,phase,error,canReopen:phase==='waiting_app'||phase==='waiting_authorization'};window.emit('partner.connectors.onboarding.changed',{job});};
 window.kodaxSpace={platform:'darwin',on:(channel,cb)=>{listeners[channel]=[...(listeners[channel]??[]),cb];return()=>{listeners[channel]=listeners[channel].filter(item=>item!==cb);};},invoke:async(channel,input)=>{
 window.calls.push({channel,input});
 if(channel==='space.extensions.list')return {ok:true,data:{extensions:[extension]}};
 if(channel==='space.extensions.connectors.catalog')return {ok:true,data:{connectors:[connector]}};
 if(channel==='partner.connectors.accounts')return {ok:true,data:{connections:accounts}};
-if(channel==='partner.connectors.onboarding.start'){job={...job,phase:input.installCli?'waiting_authorization':window.delayStart?'waiting_app':'needs_install',canReopen:!!input.installCli};if(window.delayStart)return new Promise(resolve=>{window.finishStart=()=>resolve({ok:true,data:{job}});});return {ok:true,data:{job}};}
+if(channel==='partner.connectors.onboarding.start'){job={...job,phase:input.installCli?(window.fixtureOptions?.installPhase??'waiting_authorization'):window.delayStart?'waiting_app':'needs_install',canReopen:!!input.installCli};if(window.delayStart)return new Promise(resolve=>{window.finishStart=()=>resolve({ok:true,data:{job}});});return {ok:true,data:{job}};}
 if(channel==='partner.connectors.onboarding.get')return {ok:true,data:{job}};
 if(channel==='partner.connectors.onboarding.reopen')return {ok:true,data:{ok:true}};
 if(channel==='partner.connectors.onboarding.cancel'){if(window.failCancel)return {ok:false,error:{message:'Cancellation could not be confirmed'}};return new Promise(resolve=>{window.finishCancel=()=>{job={...job,phase:window.connectedBeforeCancel?'connected':'cancelled',canReopen:false,...(window.connectedBeforeCancel?{connection}:{})};if(window.connectedBeforeCancel)accounts=[connection];resolve({ok:true,data:{job}});};});}
@@ -51,7 +52,10 @@ function App(){const [open,setOpen]=useState(true);const [tried,setTried]=useSta
 createRoot(document.getElementById('root')).render(<I18nProvider><SpaceExtensionsProvider><PartnerConnectorProvider><App/></PartnerConnectorProvider></SpaceExtensionsProvider></I18nProvider>);
 `;
 
-async function openFixture(t: TestContext, options: { existingSession?: boolean } = {}) {
+async function openFixture(
+  t: TestContext,
+  options: { existingSession?: boolean; installPhase?: 'installing' } = {},
+) {
   const output = await build({
     stdin: {
       contents: `window.fixtureOptions=${JSON.stringify(options)};\n${fixture}`,
@@ -152,6 +156,109 @@ test(
       ),
       false,
     );
+    assert.deepEqual(errors, []);
+  },
+);
+
+test(
+  'local CLI installation and failure never tell the user to complete browser authorization',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t, { installPhase: 'installing' });
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Install and continue', exact: true }).click();
+    await dialog.getByText('Installing the official CLI…', { exact: true }).waitFor();
+    await dialog
+      .getByText(
+        'Space is preparing the local connector components. First-time setup can take a few minutes; the official Feishu page opens automatically after preparation succeeds.',
+        { exact: true },
+      )
+      .waitFor();
+    await page.evaluate(() =>
+      Reflect.get(window, 'progressOnboarding')(
+        'failed',
+        '飞书 CLI 安装或校验失败，尚未进入网页授权，请稍后重试。',
+      ),
+    );
+    await dialog
+      .getByText('飞书 CLI 安装或校验失败，尚未进入网页授权，请稍后重试。', { exact: true })
+      .waitFor();
+    await dialog
+      .getByText(
+        'This connection attempt has stopped. Check the reason below, then reconnect to try again.',
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(
+      await dialog
+        .getByText(
+          'Continue in the system browser. Space will update this dialog after authorization; no token needs to be pasted here.',
+          { exact: true },
+        )
+        .count(),
+      0,
+    );
+    assert.deepEqual(errors, []);
+  },
+);
+
+test(
+  'onboarding guidance follows the actual local, webpage, verification, and stopped phases',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t);
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+    await dialog.getByText('Feishu CLI is required', { exact: true }).waitFor();
+    const authorizationHint =
+      'Continue in the system browser. Space will update this dialog after authorization; no token needs to be pasted here.';
+    const phases = [
+      [
+        'preparing',
+        'Space is preparing the local connector components. First-time setup can take a few minutes; the official Feishu page opens automatically after preparation succeeds.',
+      ],
+      [
+        'waiting_app',
+        'Complete app setup on the official Feishu page that opened. Space will guide you through account authorization next.',
+      ],
+      ['waiting_authorization', authorizationHint],
+      [
+        'verifying',
+        'Space is checking the account and permissions. Wait for the result here; opening a webpage alone does not mean the connection succeeded.',
+      ],
+      [
+        'failed',
+        'This connection attempt has stopped. Check the reason below, then reconnect to try again.',
+      ],
+      [
+        'cancelled',
+        'Space has stopped waiting for this connection. Permissions already granted in Feishu are not revoked.',
+      ],
+      ['expired', 'This connection attempt expired. Reconnect to start a new attempt.'],
+    ];
+    for (const [phase, hint] of phases) {
+      await page.evaluate(
+        (phase) =>
+          Reflect.get(window, 'progressOnboarding')(
+            phase,
+            phase === 'failed' ? 'Account permissions could not be verified.' : undefined,
+          ),
+        phase,
+      );
+      await dialog.getByText(hint, { exact: true }).waitFor();
+      assert.equal(
+        await dialog.getByText(authorizationHint, { exact: true }).count(),
+        phase === 'waiting_authorization' ? 1 : 0,
+        phase,
+      );
+      if (phase === 'failed') {
+        await dialog
+          .getByText('Account permissions could not be verified.', { exact: true })
+          .waitFor();
+        assert.equal(await dialog.getByText('尚未进入网页授权', { exact: false }).count(), 0);
+      }
+    }
     assert.deepEqual(errors, []);
   },
 );
