@@ -18,6 +18,9 @@ export interface PartnerContextSummaryInput {
   readonly transientArtifactLabels: readonly string[];
   readonly deliveryPaths: readonly string[];
   readonly pendingReviewPaths: readonly string[];
+  readonly remoteSourceLabels?: readonly string[];
+  readonly remoteReviewLabels?: readonly string[];
+  readonly remoteReceiptLabels?: readonly string[];
 }
 
 export const EMPTY_PARTNER_CONTEXT_SUMMARY: PartnerContextSummary = {
@@ -51,23 +54,32 @@ export function projectPartnerContextSummary(
 
   return {
     sources: {
-      count: input.sourceLabels.length + input.pendingSourcePaths.length,
-      labels: compactLabels([...input.sourceLabels, ...pendingSourceLabels]),
+      count:
+        input.sourceLabels.length +
+        input.pendingSourcePaths.length +
+        (input.remoteSourceLabels?.length ?? 0),
+      labels: compactLabels([
+        ...input.sourceLabels,
+        ...pendingSourceLabels,
+        ...(input.remoteSourceLabels ?? []),
+      ]),
     },
     results: {
       count:
         input.artifactLabels.length +
         input.transientArtifactLabels.length +
-        input.deliveryPaths.length,
+        input.deliveryPaths.length +
+        (input.remoteReceiptLabels?.length ?? 0),
       labels: compactLabels([
         ...input.artifactLabels,
         ...input.transientArtifactLabels,
         ...deliveryLabels,
+        ...(input.remoteReceiptLabels ?? []),
       ]),
     },
     pendingReview: {
-      count: input.pendingReviewPaths.length,
-      labels: compactLabels(pendingReviewLabels),
+      count: input.pendingReviewPaths.length + (input.remoteReviewLabels?.length ?? 0),
+      labels: compactLabels([...pendingReviewLabels, ...(input.remoteReviewLabels ?? [])]),
     },
   };
 }

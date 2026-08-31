@@ -6,14 +6,18 @@ import type {
   AgentMode,
   AutoModeEngine,
   PartnerExpertSnapshotT,
+  PartnerConnectorSnapshotT,
   PermissionMode,
   ReasoningMode,
 } from '@kodax-space/space-ipc-schema';
-import { partnerExpertSnapshotSchema } from '@kodax-space/space-ipc-schema';
+import {
+  partnerExpertSnapshotSchema,
+  partnerConnectorSnapshotsSchema,
+} from '@kodax-space/space-ipc-schema';
 import { getSpaceDataDir } from './data-paths.js';
 import { replaceFileIfUnchanged, writeNewFileExclusive } from './atomic-file.js';
 
-const MAX_RUNTIME_FILE_BYTES = 64 * 1024;
+const MAX_RUNTIME_FILE_BYTES = 256 * 1024;
 const persistedAgentModeSchema = z.preprocess(
   (value) => (value === 'amaw' || value === 'ama-workflow' ? 'ama' : value),
   z.enum(['ama', 'sa']),
@@ -31,6 +35,7 @@ const sessionRuntimeSchema = z
     reasoningMode: z.enum(['off', 'auto', 'quick', 'balanced', 'deep']).optional(),
     agentMode: persistedAgentModeSchema.optional(),
     partnerExpert: partnerExpertSnapshotSchema.optional(),
+    partnerConnectors: partnerConnectorSnapshotsSchema.optional(),
     updatedAt: z.string().min(1),
   })
   .strict();
@@ -44,6 +49,7 @@ export interface SessionRuntimeSettings {
   readonly reasoningMode?: ReasoningMode;
   readonly agentMode?: AgentMode;
   readonly partnerExpert?: PartnerExpertSnapshotT;
+  readonly partnerConnectors?: readonly PartnerConnectorSnapshotT[];
 }
 
 interface SessionRuntimeFile extends SessionRuntimeSettings {
@@ -81,6 +87,9 @@ function settingsFromParsed(parsed: z.infer<typeof sessionRuntimeSchema>): Sessi
     ...(parsed.reasoningMode !== undefined ? { reasoningMode: parsed.reasoningMode } : {}),
     ...(parsed.agentMode !== undefined ? { agentMode: parsed.agentMode } : {}),
     ...(parsed.partnerExpert !== undefined ? { partnerExpert: parsed.partnerExpert } : {}),
+    ...(parsed.partnerConnectors !== undefined
+      ? { partnerConnectors: parsed.partnerConnectors }
+      : {}),
   };
 }
 
@@ -106,6 +115,9 @@ function buildSessionRuntimeFile(
     ...(settings.reasoningMode !== undefined ? { reasoningMode: settings.reasoningMode } : {}),
     ...(settings.agentMode !== undefined ? { agentMode: settings.agentMode } : {}),
     ...(settings.partnerExpert !== undefined ? { partnerExpert: settings.partnerExpert } : {}),
+    ...(settings.partnerConnectors !== undefined
+      ? { partnerConnectors: settings.partnerConnectors }
+      : {}),
     updatedAt,
   };
 }

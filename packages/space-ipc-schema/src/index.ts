@@ -7,6 +7,8 @@
 //
 // FEATURE_001 时这里只有一个最小 versionChannel；FEATURE_002 起完整 envelope + registry。
 
+export * from './channels/partner-connector.js';
+
 export {
   IPC_ERROR_CODES,
   ipcErrorSchema,

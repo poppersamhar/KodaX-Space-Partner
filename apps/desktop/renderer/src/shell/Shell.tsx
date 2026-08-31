@@ -82,6 +82,11 @@ import {
 } from '../features/extensions/SpaceExtensionsProvider.js';
 import { PartnerExtensionView } from '../features/extensions/PartnerExtensionView.js';
 import {
+  PartnerConnectorProvider,
+  PARTNER_CONNECTOR_DETAIL_EVENT,
+  type PartnerConnectorDetailRequest,
+} from '../features/extensions/PartnerConnectorProvider.js';
+import {
   PartnerExpertProvider,
   PARTNER_EXPERT_DETAIL_EVENT,
   type PartnerExpertDetailRequest,
@@ -266,7 +271,9 @@ export function Shell(props: ShellProps): JSX.Element {
   return (
     <SpaceExtensionsProvider>
       <PartnerExpertProvider>
-        <ShellContent {...props} />
+        <PartnerConnectorProvider>
+          <ShellContent {...props} />
+        </PartnerConnectorProvider>
       </PartnerExpertProvider>
     </SpaceExtensionsProvider>
   );
@@ -706,6 +713,34 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
       rightSidebarDefaultWidthFits,
     ],
   );
+
+  useEffect(() => {
+    const onConnectorDetails = (event: Event): void => {
+      const detail = (event as CustomEvent<PartnerConnectorDetailRequest>).detail;
+      if (
+        !detail ||
+        currentSurface !== 'partner' ||
+        detail.context.surface !== currentSurface ||
+        detail.context.projectRoot !== currentProjectPathForPartnerDetail ||
+        detail.context.sessionId !== currentSessionIdForPlan
+      )
+        return;
+      closeExtensionView();
+      openPartnerDetail({
+        kind: 'connector',
+        extensionId: detail.extensionId,
+        connector: detail.connector,
+      });
+    };
+    window.addEventListener(PARTNER_CONNECTOR_DETAIL_EVENT, onConnectorDetails);
+    return () => window.removeEventListener(PARTNER_CONNECTOR_DETAIL_EVENT, onConnectorDetails);
+  }, [
+    currentSurface,
+    currentProjectPathForPartnerDetail,
+    currentSessionIdForPlan,
+    closeExtensionView,
+    openPartnerDetail,
+  ]);
 
   useEffect(() => {
     const onExpertDetails = (event: Event): void => {
@@ -1324,6 +1359,14 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
                 onExpertDetails={(expert) => {
                   closeExtensionView();
                   openPartnerDetail({ kind: 'expert', expert });
+                }}
+                onConnectorDetails={(connector) => {
+                  closeExtensionView();
+                  openPartnerDetail({
+                    kind: 'connector',
+                    extensionId: visibleExtension.id,
+                    connector,
+                  });
                 }}
               />
             )}

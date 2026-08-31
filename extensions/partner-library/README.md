@@ -2,13 +2,14 @@
 
 This is an independently built UI package, not a module imported by the trusted
 desktop renderer. The archive contains exactly `manifest.json` and a
-self-contained `ui/index.html`. Version 0.3.0 retains the writing mentor and adds
+self-contained `ui/index.html`. Version 0.4.0 retains the writing mentor and
 eight scene experts: document processing, research, data analysis, presentations,
 finance, product management, design, and email editing. Their persistent role
 prompts are separate from the original task templates, which remain starter tasks.
-No built-in expert configures a Skill by default. The connector catalog is still
-empty; this package does not claim that any service is connected and does not
-include or install Skills.
+No built-in expert configures a Skill by default. This version declares the
+Feishu documents connector, backed by the trusted host's supported `feishu-cli`
+adapter. A declaration is not a connected account. The package does not include
+or install Skills, authenticate CLI accounts, or receive credentials/documents.
 
 ## Build
 
@@ -19,7 +20,7 @@ npm run build:packages
 node scripts/build-partner-extension.mjs
 ```
 
-The default output is `out/extensions/kodax.partner-library-0.3.0.space-extension`.
+The default output is `out/extensions/kodax.partner-library-0.4.0.space-extension`.
 Use `--out-dir <directory>` for another artifact directory. The archive is a ZIP;
 the builder computes the HTML SHA-256 and replaces the placeholder from the
 source manifest in the archive only.
@@ -107,3 +108,36 @@ alongside the unchanged writing mentor in the 0.3.0 package.
 
 These are archive, store, and expert-catalog tests. They do not establish that the
 whole F146 feature or the interactive Electron install/select/send flow is complete.
+
+## Feishu connector host boundary (P4/P5)
+
+The package frame can only request `connector.catalog` and `connector.configure`.
+It cannot provide an extension/session identity, obtain tokens, read documents,
+change global policy, or approve writes. Configuration opens the trusted Space
+detail panel. Install the supported official CLI separately with
+`npm install -g @larksuite/cli@1.0.92`, and follow `lark-cli --help` for account
+setup. Space's Connect button only verifies a previously configured profile.
+
+The trusted panel separates account connection from per-conversation selection.
+Users select exact `https://<tenant>.feishu.cn/docx/<id>` links with read or
+read-plus-append scope, and optionally an exact folder URL for new documents.
+Selections become composer chips without changing drafts or sending messages.
+The existing global connector-write policy remains off unless explicitly changed
+in the trusted confirmation dialog. Enabling it affects all connectors but does
+not bypass account permissions, document scopes or individual write approvals.
+
+Reads appear in the existing 资料 card as immutable remote snapshots. Proposed
+create/append content appears in 待审核; its complete content, target, operation
+and version are shown before a host confirmation submits the exact content hash.
+Only verified successes appear in 成果 as remote receipts. Unknown/partial or
+submitting records cannot be retried; conflicts require rereading and proposing
+again. Remote records never masquerade as local file paths or local deliveries.
+
+Renderer tests cover strict frame messages, selection/draft coordination,
+no-partial expert/connector create ACKs, scope switching, complete new-dialog
+reset, exact-hash confirmation, no uncertain retries, card projections, and the
+actual independent HTML. A real browser component fixture additionally verifies
+profile-connect versus session-select, policy cancellation/confirmation, draft
+preservation, and a late read after switching projects. These are isolated fake
+host tests, not a claim that a user's real Feishu account has been authenticated
+or a real remote document has been written.

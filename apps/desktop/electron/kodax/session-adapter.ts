@@ -19,6 +19,7 @@ import type {
   AutoModeEngine,
   InputArtifact,
   PartnerExpertSnapshotT,
+  PartnerConnectorSnapshotT,
   PermissionDecision,
   PermissionMode,
   SessionEvent,
@@ -48,6 +49,7 @@ export type SessionCreateOptions = {
   readonly agentMode?: AgentMode;
   readonly surface?: Surface;
   readonly partnerExpert?: PartnerExpertSnapshotT;
+  readonly partnerConnectors?: readonly PartnerConnectorSnapshotT[];
   readonly ephemeral?: boolean;
   readonly model?: string;
   readonly parentSessionId?: string;
@@ -138,6 +140,7 @@ export interface ManagedSession {
   readonly surface: Surface;
   /** Selected role for future Partner runs; every admitted run copies its own snapshot. */
   partnerExpert?: PartnerExpertSnapshotT;
+  partnerConnectors?: readonly PartnerConnectorSnapshotT[];
   /**
    * Host-only temporary sessions are hidden from normal session lists until the
    * user explicitly promotes them, e.g. Quick Ask -> Continue in Coder.

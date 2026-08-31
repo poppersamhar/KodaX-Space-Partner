@@ -11,6 +11,42 @@ const request = {
   revision: 1,
 };
 
+test('connector frame can browse declarations or open trusted configuration, never read secrets or apply writes', () => {
+  const base = { type: request.type, requestId: request.requestId, token: request.token };
+  assert.equal(
+    parseExtensionFrameRequest({ ...base, method: 'connector.catalog' })?.method,
+    'connector.catalog',
+  );
+  assert.equal(
+    parseExtensionFrameRequest({
+      ...base,
+      method: 'connector.configure',
+      connectorId: 'feishu-docs',
+    })?.method,
+    'connector.configure',
+  );
+  for (const extra of [
+    { sessionId: 'foreign' },
+    { profile: 'secret' },
+    { extensionId: 'other' },
+    { tokenSecret: 'secret' },
+    { command: 'anything' },
+  ])
+    assert.equal(
+      parseExtensionFrameRequest({
+        ...base,
+        method: 'connector.configure',
+        connectorId: 'feishu-docs',
+        ...extra,
+      }),
+      null,
+    );
+  assert.equal(
+    parseExtensionFrameRequest({ ...base, method: 'connector.apply', connectorId: 'feishu-docs' }),
+    null,
+  );
+});
+
 test('only bounded extension methods are accepted', () => {
   assert.equal(parseExtensionFrameRequest(request)?.method, 'expert.select');
   assert.equal(parseExtensionFrameRequest({ ...request, method: 'ipc.invoke' }), null);

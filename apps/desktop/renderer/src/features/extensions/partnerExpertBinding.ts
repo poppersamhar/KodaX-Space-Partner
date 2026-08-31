@@ -197,6 +197,10 @@ export function createPartnerExpertBinding(api: PartnerExpertApi) {
         ...(snapshot.state.expert ? { expert: expertRef(snapshot.state.expert) } : {}),
       };
     },
+    isCaptureCurrent: (capture: PartnerExpertDraftCapture): boolean =>
+      capture.epoch === epoch &&
+      capture.selectionRevision === selectionRevision &&
+      expertContextMatches(capture.context, snapshot.context),
     acceptCreatedSession: (
       capture: PartnerExpertDraftCapture,
       sessionId: string,

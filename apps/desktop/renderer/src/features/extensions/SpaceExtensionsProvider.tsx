@@ -23,9 +23,10 @@ export async function invokeExtensionHost<C extends InvokeChannelName>(
 ): Promise<ChannelOutput<C>> {
   const bridge = window.kodaxSpace;
   if (!bridge) throw new Error(translateMessage('extensions.desktopRequired'));
-  // A native file picker may stay open while the user locates their package.
+  // Native picking and remote write verification own their main-process deadlines.
+  // A renderer timeout must not offer a retry while a reviewed write is still submitting.
   const result =
-    channel === 'space.extensions.install'
+    channel === 'space.extensions.install' || channel === 'partner.connectors.proposals.apply'
       ? await bridge.invoke(channel, input)
       : await invokeWithTimeout(bridge, channel, input);
   if (!result.ok) throw new Error(result.error.message);

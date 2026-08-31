@@ -60,10 +60,12 @@ test('create ACK consumes only its matching draft and keeps the backend expert s
   await binding.setContext(draft);
   await binding.select(ref);
   const captured = binding.captureDraft(draft);
+  assert.equal(binding.isCaptureCurrent(captured), true);
   assert.equal(binding.acceptCreatedSession(captured, 'session-1', expert), true);
   assert.equal(binding.getSnapshot().context.sessionId, 'session-1');
   assert.deepEqual(binding.getSnapshot().state.expert, expert);
   await binding.setContext(draft);
+  assert.equal(binding.isCaptureCurrent(captured), false);
   assert.equal(binding.getSnapshot().state.expert, null);
 });
 

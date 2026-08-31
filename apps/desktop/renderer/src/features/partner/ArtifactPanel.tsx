@@ -15,6 +15,7 @@ import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
 import { FileProposalsPanel } from './FileProposalsPanel.js';
 import { DeliveriesPanel } from './DeliveriesPanel.js';
+import { PartnerRemoteRecords } from '../extensions/PartnerRemoteRecords.js';
 import type { PartnerResultSelectionRequest } from './partnerResultRail.js';
 import { handleTablistKeyDown } from './tablistKeyboard.js';
 import {
@@ -181,6 +182,9 @@ export function ArtifactPanel({
           aria-label={hideDestinationTabs ? t('partner.results.tab.results') : undefined}
           className="flex min-h-0 flex-1 flex-col"
         >
+          <div className="max-h-[60%] shrink-0 overflow-y-auto">
+            <PartnerRemoteRecords kind="results" />
+          </div>
           <div className="h-8 flex-shrink-0 border-b border-border-default px-3 flex items-center">
             <div
               className="flex min-w-0 items-center gap-1"
@@ -270,9 +274,14 @@ export function ArtifactPanel({
           role="tabpanel"
           aria-labelledby={hideDestinationTabs ? undefined : 'partner-pending-review-tab'}
           aria-label={hideDestinationTabs ? t('partner.results.tab.pendingReview') : undefined}
-          className="min-h-0 flex-1"
+          className="flex min-h-0 flex-1 flex-col"
         >
-          <FileProposalsPanel />
+          <div className="max-h-[70%] shrink-0 overflow-y-auto">
+            <PartnerRemoteRecords kind="pendingReview" />
+          </div>
+          <div className="min-h-0 flex-1">
+            <FileProposalsPanel />
+          </div>
         </div>
       )}
     </aside>

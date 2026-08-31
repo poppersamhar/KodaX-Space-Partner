@@ -1,0 +1,171 @@
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+
+export interface FeishuCliRequest {
+  args: readonly string[];
+  stdin?: string;
+  timeoutMs?: number;
+}
+
+export interface FeishuCliResponse {
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+}
+export type FeishuCliRunner = (request: FeishuCliRequest) => Promise<FeishuCliResponse>;
+
+const ERROR_MESSAGES = {
+  invalid_input: '飞书连接器参数无效。',
+  cli_missing: '未找到飞书 CLI，请先安装官方 lark-cli。',
+  unsupported_version: '请安装飞书官方 CLI 1.0.92。',
+  not_connected: '飞书用户身份未连接或验证失败，请检查所选 CLI 配置。',
+  identity_changed: '飞书账户已改变，请重新连接后再操作。',
+  missing_scope: '飞书账户缺少本次文档操作所需权限。',
+  revision_changed: '飞书文档版本已改变，请重新读取并审核修改。',
+  invalid_response: '飞书返回了无法验证的结果，请检查文档后再操作。',
+  command_failed: '飞书 CLI 操作失败，请检查连接状态。',
+  timeout: '飞书 CLI 操作超时，请先核对文档状态，不要重复提交。',
+  output_limit: '飞书 CLI 返回内容超过安全上限。',
+} as const;
+
+export type FeishuCliErrorCode = keyof typeof ERROR_MESSAGES;
+
+/** Only fixed host messages cross the connector boundary; raw stderr may contain credentials. */
+export class FeishuCliError extends Error {
+  constructor(
+    readonly code: FeishuCliErrorCode,
+    readonly dispatched: boolean,
+  ) {
+    super(ERROR_MESSAGES[code]);
+    this.name = 'FeishuCliError';
+  }
+}
+
+export interface FeishuCliRunnerOptions {
+  executable?: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  maxOutputBytes?: number;
+}
+
+function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    'PATH',
+    'HOME',
+    'USERPROFILE',
+    'USER',
+    'LOGNAME',
+    'TMPDIR',
+    'TMP',
+    'TEMP',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'SYSTEMROOT',
+    'WINDIR',
+    'PATHEXT',
+  ]);
+  return Object.fromEntries(
+    Object.entries(source).filter(
+      ([key, value]) => allowed.has(key.toUpperCase()) && value !== undefined,
+    ),
+  );
+}
+
+/** Trusted host/test seam only: neither executable nor env can be supplied by a plugin frame. */
+export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): FeishuCliRunner {
+  const source = options.env ?? process.env;
+  const executable = options.executable ?? source.KODAX_SPACE_FEISHU_CLI ?? 'lark-cli';
+  const env = safeEnvironment(source);
+  return (request) =>
+    new Promise((resolve, reject) => {
+      const timeoutMs = request.timeoutMs ?? options.timeoutMs ?? 45000;
+      const maxOutputBytes = options.maxOutputBytes ?? 2 * 1024 * 1024;
+      if (
+        !executable ||
+        executable.includes('\0') ||
+        executable.length > 4096 ||
+        request.args.length > 64 ||
+        request.args.some(
+          (arg) => typeof arg !== 'string' || arg.includes('\0') || arg.length > 8192,
+        ) ||
+        !Number.isSafeInteger(timeoutMs) ||
+        timeoutMs < 1 ||
+        timeoutMs > 60000 ||
+        !Number.isSafeInteger(maxOutputBytes) ||
+        maxOutputBytes < 1 ||
+        maxOutputBytes > 2 * 1024 * 1024 ||
+        Buffer.byteLength(request.stdin ?? '', 'utf8') > 1024 * 1024
+      ) {
+        reject(new FeishuCliError('invalid_input', false));
+        return;
+      }
+      const child = spawn(executable, [...request.args], {
+        shell: false,
+        cwd: tmpdir(),
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+      });
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let outputBytes = 0;
+      let settled = false;
+      let dispatched = false;
+      const finish = (error?: FeishuCliError, exitCode: number | null = null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) reject(error);
+        else
+          resolve({
+            stdout: Buffer.concat(stdout).toString('utf8'),
+            stderr: Buffer.concat(stderr).toString('utf8'),
+            exitCode,
+          });
+      };
+      const stop = () => {
+        if (process.platform !== 'win32' && child.pid) {
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {
+            child.kill('SIGKILL');
+          }
+        } else child.kill('SIGKILL');
+      };
+      const timer = setTimeout(() => {
+        stop();
+        finish(new FeishuCliError('timeout', dispatched));
+      }, timeoutMs);
+      child.on('spawn', () => {
+        dispatched = true;
+      });
+      const collect = (target: Buffer[], chunk: Buffer) => {
+        if (settled) return;
+        outputBytes += chunk.length;
+        if (outputBytes > maxOutputBytes) {
+          stop();
+          finish(new FeishuCliError('output_limit', dispatched));
+        } else target.push(chunk);
+      };
+      child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk));
+      child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
+      child.on('error', (error: NodeJS.ErrnoException) =>
+        finish(
+          new FeishuCliError(
+            error.code === 'ENOENT' ? 'cli_missing' : 'command_failed',
+            dispatched,
+          ),
+        ),
+      );
+      child.on('close', (exitCode) => finish(undefined, exitCode));
+      child.stdin.on('error', () => {
+        stop();
+        finish(new FeishuCliError('command_failed', dispatched));
+      });
+      child.stdin.end(request.stdin ?? '');
+    });
+}
+
+export const runFeishuCli: FeishuCliRunner = (request) => createFeishuCliRunner()(request);

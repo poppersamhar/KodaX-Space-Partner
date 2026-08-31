@@ -25,6 +25,7 @@ import {
 } from './partnerDetailWorkspace.js';
 import { handleTablistKeyDown } from './tablistKeyboard.js';
 import { PartnerExpertDetails } from '../extensions/PartnerExpertDetails.js';
+import { PartnerConnectorDetails } from '../extensions/PartnerConnectorDetails.js';
 
 const LazyTerminalManager = lazy(() =>
   import('../terminal/TerminalManager.js').then((module) => ({
@@ -168,7 +169,9 @@ export function PartnerRightSidebar({
           {state.tabs.map((tab, index) => {
             const active = tab.id === state.activeId;
             const translatedTitle =
-              tab.kind === 'file' || tab.kind === 'expert' ? tab.title : detailTitle(tab.kind, t);
+              tab.kind === 'file' || tab.kind === 'expert' || tab.kind === 'connector'
+                ? tab.title
+                : detailTitle(tab.kind, t);
             const tabbable = active || (state.activeId === null && index === 0);
             return (
               <div
@@ -225,6 +228,18 @@ export function PartnerRightSidebar({
 
       <div id="partner-detail-content" className="relative min-h-0 flex-1">
         {state.activeId === null && <PartnerDetailLauncher onLaunch={launch} />}
+        {state.tabs
+          .filter((tab) => tab.kind === 'connector' && tab.connector && tab.extensionId)
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {activeTab?.id === tab.id && (
+                <PartnerConnectorDetails
+                  extensionId={tab.extensionId!}
+                  connector={tab.connector!}
+                />
+              )}
+            </DetailTabPanel>
+          ))}
 
         {state.tabs
           .filter((tab) => tab.kind === 'expert' && tab.expert)
@@ -346,6 +361,7 @@ function DetailTabPanel({
 }
 
 function detailTitle(kind: PartnerDetailTabKind, t: ReturnType<typeof useI18n>['t']): string {
+  if (kind === 'connector') return t('connectors.setup');
   if (kind === 'expert') return t('extensions.expertDetails');
   if (kind === 'sources') return t('partner.sources.title');
   if (kind === 'results') return t('partner.results.tab.results');

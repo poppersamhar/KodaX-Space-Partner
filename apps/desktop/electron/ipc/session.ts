@@ -108,6 +108,9 @@ import type {
   InputArtifact,
   PartnerExpertSnapshotT,
   PartnerExpertStateT,
+  PartnerConnectorSelectionT,
+  PartnerConnectorSnapshotT,
+  PartnerConnectorStateT,
   SessionHistoryItem,
   SessionMeta,
 } from '@kodax-space/space-ipc-schema';
@@ -895,6 +898,18 @@ type PartnerExpertChannelRegistrar = <
   handler: Parameters<typeof registerChannelWithEvent<C>>[1],
 ) => void;
 const partnerExpertMutationTails = new Map<string, Promise<void>>();
+const partnerConnectorMutationTails = new Map<string, Promise<void>>();
+
+export interface PartnerConnectorSessionAccess {
+  resolveSelections(
+    selections: readonly PartnerConnectorSelectionT[],
+  ): Promise<PartnerConnectorSnapshotT[]>;
+  describeBindings(bindings: readonly PartnerConnectorSnapshotT[]): Promise<PartnerConnectorStateT>;
+}
+
+async function connectorSessionService(): Promise<PartnerConnectorSessionAccess> {
+  return (await import('../partner-connectors/runtime.js')).getPartnerConnectorService();
+}
 
 /**
  * 校验 providerId 实际存在于 catalog / custom-providers / 是 'mock'。
@@ -953,6 +968,7 @@ export async function createSessionForIpc(
   input: ChannelInput<'session.create'>,
   options: SessionChannelsOptions = {},
   expertCatalog: PartnerExpertCatalogAccess = getSpaceExpertCatalog(),
+  connectorService?: PartnerConnectorSessionAccess,
 ): Promise<ChannelOutput<'session.create'>> {
   const releaseModeSwitchAdmission = options.beginCoderAdmission?.() ?? (() => undefined);
   try {
@@ -963,6 +979,17 @@ export async function createSessionForIpc(
     if (input.partnerExpert && input.ephemeral) {
       throw new Error('Partner experts require a persistent session');
     }
+    if (input.partnerConnectors?.length && input.surface !== 'partner') {
+      throw new Error('Connectors are only available in Partner sessions');
+    }
+    if (input.partnerConnectors?.length && input.ephemeral) {
+      throw new Error('Partner connectors require a persistent session');
+    }
+    const partnerConnectors = input.partnerConnectors?.length
+      ? await (connectorService ?? (await connectorSessionService())).resolveSelections(
+          input.partnerConnectors,
+        )
+      : undefined;
     // Renderer supplies identity only. The trusted, enabled package owns the prompt.
     const partnerExpert = input.partnerExpert
       ? await expertCatalog.resolve(input.partnerExpert)
@@ -1001,6 +1028,7 @@ export async function createSessionForIpc(
       surface: input.surface,
       ephemeral: input.ephemeral,
       partnerExpert,
+      partnerConnectors,
     });
     // v0.1.6 cleanup: 用 ~/.kodax/config.json 的 thinking 默认值初始化新 session。
     // 不传 schema 改动——renderer 没必要知道 thinking 默认值，main 直接 fill 即可。
@@ -1029,6 +1057,7 @@ export async function createSessionForIpc(
       autoModeEngine: runtimeDefaults.autoModeEngine,
       agentMode: runtimeDefaults.agentMode,
       ...(input.surface === 'partner' ? { partnerExpert: partnerExpert ?? null } : {}),
+      ...(input.surface === 'partner' ? { partnerConnectors: partnerConnectors ?? [] } : {}),
     };
   } finally {
     releaseModeSwitchAdmission();
@@ -1178,10 +1207,118 @@ export function registerPartnerExpertChannels(
   });
 }
 
+async function readPartnerConnectorState(
+  session: ManagedSession,
+  service?: PartnerConnectorSessionAccess,
+  publish = false,
+): Promise<PartnerConnectorStateT> {
+  for (;;) {
+    const bindings = session.partnerConnectors;
+    const state = bindings?.length
+      ? await (service ?? (await connectorSessionService())).describeBindings(bindings)
+      : { connectors: [] };
+    if (session.partnerConnectors !== bindings) continue;
+    if (publish)
+      pushToRenderer('session.partnerConnectors.changed', { sessionId: session.sessionId, state });
+    return state;
+  }
+}
+
+export async function getPartnerConnectorsForIpc(
+  input: ChannelInput<'session.partnerConnectors.get'>,
+  service?: PartnerConnectorSessionAccess,
+): Promise<PartnerConnectorStateT> {
+  return readPartnerConnectorState(await requirePartnerSession(input.sessionId), service);
+}
+
+/** Removing a chip revokes authority even when the remaining packages/accounts are offline. */
+function retainedConnectorBindings(
+  current: readonly PartnerConnectorSnapshotT[],
+  selections: readonly PartnerConnectorSelectionT[],
+): readonly PartnerConnectorSnapshotT[] | undefined {
+  if (selections.length >= current.length) return undefined;
+  const retained: PartnerConnectorSnapshotT[] = [];
+  for (const selection of selections) {
+    const binding = current.find((item) => item.connectionId === selection.connectionId);
+    if (
+      !binding ||
+      retained.includes(binding) ||
+      binding.extensionId !== selection.extensionId ||
+      binding.connectorId !== selection.connectorId ||
+      binding.connectionRevision !== selection.connectionRevision ||
+      binding.createFolderUrl !== selection.createFolderUrl ||
+      binding.documents.length !== selection.documents.length ||
+      binding.documents.some(
+        (document, index) =>
+          document.url !== selection.documents[index]?.url ||
+          document.access !== selection.documents[index]?.access,
+      )
+    )
+      return undefined;
+    retained.push(binding);
+  }
+  return retained;
+}
+
+export async function setPartnerConnectorsForIpc(
+  input: ChannelInput<'session.partnerConnectors.set'>,
+  service?: PartnerConnectorSessionAccess,
+): Promise<PartnerConnectorStateT> {
+  const previous = partnerConnectorMutationTails.get(input.sessionId) ?? Promise.resolve();
+  const mutation = previous.then(async () => {
+    const session = await requirePartnerSession(input.sessionId);
+    if (session.ephemeral) throw new Error('Partner connectors require a persistent session');
+    const retained = retainedConnectorBindings(session.partnerConnectors ?? [], input.connectors);
+    const bindings =
+      retained ??
+      (input.connectors.length
+        ? await (service ?? (await connectorSessionService())).resolveSelections(input.connectors)
+        : []);
+    const outcome = await kodaxHost.setPartnerConnectors(input.sessionId, bindings);
+    if (outcome === 'persist-failed')
+      throw new Error(
+        'Connector selection could not be persisted; the previous scope is unchanged',
+      );
+    if (outcome === 'session-not-found') throw new Error(`session not found: ${input.sessionId}`);
+    return session;
+  });
+  const tail = mutation.then(
+    () => undefined,
+    () => undefined,
+  );
+  partnerConnectorMutationTails.set(input.sessionId, tail);
+  void tail.then(() => {
+    if (partnerConnectorMutationTails.get(input.sessionId) === tail)
+      partnerConnectorMutationTails.delete(input.sessionId);
+  });
+  return readPartnerConnectorState(await mutation, service, true);
+}
+
+type PartnerConnectorChannelRegistrar = <
+  C extends 'session.partnerConnectors.get' | 'session.partnerConnectors.set',
+>(
+  name: C,
+  handler: Parameters<typeof registerChannelWithEvent<C>>[1],
+) => void;
+
+export function registerPartnerConnectorChannels(
+  register: PartnerConnectorChannelRegistrar = registerChannelWithEvent,
+): void {
+  register('session.partnerConnectors.get', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return getPartnerConnectorsForIpc(input);
+  });
+  register('session.partnerConnectors.set', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return setPartnerConnectorsForIpc(input);
+  });
+}
+
 export function registerSessionChannels(options: SessionChannelsOptions = {}): void {
   registerPartnerExpertChannels();
+  registerPartnerConnectorChannels();
   registerChannelWithEvent('session.create', (input, event) => {
-    if (input.partnerExpert) assertSpaceExtensionSender(event);
+    if (input.partnerExpert || input.partnerConnectors) assertSpaceExtensionSender(event);
     return createSessionForIpc(input, options);
   });
 
@@ -1431,6 +1568,9 @@ export function registerSessionChannels(options: SessionChannelsOptions = {}): v
             agentMode: item.agentMode,
             surface: item.surface,
             ...(item.surface === 'partner' ? { partnerExpert: item.partnerExpert ?? null } : {}),
+            ...(item.surface === 'partner'
+              ? { partnerConnectors: item.partnerConnectors ? [...item.partnerConnectors] : [] }
+              : {}),
             title: item.title,
             createdAt: item.createdAt,
             lastActivityAt: item.lastActivityAt,
@@ -1477,6 +1617,13 @@ export function registerSessionChannels(options: SessionChannelsOptions = {}): v
           surface: item.surface,
           ...(item.surface === 'partner'
             ? { partnerExpert: persistedRuntime?.partnerExpert ?? null }
+            : {}),
+          ...(item.surface === 'partner'
+            ? {
+                partnerConnectors: persistedRuntime?.partnerConnectors
+                  ? [...persistedRuntime.partnerConnectors]
+                  : [],
+              }
             : {}),
           title: item.title,
           createdAt,

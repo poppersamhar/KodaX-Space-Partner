@@ -12,6 +12,7 @@
 //   - 显式两个 map 让类型 + 运行时 allowlist 同源派生，preload 拿来直接用
 
 import { versionChannel } from './version.js';
+import { connectorInvokeChannels, connectorPushChannels } from './partner-connector.js';
 import {
   spaceExtensionsListChannel,
   spaceExtensionsInstallChannel,
@@ -308,6 +309,7 @@ import { diagnosticsExportChannel, diagnosticsReportChannel } from './diagnostic
 import { spaceControlRequestedChannel, spaceControlResolveChannel } from './space-control.js';
 
 export const invokeChannels = {
+  ...connectorInvokeChannels,
   [spaceExtensionsListChannel.name]: spaceExtensionsListChannel,
   [spaceExtensionsInstallChannel.name]: spaceExtensionsInstallChannel,
   [spaceExtensionsSetEnabledChannel.name]: spaceExtensionsSetEnabledChannel,
@@ -534,6 +536,7 @@ export const invokeChannels = {
 } as const;
 
 export const pushChannels = {
+  ...connectorPushChannels,
   [spaceExtensionsChangedChannel.name]: spaceExtensionsChangedChannel,
   [sessionPartnerExpertChangedChannel.name]: sessionPartnerExpertChangedChannel,
   [runtimeConnectionChangedChannel.name]: runtimeConnectionChangedChannel,

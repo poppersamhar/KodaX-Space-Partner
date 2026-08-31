@@ -140,6 +140,7 @@ import type {
   KodaXShellExecutionContract,
   KodaXSessionStorage,
   ToolCallSignal,
+  ExtensionRuntimeContract,
 } from '@kodax-ai/kodax/coding';
 import type {
   RuntimeDaemonKodaXOptions,
@@ -253,6 +254,12 @@ import { getSessionStorageHandle, SPACE_EPHEMERAL_SESSION_TAG } from './session-
 import { wrapSdkError } from './sdk-errors.js';
 import { buildSkillsPromptForSurface } from './skills-prompt.js';
 import { getSpaceExpertCatalog } from '../space-extensions/runtime.js';
+import {
+  createPartnerConnectorRunRuntime,
+  isPartnerConnectorTool,
+  PARTNER_CONNECTOR_PROPOSE,
+  type PartnerConnectorRunService,
+} from './partner-connector-runtime.js';
 import {
   createSpaceSdkExtensionRuntime,
   getSpaceSdkExtensionConfigGeneration,
@@ -453,6 +460,7 @@ export class RealKodaXSession implements ManagedSession {
    */
   readonly surface: Surface;
   partnerExpert?: ManagedSession['partnerExpert'];
+  partnerConnectors?: ManagedSession['partnerConnectors'];
   ephemeral: boolean;
   /** SDK 0.7.42 wired: 用户 /model 设的覆盖；undefined 走 provider 默认。*/
   model?: string;
@@ -481,7 +489,10 @@ export class RealKodaXSession implements ManagedSession {
   private readonly extensionRuntimeDisposePromises = new WeakMap<object, Promise<void>>();
   private shellExecutionFingerprint: string | undefined;
 
-  constructor(opts: SessionCreateOptions) {
+  constructor(
+    opts: SessionCreateOptions,
+    private readonly dependencies: { connectorService?: PartnerConnectorRunService } = {},
+  ) {
     this.sessionId = opts.sessionId;
     this.projectRoot = opts.projectRoot;
     this.provider = opts.provider;
@@ -492,6 +503,9 @@ export class RealKodaXSession implements ManagedSession {
     this.agentMode = opts.agentMode ?? 'ama';
     this.surface = opts.surface ?? 'code';
     this.partnerExpert = opts.partnerExpert ? structuredClone(opts.partnerExpert) : undefined;
+    this.partnerConnectors = opts.partnerConnectors
+      ? structuredClone(opts.partnerConnectors)
+      : undefined;
     this.ephemeral = opts.ephemeral ?? false;
     this.createdAt = Date.now();
     this.lastActivityAt = this.createdAt;
@@ -797,6 +811,7 @@ export class RealKodaXSession implements ManagedSession {
     // Runtime settings live for the next concrete tool call.
     const runPermissionMode = this.permissionMode;
     const runPartnerExpert = this.partnerExpert ? structuredClone(this.partnerExpert) : null;
+    const runPartnerConnectors = structuredClone(this.partnerConnectors ?? []);
     const explicitSkillReference = await this.resolveExplicitSkillReference(prompt);
     if (admissionSignal?.aborted || this.disposed) {
       return { accepted: false, reason: 'cancelled_before_admission', queueMode };
@@ -933,6 +948,7 @@ export class RealKodaXSession implements ManagedSession {
         true,
         skillPreparation?.prepared,
         runPartnerExpert,
+        runPartnerConnectors,
       );
       const outcome = admission ? await admission.promise : 'admitted';
       if (outcome === 'not_admitted' && admission?.rejectionReason !== undefined) {
@@ -1009,6 +1025,7 @@ export class RealKodaXSession implements ManagedSession {
       false,
       skillPreparation?.prepared,
       runPartnerExpert,
+      runPartnerConnectors,
     );
     return { accepted: true, queued: false };
   }
@@ -1039,6 +1056,9 @@ export class RealKodaXSession implements ManagedSession {
     runPartnerExpert: ManagedSession['partnerExpert'] | null = this.partnerExpert
       ? structuredClone(this.partnerExpert)
       : null,
+    runPartnerConnectors: NonNullable<ManagedSession['partnerConnectors']> = structuredClone(
+      this.partnerConnectors ?? [],
+    ),
   ): RuntimeAdmissionState | null {
     const abort = new AbortController();
     const runtimeAdmission =
@@ -1089,6 +1109,7 @@ export class RealKodaXSession implements ManagedSession {
         operationId,
         preparedSkill,
         runPartnerExpert,
+        runPartnerConnectors,
       );
     };
     void prepareAndRun()
@@ -1575,6 +1596,7 @@ export class RealKodaXSession implements ManagedSession {
     operationId?: string,
     explicitSkill?: PreparedExplicitSkillExecution,
     runPartnerExpert?: ManagedSession['partnerExpert'] | null,
+    runPartnerConnectors: NonNullable<ManagedSession['partnerConnectors']> = [],
   ): Promise<Error | undefined> {
     if (this.surface === 'code' && runtimeHostAdapter.isRuntimeSelected()) {
       return this.runCoderDaemon(
@@ -1884,6 +1906,13 @@ export class RealKodaXSession implements ManagedSession {
     // 但 LLM 在实际 invoke 前 mode 被改成 'accept-edits'，broker 短路又允许。
     // 这里再 snapshot 一次 mode 用于审计 (broker 仍用现行 mode 决定)。
     let autoGuardrailInstalled = false;
+    let runExtensionRuntime: ExtensionRuntimeContract | undefined;
+    const connectorToolAllowed = (tool: string): boolean =>
+      this.surface === 'partner' &&
+      isPartnerConnectorTool(tool) &&
+      sdk.lookupRunScopedTool(runExtensionRuntime, tool) !== undefined &&
+      (tool !== PARTNER_CONNECTOR_PROPOSE ||
+        (runPermissionMode !== 'plan' && this.permissionMode !== 'plan'));
     const beforeToolExecute: NonNullable<KodaXEvents['beforeToolExecute']> = async (
       tool,
       input,
@@ -1894,11 +1923,14 @@ export class RealKodaXSession implements ManagedSession {
       // planModeBlockCheck 的调用路径（如 MCP 工具），Partner 仍不会执行非白名单工具。
       let partnerToolAllowed: boolean | undefined;
       if (this.surface === 'partner') {
-        partnerToolAllowed = isPartnerToolAllowed(
-          tool,
-          sdk.resolveToolCapability(tool),
-          sdk.getRegisteredToolDefinition(tool),
-        );
+        partnerToolAllowed =
+          connectorToolAllowed(tool) ||
+          (!isPartnerConnectorTool(tool) &&
+            isPartnerToolAllowed(
+              tool,
+              sdk.resolveToolCapability(tool),
+              sdk.getRegisteredToolDefinition(tool),
+            ));
         if (!partnerToolAllowed) return false;
       }
       // KodaX runs tool guardrails before beforeToolExecute. Once this run's Auto
@@ -1943,14 +1975,18 @@ export class RealKodaXSession implements ManagedSession {
     // tier（resolveToolCapability==='read'）+ 显式 web 研究工具；Coder 行为不变（plan-mode 原样）。
     // SDK 查询走 thunk 保持惰性。
     const planModeBlockCheck = (tool: string, _input: Record<string, unknown>): string | null =>
-      computeToolBlockReason({
-        surface: this.surface,
-        permissionMode: runPermissionMode,
-        tool,
-        resolveCapability: () => sdk.resolveToolCapability(tool),
-        resolveRegisteredTool: () => sdk.getRegisteredToolDefinition(tool),
-        isPlanModeAllowed: () => sdk.isToolPlanModeAllowed(tool),
-      });
+      this.surface === 'partner' && isPartnerConnectorTool(tool)
+        ? connectorToolAllowed(tool)
+          ? null
+          : '[partner] Connector tool is not available in this run or is blocked by plan mode.'
+        : computeToolBlockReason({
+            surface: this.surface,
+            permissionMode: runPermissionMode,
+            tool,
+            resolveCapability: () => sdk.resolveToolCapability(tool),
+            resolveRegisteredTool: () => sdk.getRegisteredToolDefinition(tool),
+            isPlanModeAllowed: () => sdk.isToolPlanModeAllowed(tool),
+          });
 
     // Exit plan mode — KodaX 的 exit_plan_mode 工具调用这个让 host 审批 plan 文本。
     // 返回 true → KodaX 退出 plan mode，开始执行；false → 留在 plan mode；
@@ -2638,6 +2674,20 @@ export class RealKodaXSession implements ManagedSession {
       .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
       .join('\n\n');
     const extensionRuntimeHandle = await this.ensureExtensionRuntime();
+    runExtensionRuntime = await createPartnerConnectorRunRuntime(
+      extensionRuntimeHandle?.runtime,
+      {
+        sessionId: sid,
+        projectRoot: this.projectRoot,
+        surface: this.surface,
+        permissionMode: runPermissionMode,
+        bindings: runPartnerConnectors,
+        getCurrentBindings: () =>
+          this.disposed || signal.aborted ? [] : (this.partnerConnectors ?? []),
+        getCurrentPermissionMode: () => this.permissionMode,
+      },
+      this.dependencies.connectorService,
+    );
     const inputArtifacts = buildInputArtifacts(sdk, artifacts);
     const workflowPolicy = workflowPolicyStore.get();
 
@@ -2701,7 +2751,14 @@ export class RealKodaXSession implements ManagedSession {
           : {}),
         ...(externalAgentBinding !== undefined ? { agentExecutorPlane: externalAgentBinding } : {}),
         ...(partnerAgentProfile ? { agentProfile: partnerAgentProfile } : {}),
-        ...(partnerAgentProfile ? { toolVisibilityPolicy: partnerToolVisibilityPolicy } : {}),
+        ...(partnerAgentProfile
+          ? {
+              toolVisibilityPolicy: (tool) =>
+                isPartnerConnectorTool(tool.name)
+                  ? connectorToolAllowed(tool.name)
+                  : partnerToolVisibilityPolicy(tool),
+            }
+          : {}),
         ...(combinedPromptOverlay ? { promptOverlay: combinedPromptOverlay } : {}),
         // skillsPrompt 仅在非空时挂——避免在 SDK 视角注入空字符串字段。
         ...(skillsPrompt ? { skillsPrompt } : {}),
@@ -2780,9 +2837,7 @@ export class RealKodaXSession implements ManagedSession {
         compaction: runConfig.compaction,
         sandbox: runConfig.sandbox,
         events,
-        ...(extensionRuntimeHandle !== undefined
-          ? { extensionRuntime: extensionRuntimeHandle.runtime }
-          : {}),
+        ...(runExtensionRuntime !== undefined ? { extensionRuntime: runExtensionRuntime } : {}),
         abortSignal: signal,
         // scope: 'user' 让 SDK FileSessionStorage 把 session 当成用户对话面板的
         // first-class session 落盘。storage 是 SDK 当前要求的字段——不传则

@@ -92,6 +92,10 @@ import {
 import { usePartnerExpert } from '../features/extensions/PartnerExpertProvider.js';
 import { PartnerExpertChip } from '../features/extensions/PartnerExpertChip.js';
 import type { PartnerExpertDraftCapture } from '../features/extensions/partnerExpertBinding.js';
+import { usePartnerConnectors } from '../features/extensions/PartnerConnectorProvider.js';
+import { PartnerConnectorChips } from '../features/extensions/PartnerConnectorChips.js';
+import type { PartnerConnectorDraftCapture } from '../features/extensions/partnerConnectorBinding.js';
+import { acceptPartnerCreatedDraft } from '../features/extensions/partnerDraftCreation.js';
 import { startNewConversation } from '../store/newConversation.js';
 import { applyPartnerDeliveryInstruction } from '../features/partner/partnerSceneTemplates.js';
 
@@ -505,9 +509,13 @@ export function BottomBar(): JSX.Element {
   // New sessions are tagged with the active surface.
   const currentSurface = useSurfaceStore((s) => s.currentSurface);
   const partnerExpert = usePartnerExpert();
+  const partnerConnectors = usePartnerConnectors();
   const partnerExpertBusy =
     currentSurface === 'partner' &&
-    (partnerExpert?.snapshot.changing === true || partnerExpert?.snapshot.loading === true);
+    (partnerExpert?.snapshot.changing === true ||
+      partnerExpert?.snapshot.loading === true ||
+      partnerConnectors?.snapshot.changing === true ||
+      partnerConnectors?.snapshot.loading === true);
   const mascotMode = useAppStore((s) => s.mascotMode);
   const providers = useAppStore((s) => s.providers);
   const defaultProviderId = useAppStore((s) => s.defaultProviderId);
@@ -769,9 +777,15 @@ export function BottomBar(): JSX.Element {
       pendingModel,
     });
     let expertDraft: PartnerExpertDraftCapture | undefined;
+    let connectorDraft: PartnerConnectorDraftCapture | undefined;
     if (currentSurface === 'partner' && partnerExpert) {
       try {
         expertDraft = partnerExpert.binding.captureDraft({
+          surface: 'partner',
+          projectRoot: currentProjectPath,
+          sessionId: null,
+        });
+        connectorDraft = partnerConnectors?.binding.captureDraft({
           surface: 'partner',
           projectRoot: currentProjectPath,
           sessionId: null,
@@ -788,6 +802,7 @@ export function BottomBar(): JSX.Element {
       ...runtimeOverrides,
       surface: currentSurface,
       ...(expertDraft?.expert ? { partnerExpert: expertDraft.expert } : {}),
+      ...(connectorDraft ? { partnerConnectors: connectorDraft.connectors } : {}),
     };
 
     const applyCreatedSession = (
@@ -805,6 +820,9 @@ export function BottomBar(): JSX.Element {
         agentMode: data.agentMode,
         surface: currentSurface,
         ...(data.partnerExpert !== undefined ? { partnerExpert: data.partnerExpert } : {}),
+        ...(data.partnerConnectors !== undefined
+          ? { partnerConnectors: data.partnerConnectors }
+          : {}),
         title: undefined,
         createdAt: data.createdAt,
         lastActivityAt: data.createdAt,
@@ -820,11 +838,16 @@ export function BottomBar(): JSX.Element {
         (currentSurface !== 'partner' ||
           !expertDraft ||
           (latest.currentSessionId === null &&
-            partnerExpert?.binding.acceptCreatedSession(
-              expertDraft,
-              data.sessionId,
-              data.partnerExpert,
-            )));
+            partnerExpert &&
+            acceptPartnerCreatedDraft({
+              experts: partnerExpert.binding,
+              expertCapture: expertDraft,
+              connectors: partnerConnectors?.binding,
+              connectorCapture: connectorDraft,
+              sessionId: data.sessionId,
+              expert: data.partnerExpert,
+              connectorSnapshots: data.partnerConnectors ?? [],
+            })));
       if (shouldActivate) {
         setCurrentSession(stub.sessionId);
       }
@@ -2575,6 +2598,7 @@ export function BottomBar(): JSX.Element {
         >
           <ChipBar />
           {currentSurface === 'partner' && <PartnerExpertChip running={isStreaming} />}
+          {currentSurface === 'partner' && <PartnerConnectorChips />}
 
           {(pendingImages.length > 0 || pendingFileRefs.length > 0 || imageErr) && (
             <div className="space-y-1">

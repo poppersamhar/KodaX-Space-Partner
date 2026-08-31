@@ -3,6 +3,7 @@ import type {
   ChannelOutput,
   PartnerExpertSnapshotT,
   SpaceExpertRefT,
+  SpaceConnectorDefinitionT,
 } from '@kodax-space/space-ipc-schema';
 import type { ExtensionFrameRequest } from './extensionFrameBridge.js';
 
@@ -21,12 +22,26 @@ export interface PartnerExtensionActionsOptions {
   readonly onSelected: () => void;
   readonly onDetails: (expert: PartnerExpertSnapshotT) => void;
   readonly confirmDelete: (expert: PartnerExpertSnapshotT) => Promise<boolean>;
+  readonly connectors?: {
+    catalog(): Promise<{ connectors: SpaceConnectorDefinitionT[] }>;
+    onConfigure(connector: SpaceConnectorDefinitionT): void;
+  };
 }
 
 /** The untrusted frame submits content; package and conversation identity stay in the host. */
 export function createPartnerExtensionActions(options: PartnerExtensionActionsOptions) {
   return async (request: ExtensionFrameRequest): Promise<unknown> => {
     if (!options.isActive()) throw new Error('Extension view is closed or changed');
+    if (request.method === 'connector.catalog' || request.method === 'connector.configure') {
+      if (!options.connectors) throw new Error('Connector configuration unavailable');
+      const catalog = await options.connectors.catalog();
+      if (!options.isActive()) throw new Error('Extension view is closed or changed');
+      if (request.method === 'connector.catalog') return catalog;
+      const connector = catalog.connectors.find((item) => item.id === request.connectorId);
+      if (!connector) throw new Error('Connector unavailable');
+      options.connectors.onConfigure(connector);
+      return { opened: true };
+    }
     if (request.method === 'catalog.list') return options.api.catalog(options.extensionId);
     if (request.method === 'expert.save')
       return options.api.save({

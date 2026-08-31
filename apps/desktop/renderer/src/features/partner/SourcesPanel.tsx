@@ -24,6 +24,7 @@ import { previewFileInViewer } from '../../lib/openPath.js';
 import { requestConfirm } from '../../store/confirmStore.js';
 import { FileTree } from '../code/FileTree.js';
 import { KnowledgeBasePanel } from './KnowledgeBasePanel.js';
+import { PartnerRemoteRecords } from '../extensions/PartnerRemoteRecords.js';
 import { activatePartnerProjectFile } from './partnerProjectFileActivation.js';
 import {
   PARTNER_SOURCES_CHANGED_EVENT,
@@ -442,6 +443,9 @@ export function SourcesPanel({
       data-testid="partner-sources-panel"
     >
       <div className={sourcePickerOpen ? 'hidden' : 'contents'} aria-hidden={sourcePickerOpen}>
+        <div className="max-h-[60%] shrink-0 overflow-y-auto">
+          <PartnerRemoteRecords kind="sources" />
+        </div>
         <div className="px-3 h-9 flex items-center gap-2 border-b border-border-default flex-shrink-0">
           <FolderOpen className="w-3.5 h-3.5 text-fg-muted" strokeWidth={1.75} aria-hidden />
           <span className="text-[11px] uppercase tracking-wider text-fg-muted">

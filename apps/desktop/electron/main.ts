@@ -74,6 +74,7 @@ import { registerNotificationChannels, setNotificationWindowGetter } from './ipc
 import { registerUpdaterChannels, initAutoUpdater } from './ipc/updater.js';
 import { registerMcpbChannels, installMcpbFromOsHandoff } from './ipc/mcpb.js';
 import { registerSpaceExtensionChannels } from './ipc/space-extensions.js';
+import { registerPartnerConnectorChannels } from './ipc/partner-connectors.js';
 import {
   SPACE_EXTENSION_FRAME_CSP,
   isSpaceExtensionFrameUrl,
@@ -2504,6 +2505,7 @@ const startupPromise = app
     // F021 .mcpb / .dxt bundle install — IPC handlers，UI 点 "Install extension..." 走
     registerMcpbChannels();
     registerSpaceExtensionChannels();
+    registerPartnerConnectorChannels();
     // F011 内置终端 (xterm.js + node-pty) — terminal.create/write/resize/kill + output/exit push
     registerTerminalChannels();
     // OC-31 v0.1.9 clipboard image paste — renderer 把粘贴板图片落到 app temp dir

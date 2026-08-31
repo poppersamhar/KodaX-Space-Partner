@@ -5,6 +5,7 @@ import {
   SPACE_EXTENSION_FRAME_URL,
   type SpaceExtensionT,
   type PartnerExpertSnapshotT,
+  type SpaceConnectorDefinitionT,
 } from '@kodax-space/space-ipc-schema';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import {
@@ -27,6 +28,7 @@ interface PartnerExtensionViewProps {
   readonly onManage: () => void;
   readonly onExpertSelected: () => void;
   readonly onExpertDetails: (expert: PartnerExpertSnapshotT) => void;
+  readonly onConnectorDetails: (connector: SpaceConnectorDefinitionT) => void;
 }
 
 /** Only a bounded, source-checked business bridge is exposed to the opaque package frame. */
@@ -102,6 +104,7 @@ export function PartnerExtensionView({
   onManage,
   onExpertSelected,
   onExpertDetails,
+  onConnectorDetails,
 }: PartnerExtensionViewProps): JSX.Element {
   const { t } = useI18n();
   const [view, setView] = useState<{ key: string; html?: string; error?: string } | null>(null);
@@ -146,6 +149,11 @@ export function PartnerExtensionView({
   const currentView = view?.key === key ? view : null;
   const handleRequest = createPartnerExtensionActions({
     extensionId: id,
+    connectors: {
+      catalog: () =>
+        invokeExtensionHost('space.extensions.connectors.catalog', { extensionId: id }),
+      onConfigure: onConnectorDetails,
+    },
     isActive: () =>
       mounted.current &&
       catalog

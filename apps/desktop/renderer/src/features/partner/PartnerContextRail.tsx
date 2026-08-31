@@ -51,11 +51,18 @@ async function loadPartnerContext(input: ContextLoadInput): Promise<ContextLoadR
         status: 'pending',
       })
     : Promise.resolve(null);
-  const [sources, artifacts, deliveries, proposals] = await Promise.allSettled([
+  const remoteRequest = input.sessionId
+    ? input.bridge.invoke('partner.connectors.records', {
+        sessionId: input.sessionId,
+        projectRoot: input.projectRoot,
+      })
+    : Promise.resolve(null);
+  const [sources, artifacts, deliveries, proposals, remote] = await Promise.allSettled([
     sourceRequest,
     artifactRequest,
     deliveryRequest,
     proposalRequest,
+    remoteRequest,
   ]);
   const sourceLabels =
     sources.status === 'fulfilled' && sources.value.ok
@@ -77,7 +84,7 @@ async function loadPartnerContext(input: ContextLoadInput): Promise<ContextLoadR
     sources.status === 'rejected' ||
     (sources.status === 'fulfilled' && !sources.value.ok) ||
     (input.sessionId !== null &&
-      [artifacts, deliveries, proposals].some(
+      [artifacts, deliveries, proposals, remote].some(
         (request) => request.status === 'rejected' || !request.value?.ok,
       ));
   return {
@@ -88,6 +95,15 @@ async function loadPartnerContext(input: ContextLoadInput): Promise<ContextLoadR
       transientArtifactLabels: input.transientArtifactLabels,
       deliveryPaths,
       pendingReviewPaths,
+      ...(remote.status === 'fulfilled' && remote.value?.ok
+        ? {
+            remoteSourceLabels: remote.value.data.sources.map((item) => item.title),
+            remoteReviewLabels: remote.value.data.proposals
+              .filter((item) => !['succeeded', 'rejected'].includes(item.status))
+              .map((item) => item.title),
+            remoteReceiptLabels: remote.value.data.receipts.map((item) => item.title),
+          }
+        : {}),
     }),
     failed,
   };
@@ -227,10 +243,18 @@ export function PartnerContextRail({
         void refresh();
       }
     });
+    const offRemote = bridge.on('partner.connectors.changed', (payload) => {
+      if (
+        (!payload.sessionId || payload.sessionId === currentSessionId) &&
+        (!payload.projectRoot || payload.projectRoot === currentProjectPath)
+      )
+        void refresh();
+    });
     return () => {
       offArtifacts();
       offDeliveries();
       offProposals();
+      offRemote();
     };
   }, [currentProjectPath, currentSessionId, refresh]);
 

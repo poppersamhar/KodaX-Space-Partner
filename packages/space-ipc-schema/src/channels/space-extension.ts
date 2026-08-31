@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { spaceExpertDefinitionSchema } from './partner-expert.js';
+import { spaceConnectorDefinitionSchema } from './partner-connector.js';
 
 /** This route is an opaque sandboxed child document, never the trusted app frame. */
 export const SPACE_EXTENSION_FRAME_URL = 'app://space/__space-extension-frame';
@@ -34,7 +35,7 @@ export const spaceExtensionManifestSchema = z
     // Capability entries are admitted as each implemented host contract is added.
     // Never accept arbitrary executable declarations or a second Skill installer.
     experts: z.array(spaceExpertDefinitionSchema).max(128).default([]),
-    connectors: z.array(z.never()).max(0).default([]),
+    connectors: z.array(spaceConnectorDefinitionSchema).max(64).default([]),
   })
   .strict()
   .refine(
@@ -43,6 +44,15 @@ export const spaceExtensionManifestSchema = z
     {
       message: 'Expert IDs must be unique within a Space Extension',
       path: ['experts'],
+    },
+  )
+  .refine(
+    (manifest) =>
+      new Set(manifest.connectors.map((connector) => connector.id)).size ===
+      manifest.connectors.length,
+    {
+      message: 'Connector IDs must be unique within a Space Extension',
+      path: ['connectors'],
     },
   )
   .refine((manifest) => manifest.experts.every((expert) => !expert.id.startsWith('user.')), {

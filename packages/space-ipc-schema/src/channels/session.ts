@@ -8,6 +8,10 @@
 
 import { z } from 'zod';
 import { partnerExpertSnapshotSchema, spaceExpertRefSchema } from './partner-expert.js';
+import {
+  partnerConnectorSelectionsSchema,
+  partnerConnectorSnapshotsSchema,
+} from './partner-connector.js';
 import { partnerKnowledgeScopeSchema } from './partner-knowledge.js';
 import {
   spaceRuntimeRunFailureKindSchema,
@@ -118,6 +122,7 @@ const MAX_TOOL_RESULT = 524_288;
 // KodaX SDK 0.7.42 持久化 API ready 后这两个字段会同时改由 SDK 注入。
 const sessionMetaSchema = z.object({
   partnerExpert: partnerExpertSnapshotSchema.nullable().optional(),
+  partnerConnectors: partnerConnectorSnapshotsSchema.optional(),
   sessionId: z.string().min(1),
   projectRoot: z.string().min(1),
   provider: providerIdSchema,
@@ -183,6 +188,7 @@ export const sessionCreateChannel = {
   direction: 'invoke',
   input: z.object({
     partnerExpert: spaceExpertRefSchema.optional(),
+    partnerConnectors: partnerConnectorSelectionsSchema.optional(),
     projectRoot: z.string().min(1),
     provider: providerIdSchema,
     /**
@@ -208,6 +214,7 @@ export const sessionCreateChannel = {
   }),
   output: z.object({
     partnerExpert: partnerExpertSnapshotSchema.nullable().optional(),
+    partnerConnectors: partnerConnectorSnapshotsSchema.optional(),
     sessionId: z.string().min(1),
     createdAt: z.number().int().nonnegative(),
     reasoningMode: reasoningModeSchema,

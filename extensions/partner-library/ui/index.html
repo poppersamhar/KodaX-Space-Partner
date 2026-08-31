@@ -328,7 +328,7 @@
           aria-controls="connectors-panel"
           tabindex="-1"
         >
-          连接器<span class="count">0</span>
+          连接器<span class="count" id="connector-count">…</span>
         </button>
       </div>
       <section
@@ -399,10 +399,12 @@
             />
           </svg>
         </div>
-        <h2>还没有连接器</h2>
+        <h2>连接资料与文档</h2>
         <p class="description">
-          连接器将在完成接入与授权后出现在这里。当前没有已连接的第三方服务，也不会自动读取或修改远端文档。
+          账户连接、当前会话范围与写入批准彼此独立。安装扩展不会读取或修改任何远端文档。
         </p>
+        <p id="connector-status" role="status"></p>
+        <div class="expert-grid" id="connector-list"></div>
       </section>
       <div class="notice">
         <svg
@@ -612,6 +614,51 @@
             refreshButton.disabled = false;
           }
         }
+        async function loadConnectors() {
+          const connectorStatus = document.getElementById('connector-status');
+          const connectorList = document.getElementById('connector-list');
+          connectorStatus.textContent = '正在读取连接器…';
+          try {
+            const result = await request('connector.catalog');
+            if (!Array.isArray(result.connectors)) throw new Error('连接器目录格式不正确。');
+            connectorList.replaceChildren();
+            document.getElementById('connector-count').textContent = String(
+              result.connectors.length,
+            );
+            for (const connector of result.connectors) {
+              const card = document.createElement('article');
+              card.className = 'expert-card';
+              const heading = document.createElement('h3');
+              heading.textContent = connector.name;
+              const description = document.createElement('p');
+              description.textContent = connector.description;
+              const actions = document.createElement('div');
+              actions.className = 'expert-actions';
+              const configure = document.createElement('button');
+              configure.type = 'button';
+              configure.className = 'action primary';
+              configure.textContent = '设置连接与会话范围';
+              configure.addEventListener('click', async () => {
+                configure.disabled = true;
+                try {
+                  await request('connector.configure', { connectorId: connector.id });
+                  connectorStatus.textContent = '已打开 Space 的可信配置面板；本页不收集密钥。';
+                } catch (error) {
+                  connectorStatus.textContent = error.message || '无法打开连接器，请重试。';
+                } finally {
+                  configure.disabled = false;
+                }
+              });
+              actions.append(configure);
+              card.append(heading, description, actions);
+              connectorList.append(card);
+            }
+            connectorStatus.textContent =
+              '连接状态和资料范围在 Space 配置面板中管理；文档内容不会进入本扩展页面。';
+          } catch (error) {
+            connectorStatus.textContent = error.message || '读取连接器失败，请重新打开插件库。';
+          }
+        }
         window.addEventListener('message', (event) => {
           if (event.source !== window.parent || !event.data || typeof event.data !== 'object')
             return;
@@ -623,6 +670,7 @@
           ) {
             token = message.token;
             void loadExperts();
+            void loadConnectors();
           } else if (message.type === 'space-extension.response.v1' && message.token === token) {
             const entry = pending.get(message.requestId);
             if (!entry) return;

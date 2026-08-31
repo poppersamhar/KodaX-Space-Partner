@@ -3,10 +3,21 @@ import type {
   PartnerResultSelectionRequest,
 } from './partnerResultRail.js';
 import type { TransientArtifactSnapshot } from '../artifact/transientArtifact.js';
-import type { PartnerExpertSnapshotT } from '@kodax-space/space-ipc-schema';
+import type {
+  PartnerExpertSnapshotT,
+  SpaceConnectorDefinitionT,
+} from '@kodax-space/space-ipc-schema';
 
 export type PartnerDetailTabKind =
-  'sources' | 'results' | 'pendingReview' | 'files' | 'file' | 'browser' | 'terminal' | 'expert';
+  | 'sources'
+  | 'results'
+  | 'pendingReview'
+  | 'files'
+  | 'file'
+  | 'browser'
+  | 'terminal'
+  | 'expert'
+  | 'connector';
 
 export interface PartnerDetailTab {
   readonly id: string;
@@ -14,6 +25,8 @@ export interface PartnerDetailTab {
   readonly title: string;
   readonly snapshot?: TransientArtifactSnapshot;
   readonly expert?: PartnerExpertSnapshotT;
+  readonly connector?: SpaceConnectorDefinitionT;
+  readonly extensionId?: string;
 }
 
 export interface PartnerDetailWorkspaceState {
@@ -36,7 +49,12 @@ export type PartnerDetailOpenTarget =
   | { readonly kind: 'file'; readonly snapshot: TransientArtifactSnapshot }
   | { readonly kind: 'browser' }
   | { readonly kind: 'terminal' }
-  | { readonly kind: 'expert'; readonly expert: PartnerExpertSnapshotT };
+  | { readonly kind: 'expert'; readonly expert: PartnerExpertSnapshotT }
+  | {
+      readonly kind: 'connector';
+      readonly extensionId: string;
+      readonly connector: SpaceConnectorDefinitionT;
+    };
 
 export interface PartnerDetailWorkspaceContext {
   readonly projectRoot: string | null;
@@ -76,18 +94,25 @@ export function createPartnerDetailTab(
       : null;
   return {
     id:
-      target.kind === 'expert'
-        ? `partner-detail-expert-${target.expert.extensionId}-${target.expert.expert.id}`
-        : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
+      target.kind === 'connector'
+        ? `partner-detail-connector-${target.extensionId}-${target.connector.id}`
+        : target.kind === 'expert'
+          ? `partner-detail-expert-${target.expert.extensionId}-${target.expert.expert.id}`
+          : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
     kind: target.kind,
     title:
-      target.kind === 'expert'
-        ? target.expert.expert.name
-        : target.kind === 'file'
-          ? target.snapshot.title
-          : title,
+      target.kind === 'connector'
+        ? target.connector.name
+        : target.kind === 'expert'
+          ? target.expert.expert.name
+          : target.kind === 'file'
+            ? target.snapshot.title
+            : title,
     ...(target.kind === 'file' ? { snapshot: target.snapshot } : {}),
     ...(target.kind === 'expert' ? { expert: target.expert } : {}),
+    ...(target.kind === 'connector'
+      ? { connector: target.connector, extensionId: target.extensionId }
+      : {}),
   };
 }
 

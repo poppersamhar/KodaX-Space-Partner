@@ -9,6 +9,8 @@ interface ExtensionFrameEnvelope {
 export type ExtensionFrameRequest = ExtensionFrameEnvelope &
   (
     | { readonly method: 'catalog.list' }
+    | { readonly method: 'connector.catalog' }
+    | { readonly method: 'connector.configure'; readonly connectorId: string }
     | {
         readonly method: 'expert.select';
         readonly expertId: string;
@@ -52,21 +54,34 @@ export function parseExtensionFrameRequest(data: unknown): ExtensionFrameRequest
   )
     return null;
   if (
-    !['catalog.list', 'expert.select', 'expert.details', 'expert.save', 'expert.delete'].includes(
-      String(item.method),
-    )
+    ![
+      'catalog.list',
+      'connector.catalog',
+      'connector.configure',
+      'expert.select',
+      'expert.details',
+      'expert.save',
+      'expert.delete',
+    ].includes(String(item.method))
   )
     return null;
   const extraFields =
-    item.method === 'catalog.list'
+    item.method === 'catalog.list' || item.method === 'connector.catalog'
       ? []
-      : item.method === 'expert.save'
-        ? ['expertId', 'expectedRevision', 'values']
-        : item.method === 'expert.select'
-          ? ['expertId', 'revision', 'useSkill']
-          : ['expertId', 'revision'];
+      : item.method === 'connector.configure'
+        ? ['connectorId']
+        : item.method === 'expert.save'
+          ? ['expertId', 'expectedRevision', 'values']
+          : item.method === 'expert.select'
+            ? ['expertId', 'revision', 'useSkill']
+            : ['expertId', 'revision'];
   if (Object.keys(item).some((key) => ![...envelopeFields, ...extraFields].includes(key)))
     return null;
+  if (item.method === 'connector.catalog') return item as unknown as ExtensionFrameRequest;
+  if (item.method === 'connector.configure')
+    return validExpertIdentity(item.connectorId, 1)
+      ? (item as unknown as ExtensionFrameRequest)
+      : null;
   if (item.method === 'expert.save') {
     if (
       (item.expertId !== undefined || item.expectedRevision !== undefined) &&

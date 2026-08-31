@@ -34,6 +34,17 @@ async function openLibrary(t: TestContext, initialExperts: SpaceExpertDefinition
     if (!request) throw new Error('Unbounded package request');
     requests.push(request);
     if (request.method === 'catalog.list') return { experts };
+    if (request.method === 'connector.catalog')
+      return {
+        connectors: [
+          {
+            id: 'feishu-docs',
+            adapter: 'feishu-cli',
+            name: '飞书文档',
+            description: '读取资料并审核写入。',
+          },
+        ],
+      };
     if (request.method === 'expert.save') {
       const saved = {
         ...request.values,
@@ -89,6 +100,31 @@ async function openLibrary(t: TestContext, initialExperts: SpaceExpertDefinition
   await frame.getByText('写作导师', { exact: true }).waitFor();
   return { frame, requests };
 }
+
+test(
+  'the independent connector card opens only trusted configuration and never receives secrets or document content',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, requests } = await openLibrary(t);
+    await frame.getByRole('tab', { name: '连接器' }).click();
+    await frame.getByRole('heading', { name: '飞书文档', exact: true }).waitFor();
+    await frame.getByRole('button', { name: '设置连接与会话范围' }).click();
+    await frame
+      .getByText('已打开 Space 的可信配置面板；本页不收集密钥。', { exact: true })
+      .waitFor();
+    assert.deepEqual(
+      requests
+        .filter((item) => item.method === 'connector.configure')
+        .map((item) => Object.keys(item).sort()),
+      [['connectorId', 'method', 'requestId', 'token', 'type']],
+    );
+    assert.equal(await frame.locator('#connectors-panel input').count(), 0);
+    assert.equal(
+      requests.some((item) => item.method === 'expert.select'),
+      false,
+    );
+  },
+);
 
 test(
   'the independent package creates an expert with explicit fields without selecting it or sending a prompt',

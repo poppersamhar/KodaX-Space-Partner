@@ -2,6 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { projectPartnerContextSummary } from './partnerContextSummary.js';
 
+test('remote records join the three cards without treating titles or URLs as filesystem paths', () => {
+  const summary = projectPartnerContextSummary({
+    sourceLabels: [],
+    pendingSourcePaths: [],
+    artifactLabels: [],
+    transientArtifactLabels: [],
+    deliveryPaths: [],
+    pendingReviewPaths: [],
+    remoteSourceLabels: ['Feishu / quarterly report'],
+    remoteReviewLabels: ['Append conclusion'],
+    remoteReceiptLabels: ['Created report'],
+  });
+  assert.deepEqual(summary, {
+    sources: { count: 1, labels: ['Feishu / quarterly report'] },
+    pendingReview: { count: 1, labels: ['Append conclusion'] },
+    results: { count: 1, labels: ['Created report'] },
+  });
+});
+
 test('projects real Partner records into compact context-card summaries', () => {
   const summary = projectPartnerContextSummary({
     sourceLabels: ['Brief.pdf', 'Research', 'Research'],

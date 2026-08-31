@@ -3,6 +3,7 @@ import { getSpaceExtensionStore, getSpaceExpertCatalog } from '../space-extensio
 import { isSpaceExtensionFrameUrl } from '../window/space-extension-frame.js';
 import { isRendererTarget, pushToRenderer } from './push.js';
 import { registerChannelWithEvent } from './register.js';
+import { getPartnerConnectorService } from '../partner-connectors/runtime.js';
 
 export { getSpaceExtensionStore } from '../space-extensions/runtime.js';
 
@@ -44,19 +45,25 @@ export function registerSpaceExtensionChannels(register = registerChannelWithEve
     assertSpaceExtensionSender(event);
     const archive = input.filePath ?? (await chooseExtensionArchive());
     if (!archive) return { cancelled: true };
-    const extension = await getSpaceExtensionStore().install(archive);
+    const extension = await getPartnerConnectorService().deactivate(undefined, () =>
+      getSpaceExtensionStore().install(archive),
+    );
     await publishExtensions();
     return { extension };
   });
   register('space.extensions.setEnabled', async (input, event) => {
     assertSpaceExtensionSender(event);
-    const extension = await getSpaceExtensionStore().setEnabled(input.extensionId, input.enabled);
+    const extension = await getPartnerConnectorService().deactivate(input.extensionId, () =>
+      getSpaceExtensionStore().setEnabled(input.extensionId, input.enabled),
+    );
     await publishExtensions();
     return { extension };
   });
   register('space.extensions.uninstall', async (input, event) => {
     assertSpaceExtensionSender(event);
-    await getSpaceExtensionStore().uninstall(input.extensionId);
+    await getPartnerConnectorService().deactivate(input.extensionId, () =>
+      getSpaceExtensionStore().uninstall(input.extensionId),
+    );
     await publishExtensions();
     return { ok: true };
   });

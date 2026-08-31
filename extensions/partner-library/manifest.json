@@ -3,8 +3,8 @@
   "hostApiVersion": 1,
   "id": "kodax.partner-library",
   "name": "Partner 插件库",
-  "description": "在 Partner 中选择或创建专家，按角色持续协作；连接器尚待接入与授权。",
-  "version": "0.3.0",
+  "description": "选择或创建专家，并通过飞书文档连接器在明确范围内读取资料、审核远端写入。",
+  "version": "0.4.0",
   "ui": {
     "entry": "ui/index.html",
     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
@@ -103,5 +103,12 @@
       ]
     }
   ],
-  "connectors": []
+  "connectors": [
+    {
+      "id": "feishu-docs",
+      "adapter": "feishu-cli",
+      "name": "飞书文档",
+      "description": "通过已有飞书 CLI 账号读取指定文档；新建和追加内容逐条审核后提交。"
+    }
+  ]
 }
