@@ -17,6 +17,7 @@ import type { WebContents, WebFrameMain } from 'electron';
 import { isSafeRemoteFrameUrl } from '../csp-config.js';
 import { isArtifactHtmlFrameUrl } from './app-protocol-policy.js';
 import { isProjectWebPreviewUrl } from './project-web-preview.js';
+import { isSpaceExtensionFrameUrl } from './space-extension-frame.js';
 
 export interface NavGuardDeps {
   /** Vite dev-server URL when running in dev; undefined in production. */
@@ -102,6 +103,10 @@ export function installNavigationGuards(wc: WebContents, deps: NavGuardDeps): vo
   });
 
   wc.on('will-navigate', (event, url) => {
+    if (isSpaceExtensionFrameUrl(url)) {
+      event.preventDefault();
+      return;
+    }
     let parsedUrl: URL | null = null;
     try {
       parsedUrl = new URL(url);
@@ -133,7 +138,8 @@ export function installNavigationGuards(wc: WebContents, deps: NavGuardDeps): vo
   // especially app://space, file:, data:, and javascript: URLs that could cross
   // the privileged renderer boundary.
   const canNavigateSubframe = (url: string, frame: WebFrameMain | null): boolean => {
-    if (isProjectWebPreviewUrl(url) || isArtifactHtmlFrameUrl(url)) return true;
+    if (isProjectWebPreviewUrl(url) || isArtifactHtmlFrameUrl(url) || isSpaceExtensionFrameUrl(url))
+      return true;
     return Boolean(
       deps.allowPartnerBrowserFrames &&
       isSafeRemoteFrameUrl(url) &&

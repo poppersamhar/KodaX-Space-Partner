@@ -89,14 +89,11 @@ import {
   clearPartnerPendingSources,
   readPartnerPendingSources,
 } from '../features/partner/partnerWorkbench.js';
-import { PartnerSceneShortcuts } from '../features/partner/PartnerSceneShortcuts.js';
-import {
-  applyPartnerDeliveryInstruction,
-  applyPartnerSceneTemplate,
-  hasAcceptedPartnerUserMessage,
-  shouldShowPartnerSceneShortcuts,
-  type PartnerSceneTemplate,
-} from '../features/partner/partnerSceneTemplates.js';
+import { usePartnerExpert } from '../features/extensions/PartnerExpertProvider.js';
+import { PartnerExpertChip } from '../features/extensions/PartnerExpertChip.js';
+import type { PartnerExpertDraftCapture } from '../features/extensions/partnerExpertBinding.js';
+import { startNewConversation } from '../store/newConversation.js';
+import { applyPartnerDeliveryInstruction } from '../features/partner/partnerSceneTemplates.js';
 
 const SLASH_ARGS_MAX = 20;
 
@@ -498,15 +495,6 @@ export function BottomBar(): JSX.Element {
   const { t } = useI18n();
   const currentSessionId = useAppStore((s) => s.currentSessionId);
   const currentProjectPath = useAppStore((s) => s.currentProjectPath);
-  const partnerHasAcceptedUserMessage = useAppStore((state) => {
-    if (!currentSessionId) return false;
-    const persistentMessageCount =
-      state.sessions.find((session) => session.sessionId === currentSessionId)?.msgCount ?? 0;
-    return (
-      persistentMessageCount > 0 ||
-      hasAcceptedPartnerUserMessage(state.userMessagesBySession[currentSessionId] ?? [])
-    );
-  });
   const { isStreaming, isCompacting, runtimeActiveRun, runtimeStopIdentity, activityGeneration } =
     useActivityState();
   const currentRuntimePhase = runtimeActiveRun?.phase;
@@ -516,6 +504,10 @@ export function BottomBar(): JSX.Element {
   const stopPointerSessionIdRef = useRef<string | null | undefined>(undefined);
   // New sessions are tagged with the active surface.
   const currentSurface = useSurfaceStore((s) => s.currentSurface);
+  const partnerExpert = usePartnerExpert();
+  const partnerExpertBusy =
+    currentSurface === 'partner' &&
+    (partnerExpert?.snapshot.changing === true || partnerExpert?.snapshot.loading === true);
   const mascotMode = useAppStore((s) => s.mascotMode);
   const providers = useAppStore((s) => s.providers);
   const defaultProviderId = useAppStore((s) => s.defaultProviderId);
@@ -580,7 +572,6 @@ export function BottomBar(): JSX.Element {
   if (attachmentGateRef.current === null) {
     attachmentGateRef.current = createPendingAttachmentGate(setIsAttaching);
   }
-  const [generatedPartnerTemplate, setGeneratedPartnerTemplate] = useState<string | null>(null);
   const [partnerDeliveryFormat, setPartnerDeliveryFormat] = useState<PartnerDeliveryFormat>('auto');
   const [partnerDeliveryInstruction, setPartnerDeliveryInstruction] = useState<string | null>(null);
   const partnerDraftScopeRef = useRef({
@@ -704,7 +695,6 @@ export function BottomBar(): JSX.Element {
       surface: currentSurface,
     };
     if (!isLazyPartnerSessionCreation) {
-      setGeneratedPartnerTemplate(null);
       setPartnerDeliveryFormat('auto');
       setPartnerDeliveryInstruction(null);
     }
@@ -778,18 +768,32 @@ export function BottomBar(): JSX.Element {
       pendingAgentMode,
       pendingModel,
     });
+    let expertDraft: PartnerExpertDraftCapture | undefined;
+    if (currentSurface === 'partner' && partnerExpert) {
+      try {
+        expertDraft = partnerExpert.binding.captureDraft({
+          surface: 'partner',
+          projectRoot: currentProjectPath,
+          sessionId: null,
+        });
+      } catch (error) {
+        setErr(error instanceof Error ? error.message : String(error));
+        return null;
+      }
+    }
     const createPayload: ChannelInput<'session.create'> = {
       projectRoot: currentProjectPath,
       provider,
       ...(model ? { model } : {}),
       ...runtimeOverrides,
       surface: currentSurface,
+      ...(expertDraft?.expert ? { partnerExpert: expertDraft.expert } : {}),
     };
 
     const applyCreatedSession = (
       data: ChannelOutput<'session.create'>,
       source: 'foreground' | 'late',
-    ): string => {
+    ): string | null => {
       const stub: SessionMeta = {
         sessionId: data.sessionId,
         projectRoot: currentProjectPath,
@@ -800,6 +804,7 @@ export function BottomBar(): JSX.Element {
         autoModeEngine: data.autoModeEngine,
         agentMode: data.agentMode,
         surface: currentSurface,
+        ...(data.partnerExpert !== undefined ? { partnerExpert: data.partnerExpert } : {}),
         title: undefined,
         createdAt: data.createdAt,
         lastActivityAt: data.createdAt,
@@ -807,12 +812,20 @@ export function BottomBar(): JSX.Element {
       upsertSession(stub);
       const latest = useAppStore.getState();
       const latestSurface = useSurfaceStore.getState().currentSurface;
-      if (
+      const shouldActivate =
         shouldActivateSessionForCurrentScope(stub, {
           currentProjectPath: latest.currentProjectPath,
           currentSurface: latestSurface,
-        })
-      ) {
+        }) &&
+        (currentSurface !== 'partner' ||
+          !expertDraft ||
+          (latest.currentSessionId === null &&
+            partnerExpert?.binding.acceptCreatedSession(
+              expertDraft,
+              data.sessionId,
+              data.partnerExpert,
+            )));
+      if (shouldActivate) {
         setCurrentSession(stub.sessionId);
       }
       setPendingProviderId(null);
@@ -834,6 +847,8 @@ export function BottomBar(): JSX.Element {
           }
         })
         .catch(() => {});
+      // A changed Partner draft must not send with an earlier expert or clear the new draft.
+      if (currentSurface === 'partner' && expertDraft && !shouldActivate) return null;
       return stub.sessionId;
     };
 
@@ -1251,7 +1266,7 @@ export function BottomBar(): JSX.Element {
     const events = state.eventsBySession[sessionId] ?? [];
 
     if (action === 'new-session') {
-      state.setCurrentSession(null);
+      startNewConversation();
       return;
     }
 
@@ -1997,6 +2012,10 @@ export function BottomBar(): JSX.Element {
   ): Promise<void> {
     if (!window.kodaxSpace) return;
     if (busy || attachmentGateRef.current!.isPending()) return;
+    if (partnerExpertBusy) {
+      setErr(t('extensions.expertSaving'));
+      return;
+    }
     const effectiveQueueMode = queueModeForRuntimePhase(queueMode, currentRuntimePhase);
     const promptAtSend = promptOverride ?? prompt;
     const trimmed = promptAtSend.trim();
@@ -2282,7 +2301,6 @@ export function BottomBar(): JSX.Element {
         settleSendOperationMessage(sid, sendOperation.operationId);
         settleRetainedSendOperation('accepted');
         if (currentSurface === 'partner') {
-          setGeneratedPartnerTemplate(null);
           setPartnerDeliveryFormat('auto');
           setPartnerDeliveryInstruction(null);
         }
@@ -2466,6 +2484,7 @@ export function BottomBar(): JSX.Element {
   // Send is enabled for text, inline images, or pending file references.
   const canSend =
     !busy &&
+    !partnerExpertBusy &&
     !isAttaching &&
     runControls.canSendDuringActivity &&
     !!currentProjectPath &&
@@ -2479,10 +2498,6 @@ export function BottomBar(): JSX.Element {
       : busy || isAttaching
         ? t('bottom.sendTitle.busy')
         : t('bottom.sendTitle.empty');
-  const showPartnerSceneShortcuts = shouldShowPartnerSceneShortcuts({
-    surface: currentSurface,
-    hasAcceptedUserMessage: partnerHasAcceptedUserMessage,
-  });
   const placeholderText = !currentProjectPath
     ? t('bottom.placeholder.openFolder')
     : currentSurface === 'partner'
@@ -2492,38 +2507,6 @@ export function BottomBar(): JSX.Element {
       : currentSessionId
         ? t('bottom.placeholder.withSession')
         : t('bottom.placeholder.newSession');
-
-  function choosePartnerScene(template: PartnerSceneTemplate): void {
-    const draftWithoutDelivery = applyPartnerDeliveryInstruction({
-      currentDraft: promptRef.current,
-      previousInstruction: partnerDeliveryInstruction,
-      nextInstruction: null,
-    }).draft;
-    const sceneResult = applyPartnerSceneTemplate({
-      currentDraft: draftWithoutDelivery,
-      previousGeneratedTemplate: generatedPartnerTemplate,
-      nextTemplate: t(template.promptTemplateKey),
-    });
-    if (!sceneResult.applied) {
-      pushToast(t('partner.sceneTemplate.preserveEdited'), 'info');
-      focusComposerSoon();
-      return;
-    }
-    const withDelivery = applyPartnerDeliveryInstruction({
-      currentDraft: sceneResult.draft,
-      previousInstruction: null,
-      nextInstruction: partnerDeliveryInstruction,
-    });
-    setPrompt(withDelivery.draft);
-    setGeneratedPartnerTemplate(sceneResult.generatedTemplate);
-    requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(withDelivery.draft.length, withDelivery.draft.length);
-      setCaret(withDelivery.draft.length);
-    });
-  }
 
   function choosePartnerDeliveryFormat(nextFormat: PartnerDeliveryFormat): void {
     const option = PARTNER_DELIVERY_FORMATS.find((item) => item.id === nextFormat);
@@ -2591,8 +2574,7 @@ export function BottomBar(): JSX.Element {
           ].join(' ')}
         >
           <ChipBar />
-
-          {showPartnerSceneShortcuts && <PartnerSceneShortcuts onChoose={choosePartnerScene} />}
+          {currentSurface === 'partner' && <PartnerExpertChip running={isStreaming} />}
 
           {(pendingImages.length > 0 || pendingFileRefs.length > 0 || imageErr) && (
             <div className="space-y-1">

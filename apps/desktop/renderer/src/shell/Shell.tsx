@@ -41,6 +41,7 @@ import type {
   LicenseStatusT,
   SpaceCapabilityStatus,
   SpaceVersionOutput,
+  SpaceExtensionT,
 } from '@kodax-space/space-ipc-schema';
 import { LeftSidebar } from './LeftSidebar.js';
 import { ResizeHandle } from './ResizeHandle.js';
@@ -75,6 +76,23 @@ import { pushToast } from '../store/toastStore.js';
 import { useSurfaceStore } from '../store/surface.js';
 import { PartnerWorkspace } from '../features/partner/PartnerWorkspace.js';
 import { PartnerRightSidebar } from '../features/partner/PartnerRightSidebar.js';
+import {
+  SpaceExtensionsProvider,
+  useSpaceExtensions,
+} from '../features/extensions/SpaceExtensionsProvider.js';
+import { PartnerExtensionView } from '../features/extensions/PartnerExtensionView.js';
+import {
+  PartnerExpertProvider,
+  PARTNER_EXPERT_DETAIL_EVENT,
+  type PartnerExpertDetailRequest,
+} from '../features/extensions/PartnerExpertProvider.js';
+import { NEW_CONVERSATION_EVENT, startNewConversation } from '../store/newConversation.js';
+import {
+  createExtensionViewSelection,
+  enabledPartnerExtensions,
+  resolveExtensionView,
+  type ExtensionViewSelection,
+} from '../features/extensions/extensionViewPolicy.js';
 import { AdminAuditPanel } from '../features/partner/AdminAuditPanel.js';
 import {
   consumePartnerDetailOpenRequest,
@@ -244,7 +262,17 @@ function coderCenterWidthPx(
   const gapWidth = Math.max(0, childCount - 1) * SHELL_PANEL_GAP_PX;
   return viewportWidth - SHELL_PANEL_HORIZONTAL_PADDING_PX - fixedWidth - gapWidth;
 }
-export function Shell({ version = null }: ShellProps): JSX.Element {
+export function Shell(props: ShellProps): JSX.Element {
+  return (
+    <SpaceExtensionsProvider>
+      <PartnerExpertProvider>
+        <ShellContent {...props} />
+      </PartnerExpertProvider>
+    </SpaceExtensionsProvider>
+  );
+}
+
+function ShellContent({ version = null }: ShellProps): JSX.Element {
   const { t } = useI18n();
   const shellRootRef = useRef<HTMLDivElement | null>(null);
   // F045: surface 一等状态（替代旧 local mode）。Partner 自本版起有真实空壳。
@@ -294,6 +322,31 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen);
   const currentSessionIdForPlan = useAppStore((s) => s.currentSessionId);
   const currentProjectPathForPartnerDetail = useAppStore((s) => s.currentProjectPath);
+  const { snapshot: extensionCatalog } = useSpaceExtensions();
+  const [extensionSelection, setExtensionSelection] = useState<ExtensionViewSelection | null>(null);
+  const extensionContext = {
+    surface: currentSurface,
+    projectRoot: currentProjectPathForPartnerDetail,
+    sessionId: currentSessionIdForPlan,
+  };
+  const enabledExtensions = enabledPartnerExtensions(currentSurface, extensionCatalog.extensions);
+  const visibleExtension = resolveExtensionView(
+    extensionSelection,
+    extensionContext,
+    extensionCatalog.extensions,
+  );
+  const closeExtensionView = useCallback((): void => setExtensionSelection(null), []);
+  useEffect(() => {
+    window.addEventListener(NEW_CONVERSATION_EVENT, closeExtensionView);
+    return () => window.removeEventListener(NEW_CONVERSATION_EVENT, closeExtensionView);
+  }, [closeExtensionView]);
+  const openExtensionView = (extension: SpaceExtensionT): void => {
+    setExtensionSelection(createExtensionViewSelection(extension, extensionContext));
+  };
+  // Derive visibility synchronously; never leave an old frame visible for an effect tick.
+  useEffect(() => {
+    if (extensionSelection && !visibleExtension) setExtensionSelection(null);
+  }, [extensionSelection, visibleExtension]);
   const mascotMode = useAppStore((s) => s.mascotMode);
   const setLeftSidebarOpen = useAppStore((s) => s.setLeftSidebarOpen);
   const setRightSidebarOpen = useAppStore((s) => s.setRightSidebarOpen);
@@ -653,6 +706,30 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
       rightSidebarDefaultWidthFits,
     ],
   );
+
+  useEffect(() => {
+    const onExpertDetails = (event: Event): void => {
+      const detail = (event as CustomEvent<PartnerExpertDetailRequest>).detail;
+      if (
+        !detail ||
+        currentSurface !== 'partner' ||
+        detail.context.surface !== currentSurface ||
+        detail.context.projectRoot !== currentProjectPathForPartnerDetail ||
+        detail.context.sessionId !== currentSessionIdForPlan
+      )
+        return;
+      closeExtensionView();
+      openPartnerDetail({ kind: 'expert', expert: detail.expert });
+    };
+    window.addEventListener(PARTNER_EXPERT_DETAIL_EVENT, onExpertDetails);
+    return () => window.removeEventListener(PARTNER_EXPERT_DETAIL_EVENT, onExpertDetails);
+  }, [
+    closeExtensionView,
+    currentProjectPathForPartnerDetail,
+    currentSessionIdForPlan,
+    currentSurface,
+    openPartnerDetail,
+  ]);
 
   const openRightSidebarAtMaxWidth = useCallback((): void => {
     if (currentSurface === 'partner') {
@@ -1193,6 +1270,12 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
                 filesActive={false}
                 onOpenFiles={openFilesInLeftSidebar}
                 onOpenSettings={openPreferencesSettings}
+                pluginsAvailable={enabledExtensions.length > 0}
+                pluginsActive={visibleExtension !== null}
+                onOpenPlugins={() => {
+                  if (enabledExtensions[0]) openExtensionView(enabledExtensions[0]);
+                }}
+                onNavigate={closeExtensionView}
               />
             )}
             <ResizeHandle
@@ -1211,14 +1294,40 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         {currentSurface === 'partner' ? (
           // F045: Partner surface 只替换主区（对话区）。LeftSidebar 是全局导航
           // （项目 / session / SurfaceTabs），两 surface 共用；右侧栏外壳也由 Shell 统一托管。
-          <PartnerWorkspace
-            leftSidebarOpen={leftSidebarVisible}
-            rightSidebarOpen={rightSidebarVisible}
-            workspaceMode={rightSidebarWorkspaceMode}
-            onToggleLeftSidebar={toggleLeftSidebar}
-            onToggleRightSidebar={toggleRightSidebar}
-            onOpenDetail={openPartnerDetail}
-          />
+          <>
+            {/* Keep the conversation mounted so opening a library never resets its draft. */}
+            <div
+              style={{ display: visibleExtension ? 'none' : 'contents' }}
+              aria-hidden={visibleExtension ? true : undefined}
+            >
+              <PartnerWorkspace
+                leftSidebarOpen={leftSidebarVisible}
+                rightSidebarOpen={rightSidebarVisible}
+                workspaceMode={rightSidebarWorkspaceMode}
+                onToggleLeftSidebar={toggleLeftSidebar}
+                onToggleRightSidebar={toggleRightSidebar}
+                onOpenDetail={openPartnerDetail}
+              />
+            </div>
+            {visibleExtension && (
+              <PartnerExtensionView
+                key={`${visibleExtension.id}:${visibleExtension.version}:${visibleExtension.installedAt}`}
+                extension={visibleExtension}
+                extensions={enabledExtensions}
+                onSelect={openExtensionView}
+                onClose={closeExtensionView}
+                onManage={() => openSettingsAt('extensions')}
+                onExpertSelected={() => {
+                  closeExtensionView();
+                  window.dispatchEvent(new Event('kodax-space.focus-textarea'));
+                }}
+                onExpertDetails={(expert) => {
+                  closeExtensionView();
+                  openPartnerDetail({ kind: 'expert', expert });
+                }}
+              />
+            )}
+          </>
         ) : (
           /* 中央阅读区：默认实色；全特效档使用半透明玻璃，并在滚动/拖拽期间临时卸下
               大面积 backdrop-filter，避免内容位移和极光动画叠加触发 re-composite。 */
@@ -1289,7 +1398,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
           </div>
         )}
 
-        {rightSidebarVisible && !rightSidebarWorkspaceMode && (
+        {rightSidebarVisible && !rightSidebarWorkspaceMode && !visibleExtension && (
           <ResizeHandle
             side="right"
             width={rightWidth}
@@ -1321,7 +1430,7 @@ export function Shell({ version = null }: ShellProps): JSX.Element {
         {mountedPartnerDetailContext && (
           <PartnerRightSidebar
             key={partnerDetailContextKey ?? 'partner-detail'}
-            open={currentSurface === 'partner' && rightSidebarVisible}
+            open={currentSurface === 'partner' && rightSidebarVisible && !visibleExtension}
             width={currentSurface === 'partner' ? rightWidth : partnerRightSidebarWidth}
             openRequest={visiblePartnerDetailOpenRequest}
             onConsumeOpenRequest={consumePartnerDetailRequest}
@@ -1418,7 +1527,7 @@ function isEditableTarget(target: EventTarget | null): target is HTMLElement {
   return editableTypes.has(target.type);
 }
 
-function AppTopMenu({
+export function AppTopMenu({
   leftSidebarOpen,
   rightSidebarOpen,
   rightSidebarAvailable,
@@ -1466,7 +1575,7 @@ function AppTopMenu({
   }, []);
 
   const startNewSession = useCallback((): void => {
-    useAppStore.getState().setCurrentSession(null);
+    startNewConversation();
     window.dispatchEvent(new Event('kodax-space.focus-textarea'));
   }, []);
 

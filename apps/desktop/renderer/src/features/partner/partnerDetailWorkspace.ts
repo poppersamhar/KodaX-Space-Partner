@@ -3,15 +3,17 @@ import type {
   PartnerResultSelectionRequest,
 } from './partnerResultRail.js';
 import type { TransientArtifactSnapshot } from '../artifact/transientArtifact.js';
+import type { PartnerExpertSnapshotT } from '@kodax-space/space-ipc-schema';
 
 export type PartnerDetailTabKind =
-  'sources' | 'results' | 'pendingReview' | 'files' | 'file' | 'browser' | 'terminal';
+  'sources' | 'results' | 'pendingReview' | 'files' | 'file' | 'browser' | 'terminal' | 'expert';
 
 export interface PartnerDetailTab {
   readonly id: string;
   readonly kind: PartnerDetailTabKind;
   readonly title: string;
   readonly snapshot?: TransientArtifactSnapshot;
+  readonly expert?: PartnerExpertSnapshotT;
 }
 
 export interface PartnerDetailWorkspaceState {
@@ -33,7 +35,8 @@ export type PartnerDetailOpenTarget =
   | { readonly kind: 'files' }
   | { readonly kind: 'file'; readonly snapshot: TransientArtifactSnapshot }
   | { readonly kind: 'browser' }
-  | { readonly kind: 'terminal' };
+  | { readonly kind: 'terminal' }
+  | { readonly kind: 'expert'; readonly expert: PartnerExpertSnapshotT };
 
 export interface PartnerDetailWorkspaceContext {
   readonly projectRoot: string | null;
@@ -72,10 +75,19 @@ export function createPartnerDetailTab(
       ? `partner-detail-${target.kind}`
       : null;
   return {
-    id: staticId ?? `partner-detail-${target.kind}-${uniqueId}`,
+    id:
+      target.kind === 'expert'
+        ? `partner-detail-expert-${target.expert.extensionId}-${target.expert.expert.id}`
+        : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
     kind: target.kind,
-    title: target.kind === 'file' ? target.snapshot.title : title,
+    title:
+      target.kind === 'expert'
+        ? target.expert.expert.name
+        : target.kind === 'file'
+          ? target.snapshot.title
+          : title,
     ...(target.kind === 'file' ? { snapshot: target.snapshot } : {}),
+    ...(target.kind === 'expert' ? { expert: target.expert } : {}),
   };
 }
 

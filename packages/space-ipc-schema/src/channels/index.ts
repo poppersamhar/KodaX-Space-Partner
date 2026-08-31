@@ -12,6 +12,23 @@
 //   - 显式两个 map 让类型 + 运行时 allowlist 同源派生，preload 拿来直接用
 
 import { versionChannel } from './version.js';
+import {
+  spaceExtensionsListChannel,
+  spaceExtensionsInstallChannel,
+  spaceExtensionsSetEnabledChannel,
+  spaceExtensionsUninstallChannel,
+  spaceExtensionsViewChannel,
+  spaceExtensionsChangedChannel,
+} from './space-extension.js';
+import {
+  spaceExtensionsCatalogChannel,
+  spaceExtensionsResolveExpertChannel,
+  spaceExtensionsExpertSaveChannel,
+  spaceExtensionsExpertDeleteChannel,
+  sessionPartnerExpertGetChannel,
+  sessionPartnerExpertSetChannel,
+  sessionPartnerExpertChangedChannel,
+} from './partner-expert.js';
 import { sandboxRefreshChannel, sandboxSetupChannel, sandboxStatusChannel } from './sandbox.js';
 import {
   runtimeConnectionChangedChannel,
@@ -291,6 +308,17 @@ import { diagnosticsExportChannel, diagnosticsReportChannel } from './diagnostic
 import { spaceControlRequestedChannel, spaceControlResolveChannel } from './space-control.js';
 
 export const invokeChannels = {
+  [spaceExtensionsListChannel.name]: spaceExtensionsListChannel,
+  [spaceExtensionsInstallChannel.name]: spaceExtensionsInstallChannel,
+  [spaceExtensionsSetEnabledChannel.name]: spaceExtensionsSetEnabledChannel,
+  [spaceExtensionsUninstallChannel.name]: spaceExtensionsUninstallChannel,
+  [spaceExtensionsViewChannel.name]: spaceExtensionsViewChannel,
+  [spaceExtensionsCatalogChannel.name]: spaceExtensionsCatalogChannel,
+  [spaceExtensionsResolveExpertChannel.name]: spaceExtensionsResolveExpertChannel,
+  [spaceExtensionsExpertSaveChannel.name]: spaceExtensionsExpertSaveChannel,
+  [spaceExtensionsExpertDeleteChannel.name]: spaceExtensionsExpertDeleteChannel,
+  [sessionPartnerExpertGetChannel.name]: sessionPartnerExpertGetChannel,
+  [sessionPartnerExpertSetChannel.name]: sessionPartnerExpertSetChannel,
   [versionChannel.name]: versionChannel,
   [sandboxStatusChannel.name]: sandboxStatusChannel,
   [sandboxRefreshChannel.name]: sandboxRefreshChannel,
@@ -506,6 +534,8 @@ export const invokeChannels = {
 } as const;
 
 export const pushChannels = {
+  [spaceExtensionsChangedChannel.name]: spaceExtensionsChangedChannel,
+  [sessionPartnerExpertChangedChannel.name]: sessionPartnerExpertChangedChannel,
   [runtimeConnectionChangedChannel.name]: runtimeConnectionChangedChannel,
   [runtimeProfileChangedChannel.name]: runtimeProfileChangedChannel,
   [sessionLiveChangedChannel.name]: sessionLiveChangedChannel,

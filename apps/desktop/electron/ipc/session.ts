@@ -3,7 +3,7 @@
 // 5 个 invoke channel 全部委托给 kodaxHost 单例处理。
 // 所有 handler 在 registerChannel 内被 zod 包装（入参/出参/异常三路 envelope）。
 
-import { registerChannel } from './register.js';
+import { registerChannel, registerChannelWithEvent } from './register.js';
 import { validateProjectRoot } from './validate.js';
 import {
   kodaxHost,
@@ -82,6 +82,12 @@ import { dedupeTranscriptEntries } from './transcript-dedup.js';
 import { limitSessionHistoryWithLocalNotices, pageSessionHistoryItems } from './history-window.js';
 import { resolveRuntimeDefaults } from '../kodax/runtime-defaults.js';
 import { getSessionRuntimeStore } from '../kodax/session-runtime-store.js';
+import { getSkillRegistry } from '../skill/registry.js';
+import { getSpaceExpertCatalog } from '../space-extensions/runtime.js';
+import type { SpaceExpertCatalog } from '../space-extensions/experts.js';
+import type { ManagedSession } from '../kodax/session-adapter.js';
+import { assertSpaceExtensionSender } from './space-extensions.js';
+import { pushToRenderer } from './push.js';
 import {
   appendSpaceOwnedLocalNotice,
   getSessionLocalNoticeStore,
@@ -100,6 +106,8 @@ import type {
   ChannelInput,
   ChannelOutput,
   InputArtifact,
+  PartnerExpertSnapshotT,
+  PartnerExpertStateT,
   SessionHistoryItem,
   SessionMeta,
 } from '@kodax-space/space-ipc-schema';
@@ -879,6 +887,15 @@ export interface SessionChannelsOptions {
   readonly beginCoderAdmission?: () => () => void;
 }
 
+type PartnerExpertCatalogAccess = Pick<SpaceExpertCatalog, 'resolve' | 'requireAvailable'>;
+type PartnerExpertChannelRegistrar = <
+  C extends 'session.partnerExpert.get' | 'session.partnerExpert.set',
+>(
+  name: C,
+  handler: Parameters<typeof registerChannelWithEvent<C>>[1],
+) => void;
+const partnerExpertMutationTails = new Map<string, Promise<void>>();
+
 /**
  * 校验 providerId 实际存在于 catalog / custom-providers / 是 'mock'。
  * review F008 C1-sec：schema 只验格式，不验存在性——必须 main 端再过一层。
@@ -932,75 +949,240 @@ export async function rewindSessionForIpc(
   return result;
 }
 
-export function registerSessionChannels(options: SessionChannelsOptions = {}): void {
-  // session.create
-  registerChannel('session.create', async (input) => {
-    const releaseModeSwitchAdmission = options.beginCoderAdmission?.() ?? (() => undefined);
-    try {
-      const projectRoot = validateProjectRoot(input.projectRoot);
-      await assertProviderExists(input.provider);
-      await ensureCustomProviderRegistered(input.provider);
-      await ensureProviderKeyInjected(input.provider);
-      const kodaxCustomProviders =
-        input.provider !== 'mock' && !isBuiltinId(input.provider)
-          ? await loadKodaxCustomProviders()
-          : [];
-      const effectiveModel =
-        input.model ?? providerDescriptor(input.provider, kodaxCustomProviders)?.defaultModel;
-      const runtimeDefaults = await resolveRuntimeDefaults({
-        explicit: {
-          reasoningMode: input.reasoningMode,
-          permissionMode: input.permissionMode,
-          autoModeEngine: input.autoModeEngine,
-          agentMode: input.agentMode,
-        },
-      });
-      const allocatedSessionId = await generateKodaxSessionId();
-      const { sessionId, createdAt } = kodaxHost.createSession({
-        sessionId: allocatedSessionId,
-        projectRoot,
-        provider: input.provider,
-        // Renderer usually supplies resolveActiveModel(), but main must still
-        // materialize the provider default when callers omit an explicit override.
-        ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
-        reasoningMode: runtimeDefaults.reasoningMode,
-        permissionMode: runtimeDefaults.permissionMode,
-        autoModeEngine: runtimeDefaults.autoModeEngine,
-        agentMode: runtimeDefaults.agentMode,
-        // F045: 工作面（Coder / Partner）。缺省 'code'。host 落盘成 SDK session tag。
-        surface: input.surface,
-        ephemeral: input.ephemeral,
-      });
-      // v0.1.6 cleanup: 用 ~/.kodax/config.json 的 thinking 默认值初始化新 session。
-      // 不传 schema 改动——renderer 没必要知道 thinking 默认值，main 直接 fill 即可。
-      // model 不在这里 fill：跨 provider 切换时 KodaX config 里的 model 名通常对不上
-      // 用户在 Space 选的 provider；要正确填要做 provider×model 映射，留 v0.1.7+。
-      try {
-        const kodaxDefaults = await loadKodaxUserDefaults();
-        if (kodaxDefaults.thinking !== undefined) {
-          kodaxHost.setThinking(sessionId, kodaxDefaults.thinking);
-        }
-      } catch (err) {
-        console.warn(
-          '[session.create] kodax defaults fill failed:',
-          err instanceof Error ? err.message : err,
-        );
-      }
-      if (input.ephemeral !== true && !(await kodaxHost.persistRuntime(sessionId))) {
-        await kodaxHost.delete(sessionId);
-        throw new Error('session runtime metadata could not be persisted');
-      }
-      return {
-        sessionId,
-        createdAt,
-        reasoningMode: runtimeDefaults.reasoningMode,
-        permissionMode: runtimeDefaults.permissionMode,
-        autoModeEngine: runtimeDefaults.autoModeEngine,
-        agentMode: runtimeDefaults.agentMode,
-      };
-    } finally {
-      releaseModeSwitchAdmission();
+export async function createSessionForIpc(
+  input: ChannelInput<'session.create'>,
+  options: SessionChannelsOptions = {},
+  expertCatalog: PartnerExpertCatalogAccess = getSpaceExpertCatalog(),
+): Promise<ChannelOutput<'session.create'>> {
+  const releaseModeSwitchAdmission = options.beginCoderAdmission?.() ?? (() => undefined);
+  try {
+    const projectRoot = validateProjectRoot(input.projectRoot);
+    if (input.partnerExpert && input.surface !== 'partner') {
+      throw new Error('Experts are only available in Partner sessions');
     }
+    if (input.partnerExpert && input.ephemeral) {
+      throw new Error('Partner experts require a persistent session');
+    }
+    // Renderer supplies identity only. The trusted, enabled package owns the prompt.
+    const partnerExpert = input.partnerExpert
+      ? await expertCatalog.resolve(input.partnerExpert)
+      : undefined;
+    await assertPartnerExpertSkillAvailable(partnerExpert, projectRoot, true);
+    await assertProviderExists(input.provider);
+    await ensureCustomProviderRegistered(input.provider);
+    await ensureProviderKeyInjected(input.provider);
+    const kodaxCustomProviders =
+      input.provider !== 'mock' && !isBuiltinId(input.provider)
+        ? await loadKodaxCustomProviders()
+        : [];
+    const effectiveModel =
+      input.model ?? providerDescriptor(input.provider, kodaxCustomProviders)?.defaultModel;
+    const runtimeDefaults = await resolveRuntimeDefaults({
+      explicit: {
+        reasoningMode: input.reasoningMode,
+        permissionMode: input.permissionMode,
+        autoModeEngine: input.autoModeEngine,
+        agentMode: input.agentMode,
+      },
+    });
+    const allocatedSessionId = await generateKodaxSessionId();
+    const { sessionId, createdAt } = kodaxHost.createSession({
+      sessionId: allocatedSessionId,
+      projectRoot,
+      provider: input.provider,
+      // Renderer usually supplies resolveActiveModel(), but main must still
+      // materialize the provider default when callers omit an explicit override.
+      ...(effectiveModel !== undefined ? { model: effectiveModel } : {}),
+      reasoningMode: runtimeDefaults.reasoningMode,
+      permissionMode: runtimeDefaults.permissionMode,
+      autoModeEngine: runtimeDefaults.autoModeEngine,
+      agentMode: runtimeDefaults.agentMode,
+      // F045: 工作面（Coder / Partner）。缺省 'code'。host 落盘成 SDK session tag。
+      surface: input.surface,
+      ephemeral: input.ephemeral,
+      partnerExpert,
+    });
+    // v0.1.6 cleanup: 用 ~/.kodax/config.json 的 thinking 默认值初始化新 session。
+    // 不传 schema 改动——renderer 没必要知道 thinking 默认值，main 直接 fill 即可。
+    // model 不在这里 fill：跨 provider 切换时 KodaX config 里的 model 名通常对不上
+    // 用户在 Space 选的 provider；要正确填要做 provider×model 映射，留 v0.1.7+。
+    try {
+      const kodaxDefaults = await loadKodaxUserDefaults();
+      if (kodaxDefaults.thinking !== undefined) {
+        kodaxHost.setThinking(sessionId, kodaxDefaults.thinking);
+      }
+    } catch (err) {
+      console.warn(
+        '[session.create] kodax defaults fill failed:',
+        err instanceof Error ? err.message : err,
+      );
+    }
+    if (input.ephemeral !== true && !(await kodaxHost.persistRuntime(sessionId))) {
+      await kodaxHost.delete(sessionId);
+      throw new Error('session runtime metadata could not be persisted');
+    }
+    return {
+      sessionId,
+      createdAt,
+      reasoningMode: runtimeDefaults.reasoningMode,
+      permissionMode: runtimeDefaults.permissionMode,
+      autoModeEngine: runtimeDefaults.autoModeEngine,
+      agentMode: runtimeDefaults.agentMode,
+      ...(input.surface === 'partner' ? { partnerExpert: partnerExpert ?? null } : {}),
+    };
+  } finally {
+    releaseModeSwitchAdmission();
+  }
+}
+
+async function requirePartnerSession(sessionId: string): Promise<ManagedSession> {
+  if (!kodaxHost.get(sessionId)) await kodaxHost.tryResume(sessionId);
+  const session = kodaxHost.get(sessionId);
+  if (!session) throw new Error(`session not found: ${sessionId}`);
+  if (session.surface !== 'partner')
+    throw new Error('Experts are only available in Partner sessions');
+  return session;
+}
+
+async function assertPartnerExpertSkillAvailable(
+  snapshot: PartnerExpertSnapshotT | null | undefined,
+  projectRoot: string,
+  refresh = false,
+): Promise<void> {
+  const name = snapshot?.useSkill === false ? undefined : snapshot?.expert.skillRef;
+  if (!name) return;
+  const unavailable = `Partner expert Skill '${name}' is unavailable. Choose prompt-only or repair the configured Skill.`;
+  const registry = await getSkillRegistry(projectRoot);
+  // Binding/re-enabling is an explicit user action: refresh the existing registry,
+  // then read metadata only. Never expand dynamic context or run hooks on selection.
+  if (refresh) await registry.reload();
+  if (!registry.get(name)) throw new Error(unavailable);
+  let skill;
+  try {
+    skill = await registry.loadFull(name);
+  } catch {
+    throw new Error(unavailable);
+  }
+  if (skill.context === 'fork') {
+    throw new Error(
+      'Partner expert Skill requires unsupported fork execution. Choose prompt-only or configure an inline Skill.',
+    );
+  }
+}
+
+async function readPartnerExpertState(
+  session: ManagedSession,
+  expertCatalog: PartnerExpertCatalogAccess,
+  publish = false,
+): Promise<PartnerExpertStateT> {
+  for (;;) {
+    const bound = session.partnerExpert;
+    const state: PartnerExpertStateT = {
+      expert: bound ? structuredClone(bound) : null,
+      available: true,
+    };
+    if (bound) {
+      try {
+        await expertCatalog.requireAvailable(bound);
+        await assertPartnerExpertSkillAvailable(bound, session.projectRoot);
+      } catch (error) {
+        state.available = false;
+        state.unavailableReason = (
+          error instanceof Error ? error.message : 'Extension unavailable'
+        ).slice(0, 280);
+      }
+    }
+    if (kodaxHost.get(session.sessionId) !== session) {
+      throw new Error(`session no longer attached: ${session.sessionId}`);
+    }
+    // Availability is asynchronous: a later committed selection must not be overwritten
+    // by an earlier slow get/set result or changed push. Pending writes are still invisible.
+    if (session.partnerExpert !== bound) continue;
+    if (publish)
+      pushToRenderer('session.partnerExpert.changed', { sessionId: session.sessionId, state });
+    return state;
+  }
+}
+
+export async function getPartnerExpertForIpc(
+  input: ChannelInput<'session.partnerExpert.get'>,
+  expertCatalog: PartnerExpertCatalogAccess = getSpaceExpertCatalog(),
+): Promise<PartnerExpertStateT> {
+  return readPartnerExpertState(await requirePartnerSession(input.sessionId), expertCatalog);
+}
+
+export async function setPartnerExpertForIpc(
+  input: ChannelInput<'session.partnerExpert.set'>,
+  expertCatalog: PartnerExpertCatalogAccess = getSpaceExpertCatalog(),
+): Promise<PartnerExpertStateT> {
+  // Reserve inbound order before any asynchronous resume/catalog/Skill validation.
+  // Host serialization alone starts too late: an older slow selection could otherwise
+  // commit after a later removal has already been acknowledged.
+  const previous = partnerExpertMutationTails.get(input.sessionId) ?? Promise.resolve();
+  const mutation = previous.then(async () => {
+    const session = await requirePartnerSession(input.sessionId);
+    if (session.ephemeral) throw new Error('Partner experts require a persistent session');
+    let snapshot: PartnerExpertSnapshotT | null = null;
+    const current = session.partnerExpert;
+    if (
+      input.expert &&
+      current &&
+      input.expert.extensionId === current.extensionId &&
+      input.expert.expertId === current.expert.id &&
+      input.expert.revision === current.expert.revision
+    ) {
+      // A preference toggle does not consent to upgrading the bound prompt/revision.
+      // An enabled newer package may still serve this previous, immutable snapshot.
+      snapshot = structuredClone(current);
+      await expertCatalog.requireAvailable(snapshot);
+      delete snapshot.useSkill;
+      if (input.expert.useSkill !== undefined) snapshot.useSkill = input.expert.useSkill;
+    } else if (input.expert) {
+      snapshot = await expertCatalog.resolve(input.expert);
+    }
+    await assertPartnerExpertSkillAvailable(snapshot, session.projectRoot, true);
+    const outcome = await kodaxHost.setPartnerExpert(input.sessionId, snapshot);
+    if (outcome === 'persist-failed') {
+      throw new Error('Partner expert could not be persisted; the previous expert is unchanged');
+    }
+    if (outcome === 'session-not-found') throw new Error(`session not found: ${input.sessionId}`);
+    return session;
+  });
+  const tail = mutation.then(
+    () => undefined,
+    () => undefined,
+  );
+  partnerExpertMutationTails.set(input.sessionId, tail);
+  void tail.then(() => {
+    if (partnerExpertMutationTails.get(input.sessionId) === tail) {
+      partnerExpertMutationTails.delete(input.sessionId);
+    }
+  });
+  const session = await mutation;
+  // Slow availability reporting is outside the mutation queue. A later clear can
+  // commit, and readPartnerExpertState will then report that latest committed state.
+  return readPartnerExpertState(session, expertCatalog, true);
+}
+
+/** Extension frames cannot directly mutate Session authority or inspect another host view. */
+export function registerPartnerExpertChannels(
+  register: PartnerExpertChannelRegistrar = registerChannelWithEvent,
+): void {
+  register('session.partnerExpert.get', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return getPartnerExpertForIpc(input);
+  });
+  register('session.partnerExpert.set', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return setPartnerExpertForIpc(input);
+  });
+}
+
+export function registerSessionChannels(options: SessionChannelsOptions = {}): void {
+  registerPartnerExpertChannels();
+  registerChannelWithEvent('session.create', (input, event) => {
+    if (input.partnerExpert) assertSpaceExtensionSender(event);
+    return createSessionForIpc(input, options);
   });
 
   registerChannel('session.promoteEphemeral', (input) =>
@@ -1248,6 +1430,7 @@ export function registerSessionChannels(options: SessionChannelsOptions = {}): v
             autoModeEngine: item.autoModeEngine,
             agentMode: item.agentMode,
             surface: item.surface,
+            ...(item.surface === 'partner' ? { partnerExpert: item.partnerExpert ?? null } : {}),
             title: item.title,
             createdAt: item.createdAt,
             lastActivityAt: item.lastActivityAt,
@@ -1292,6 +1475,9 @@ export function registerSessionChannels(options: SessionChannelsOptions = {}): v
           agentMode: persistedRuntime?.agentMode ?? baseRuntimeDefaults.agentMode,
           // F045: 真值——来自 SDK summary.tag 反推（host.listMerged 已派生），非占位。
           surface: item.surface,
+          ...(item.surface === 'partner'
+            ? { partnerExpert: persistedRuntime?.partnerExpert ?? null }
+            : {}),
           title: item.title,
           createdAt,
           lastActivityAt,

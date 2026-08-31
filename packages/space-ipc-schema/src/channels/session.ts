@@ -7,6 +7,7 @@
 // 实际 token / tool call / 结果通过 session.event push 实时推。
 
 import { z } from 'zod';
+import { partnerExpertSnapshotSchema, spaceExpertRefSchema } from './partner-expert.js';
 import { partnerKnowledgeScopeSchema } from './partner-knowledge.js';
 import {
   spaceRuntimeRunFailureKindSchema,
@@ -116,6 +117,7 @@ const MAX_TOOL_RESULT = 524_288;
 //   forkPointTurnIdx   — fork 时 source 的 turn idx（仅 child 有）
 // KodaX SDK 0.7.42 持久化 API ready 后这两个字段会同时改由 SDK 注入。
 const sessionMetaSchema = z.object({
+  partnerExpert: partnerExpertSnapshotSchema.nullable().optional(),
   sessionId: z.string().min(1),
   projectRoot: z.string().min(1),
   provider: providerIdSchema,
@@ -180,6 +182,7 @@ export const sessionCreateChannel = {
   name: 'session.create',
   direction: 'invoke',
   input: z.object({
+    partnerExpert: spaceExpertRefSchema.optional(),
     projectRoot: z.string().min(1),
     provider: providerIdSchema,
     /**
@@ -204,6 +207,7 @@ export const sessionCreateChannel = {
     ephemeral: z.boolean().optional(),
   }),
   output: z.object({
+    partnerExpert: partnerExpertSnapshotSchema.nullable().optional(),
     sessionId: z.string().min(1),
     createdAt: z.number().int().nonnegative(),
     reasoningMode: reasoningModeSchema,

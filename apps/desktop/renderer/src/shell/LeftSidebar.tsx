@@ -17,9 +17,19 @@
 // 接 surface store）；LeftSidebar 是两 surface 共用的全局导航（项目 / session / surface tab）。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, ChevronDown, Ellipsis, FolderTree, Monitor, Pin, SquarePen } from 'lucide-react';
+import {
+  Plus,
+  ChevronDown,
+  Ellipsis,
+  FolderTree,
+  Monitor,
+  Pin,
+  Puzzle,
+  SquarePen,
+} from 'lucide-react';
 import { SurfaceTabs } from './SurfaceTabs.js';
 import { useAppStore } from '../store/appStore.js';
+import { startNewConversation } from '../store/newConversation.js';
 import { useSurfaceStore } from '../store/surface.js';
 import { Caret } from '../components/Caret.js';
 import {
@@ -56,6 +66,10 @@ interface LeftSidebarProps {
   width?: number;
   readonly filesActive?: boolean;
   readonly onOpenFiles?: () => void;
+  readonly pluginsAvailable?: boolean;
+  readonly pluginsActive?: boolean;
+  readonly onOpenPlugins?: () => void;
+  readonly onNavigate?: () => void;
   readonly onOpenSettings: () => void;
 }
 
@@ -63,6 +77,10 @@ export function LeftSidebar({
   width,
   filesActive = false,
   onOpenFiles,
+  pluginsAvailable = false,
+  pluginsActive = false,
+  onOpenPlugins,
+  onNavigate,
   onOpenSettings,
 }: LeftSidebarProps): JSX.Element {
   const { t } = useI18n();
@@ -144,10 +162,12 @@ export function LeftSidebar({
    * 所以 provider / 模式选择一点不丢（见 createSession.ts 头注释：两处调用已统一到该 helper）。
    */
   function handleNewSession(): void {
-    setCurrentSession(null);
+    onNavigate?.();
+    startNewConversation();
   }
 
   function handleOpenFiles(): void {
+    onNavigate?.();
     onOpenFiles?.();
   }
 
@@ -189,6 +209,18 @@ export function LeftSidebar({
           <FolderTree className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden />
           {t('files.openProjectFiles')}
         </button>
+        {currentSurface === 'partner' && pluginsAvailable && (
+          <button
+            type="button"
+            data-testid="partner-plugins-nav"
+            onClick={onOpenPlugins}
+            aria-pressed={pluginsActive}
+            className={`w-full text-left text-xs px-2 py-1.5 rounded hover:bg-hover-bg flex items-center gap-2 text-fg-primary ${pluginsActive ? 'bg-surface-3' : ''}`}
+          >
+            <Puzzle className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden />
+            {t('extensions.plugins')}
+          </button>
+        )}
         {shellChrome.showFutureFeatures && <FutureFeaturesDisclosure />}
       </div>
 
@@ -210,7 +242,10 @@ export function LeftSidebar({
         <ProjectTree
           sessions={visibleSessions}
           currentSessionId={currentSessionId}
-          onSelect={setCurrentSession}
+          onSelect={(sessionId) => {
+            onNavigate?.();
+            setCurrentSession(sessionId);
+          }}
           sessionLoadStateByScope={sessionLoadStateByScope}
           onRefreshProjectSessions={loadProjectSessions}
         />
@@ -575,9 +610,7 @@ function ProjectTree({
                   e.stopPropagation();
                   // 切到此项目 + 清 current session → BottomBar.ensureSession 在首发时
                   // 懒建一个新 session（跟顶部 New session 按钮同一路径）。
-                  const state = useAppStore.getState();
-                  state.setCurrentProject(proj.path);
-                  state.setCurrentSession(null);
+                  startNewConversation(proj.path);
                 }}
                 className="inline-flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary"
                 aria-label={`${t('sidebar.newSessionInProject')}: ${proj.name}`}

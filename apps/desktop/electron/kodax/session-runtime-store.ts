@@ -5,9 +5,11 @@ import { z } from 'zod';
 import type {
   AgentMode,
   AutoModeEngine,
+  PartnerExpertSnapshotT,
   PermissionMode,
   ReasoningMode,
 } from '@kodax-space/space-ipc-schema';
+import { partnerExpertSnapshotSchema } from '@kodax-space/space-ipc-schema';
 import { getSpaceDataDir } from './data-paths.js';
 import { replaceFileIfUnchanged, writeNewFileExclusive } from './atomic-file.js';
 
@@ -28,6 +30,7 @@ const sessionRuntimeSchema = z
     autoModeEngine: z.enum(['llm', 'rules']).optional(),
     reasoningMode: z.enum(['off', 'auto', 'quick', 'balanced', 'deep']).optional(),
     agentMode: persistedAgentModeSchema.optional(),
+    partnerExpert: partnerExpertSnapshotSchema.optional(),
     updatedAt: z.string().min(1),
   })
   .strict();
@@ -40,6 +43,7 @@ export interface SessionRuntimeSettings {
   readonly autoModeEngine?: AutoModeEngine;
   readonly reasoningMode?: ReasoningMode;
   readonly agentMode?: AgentMode;
+  readonly partnerExpert?: PartnerExpertSnapshotT;
 }
 
 interface SessionRuntimeFile extends SessionRuntimeSettings {
@@ -76,6 +80,7 @@ function settingsFromParsed(parsed: z.infer<typeof sessionRuntimeSchema>): Sessi
     ...(parsed.autoModeEngine !== undefined ? { autoModeEngine: parsed.autoModeEngine } : {}),
     ...(parsed.reasoningMode !== undefined ? { reasoningMode: parsed.reasoningMode } : {}),
     ...(parsed.agentMode !== undefined ? { agentMode: parsed.agentMode } : {}),
+    ...(parsed.partnerExpert !== undefined ? { partnerExpert: parsed.partnerExpert } : {}),
   };
 }
 
@@ -100,6 +105,7 @@ function buildSessionRuntimeFile(
     ...(settings.autoModeEngine !== undefined ? { autoModeEngine: settings.autoModeEngine } : {}),
     ...(settings.reasoningMode !== undefined ? { reasoningMode: settings.reasoningMode } : {}),
     ...(settings.agentMode !== undefined ? { agentMode: settings.agentMode } : {}),
+    ...(settings.partnerExpert !== undefined ? { partnerExpert: settings.partnerExpert } : {}),
     updatedAt,
   };
 }
@@ -198,8 +204,11 @@ export class SessionRuntimeStore {
       }
       const merged = { ...(previous.kind === 'valid' ? previous.settings : {}), ...patch };
       const next = buildSessionRuntimeFile(sessionId, merged, new Date().toISOString());
-      await fs.mkdir(this.dir, { recursive: true, mode: 0o700 });
       const bytes = Buffer.from(JSON.stringify(next, null, 2), 'utf-8');
+      if (bytes.length > MAX_RUNTIME_FILE_BYTES) {
+        throw new Error('session runtime metadata exceeds size limit');
+      }
+      await fs.mkdir(this.dir, { recursive: true, mode: 0o700 });
       if (previous.kind === 'missing') {
         await writeNewFileExclusive(filePath, bytes, 'session runtime state changed concurrently');
       } else {

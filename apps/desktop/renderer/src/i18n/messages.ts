@@ -2,6 +2,61 @@ import type { SupportedLocaleT } from '@kodax-space/space-ipc-schema';
 
 export const messages = {
   'en-US': {
+    'extensions.title': 'Extensions',
+    'extensions.expertDetails': 'Expert details',
+    'extensions.removeExpert': 'Remove this expert',
+    'extensions.expertUnavailable': 'Unavailable',
+    'extensions.expertPackageUnavailable':
+      'The expert’s extension is disabled or uninstalled. Enable it again, choose another expert, or remove this binding.',
+    'extensions.expertSaving': 'Loading or saving expert configuration…',
+    'extensions.expertNextTurn': 'Expert changes apply from the next turn.',
+    'extensions.expertSource': 'Extension and saved revision',
+    'extensions.expertPrompt': 'Expert instructions',
+    'extensions.expertPromptOnly':
+      'This expert only adds role instructions. Your existing Skills and Partner permissions are unchanged.',
+    'extensions.expertSkill': 'Configured existing Skill: {name}',
+    'extensions.expertDeleteTitle': 'Delete expert',
+    'extensions.expertDeleteConfirm':
+      'Delete “{name}” from your expert library? Saved expert snapshots in historical conversations will be retained.',
+    'extensions.expertVersionNote':
+      'Saved changes do not upgrade existing conversations. Select the expert again to apply its new revision.',
+    'extensions.useConfiguredSkill': 'Use the configured Skill in this conversation',
+    'extensions.expertSkillDisabled':
+      'Only the expert instructions are used. Independently selected Skills remain available.',
+    'extensions.expertSkillNextTurn':
+      'This setting applies from the next turn and keeps the saved expert revision.',
+    'extensions.expertStarterTasks': 'Example tasks',
+    'extensions.expertStarterTasksHint':
+      'For reference and copying only; this does not edit the composer or send a message.',
+    'extensions.expertCopyStarterTask': 'Copy example task {index}',
+    'extensions.expertTaskCopied': 'Copied. Your draft is unchanged.',
+    'extensions.expertCopyFailed': 'Unable to copy. Select the text to copy it manually.',
+    'extensions.plugins': 'Plugins',
+    'extensions.settingsDescription': 'Install and manage independently packaged plugin libraries.',
+    'extensions.description':
+      'Manage Space Extension packages. Enabling a package adds its plugin library to Partner; installation does not connect accounts or change Skills.',
+    'extensions.install': 'Install package',
+    'extensions.emptyTitle': 'No extensions installed',
+    'extensions.emptyDetail':
+      'Choose a Space Extension package to add a plugin library to Partner.',
+    'extensions.enabled': 'Enabled',
+    'extensions.disabled': 'Disabled',
+    'extensions.enable': 'Enable',
+    'extensions.disable': 'Disable',
+    'extensions.toggle': 'Enable {name}',
+    'extensions.uninstall': 'Uninstall',
+    'extensions.uninstallTitle': 'Uninstall {name}?',
+    'extensions.uninstallDetail':
+      'This removes the extension package and its Partner entry. Your conversations, files, results, custom expert settings and shared Skills are retained. You can reinstall the package later.',
+    'extensions.trustNote':
+      'Only install packages from sources you trust. Plugin pages are isolated from the desktop API, local files and account credentials.',
+    'extensions.desktopRequired': 'Extension management is available in the Electron desktop app.',
+    'extensions.backToConversation': 'Back to conversation',
+    'extensions.manage': 'Manage extensions',
+    'extensions.chooseLibrary': 'Choose plugin library',
+    'extensions.viewFailed': 'Could not open this plugin library',
+    'extensions.viewChanged':
+      'This extension changed or was disabled. Return to the conversation and open it again.',
     'common.cancel': 'Cancel',
     'common.confirm': 'Confirm',
     'common.close': 'Close',
@@ -2629,6 +2684,53 @@ export const messages = {
     'partner.permissionMode.footer': 'Automatic actions remain protected by safety rules.',
   },
   'zh-CN': {
+    'extensions.title': '扩展',
+    'extensions.expertDetails': '专家详情',
+    'extensions.removeExpert': '移除此专家',
+    'extensions.expertUnavailable': '不可用',
+    'extensions.expertPackageUnavailable':
+      '专家所属扩展已禁用或卸载。请重新启用、选择其他专家，或移除此绑定。',
+    'extensions.expertSaving': '正在读取或保存专家配置…',
+    'extensions.expertNextTurn': '专家的切换或移除从下一轮对话生效。',
+    'extensions.expertSource': '扩展来源与保存的版本',
+    'extensions.expertPrompt': '专家提示词',
+    'extensions.expertPromptOnly': '此专家仅附加角色提示词，不改变现有 Skill 能力或 Partner 权限。',
+    'extensions.expertSkill': '配置的现有 Skill：{name}',
+    'extensions.expertDeleteTitle': '删除专家',
+    'extensions.expertDeleteConfirm':
+      '要从你的专家库中删除“{name}”吗？历史会话中保存的专家快照会保留。',
+    'extensions.expertVersionNote': '保存修改不会自动更新已有会话；重新选择专家后才会应用新版本。',
+    'extensions.useConfiguredSkill': '在当前会话中使用已配置的 Skill',
+    'extensions.expertSkillDisabled': '仅使用专家提示词；独立选择和调用其他 Skill 的能力不变。',
+    'extensions.expertSkillNextTurn': '此设置从下一轮生效，保留当前专家的已保存版本。',
+    'extensions.expertStarterTasks': '示例任务',
+    'extensions.expertStarterTasksHint': '仅供查看和复制，不会改写输入框或自动发送。',
+    'extensions.expertCopyStarterTask': '复制示例任务 {index}',
+    'extensions.expertTaskCopied': '已复制，输入框草稿未改变。',
+    'extensions.expertCopyFailed': '复制失败，请选中文本后手动复制。',
+    'extensions.plugins': '插件',
+    'extensions.settingsDescription': '安装和管理独立打包的插件库。',
+    'extensions.description':
+      '管理 Space Extension 扩展包。启用后，Partner 会显示插件库入口；安装不会自动连接账号或更改 Skill。',
+    'extensions.install': '安装扩展包',
+    'extensions.emptyTitle': '尚未安装扩展',
+    'extensions.emptyDetail': '选择一个 Space Extension 扩展包，为 Partner 添加插件库。',
+    'extensions.enabled': '已启用',
+    'extensions.disabled': '已禁用',
+    'extensions.enable': '启用',
+    'extensions.disable': '禁用',
+    'extensions.toggle': '启用 {name}',
+    'extensions.uninstall': '卸载',
+    'extensions.uninstallTitle': '卸载 {name}？',
+    'extensions.uninstallDetail':
+      '将移除扩展包及其 Partner 入口。会话、文件、成果、自定义专家设置和共享 Skill 都会保留；之后可以重新安装扩展包。',
+    'extensions.trustNote': '只安装来源可信的扩展包。插件页面与桌面 API、本地文件及账号凭据隔离。',
+    'extensions.desktopRequired': '请在 Electron 桌面应用中管理扩展。',
+    'extensions.backToConversation': '返回对话',
+    'extensions.manage': '管理扩展',
+    'extensions.chooseLibrary': '选择插件库',
+    'extensions.viewFailed': '无法打开这个插件库',
+    'extensions.viewChanged': '扩展已变更或禁用，请返回对话后重新打开。',
     'settings.compaction.triggerTokens': '绝对 Token 阈值',
     'settings.compaction.triggerTokensHint':
       '可选。0 或留空表示不启用绝对阈值；百分比与绝对值同时生效时取较小者。',

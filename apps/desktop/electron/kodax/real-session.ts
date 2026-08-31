@@ -252,6 +252,7 @@ import { runWithSessionQueueScope } from './session-queue-guard.js';
 import { getSessionStorageHandle, SPACE_EPHEMERAL_SESSION_TAG } from './session-store.js';
 import { wrapSdkError } from './sdk-errors.js';
 import { buildSkillsPromptForSurface } from './skills-prompt.js';
+import { getSpaceExpertCatalog } from '../space-extensions/runtime.js';
 import {
   createSpaceSdkExtensionRuntime,
   getSpaceSdkExtensionConfigGeneration,
@@ -451,6 +452,7 @@ export class RealKodaXSession implements ManagedSession {
    * 决定它出现在哪个面的列表，并将来驱动工具集裁剪（F047）。
    */
   readonly surface: Surface;
+  partnerExpert?: ManagedSession['partnerExpert'];
   ephemeral: boolean;
   /** SDK 0.7.42 wired: 用户 /model 设的覆盖；undefined 走 provider 默认。*/
   model?: string;
@@ -489,6 +491,7 @@ export class RealKodaXSession implements ManagedSession {
     this.autoModeEngine = opts.autoModeEngine ?? 'llm';
     this.agentMode = opts.agentMode ?? 'ama';
     this.surface = opts.surface ?? 'code';
+    this.partnerExpert = opts.partnerExpert ? structuredClone(opts.partnerExpert) : undefined;
     this.ephemeral = opts.ephemeral ?? false;
     this.createdAt = Date.now();
     this.lastActivityAt = this.createdAt;
@@ -500,6 +503,19 @@ export class RealKodaXSession implements ManagedSession {
 
   isRunning(): boolean {
     return this.currentAbort !== null;
+  }
+
+  private async requirePartnerExpertAvailable(
+    expert: ManagedSession['partnerExpert'] | null,
+  ): Promise<void> {
+    if (this.surface !== 'partner' || !expert) return;
+    try {
+      await getSpaceExpertCatalog().requireAvailable(expert);
+    } catch (error) {
+      throw new Error(
+        `Partner expert unavailable: ${error instanceof Error ? error.message : 'extension unavailable'}`,
+      );
+    }
   }
 
   private async syncRuntimeSessionSettings(): Promise<KodaXShellExecutionContract | undefined> {
@@ -709,6 +725,34 @@ export class RealKodaXSession implements ManagedSession {
     }
   }
 
+  private async preparePartnerExpertSkill(
+    rawUserInput: string,
+    expert: ManagedSession['partnerExpert'] | null,
+    runPermissionMode: PermissionMode,
+    admissionSignal?: AbortSignal,
+  ): Promise<ExplicitSkillPreparation | undefined> {
+    if (this.surface !== 'partner' || expert?.useSkill === false || !expert?.expert.skillRef) {
+      return undefined;
+    }
+    try {
+      // The package explicitly names this one existing Skill. Do not search for a match,
+      // install a dependency, or prepare it when the user selected a different slash Skill.
+      const registry = await getSkillRegistry(this.projectRoot);
+      return this.prepareExplicitSkillExecution(
+        rawUserInput,
+        {
+          name: expert.expert.skillRef,
+          argumentsText: rawUserInput,
+          registered: registry.get(expert.expert.skillRef) !== undefined,
+        },
+        runPermissionMode,
+        admissionSignal,
+      );
+    } catch {
+      return { rejectionReason: 'skill_preparation_failed' };
+    }
+  }
+
   async send(
     prompt: string,
     artifacts?: readonly InputArtifact[],
@@ -752,6 +796,7 @@ export class RealKodaXSession implements ManagedSession {
     // embedded run. Daemon Coder intentionally ignores this snapshot and keeps
     // Runtime settings live for the next concrete tool call.
     const runPermissionMode = this.permissionMode;
+    const runPartnerExpert = this.partnerExpert ? structuredClone(this.partnerExpert) : null;
     const explicitSkillReference = await this.resolveExplicitSkillReference(prompt);
     if (admissionSignal?.aborted || this.disposed) {
       return { accepted: false, reason: 'cancelled_before_admission', queueMode };
@@ -887,6 +932,7 @@ export class RealKodaXSession implements ManagedSession {
         options?.operationId,
         true,
         skillPreparation?.prepared,
+        runPartnerExpert,
       );
       const outcome = admission ? await admission.promise : 'admitted';
       if (outcome === 'not_admitted' && admission?.rejectionReason !== undefined) {
@@ -924,6 +970,9 @@ export class RealKodaXSession implements ManagedSession {
       this.lastActivityAt = Date.now();
       return { accepted: true, queued: true, queueId, queueMode };
     }
+    // A current SDK run keeps its captured role (including interrupt delivery). Only a
+    // fresh run needs availability/preparation here; queued new runs do it at startRun.
+    if (runPartnerExpert) await this.requirePartnerExpertAvailable(runPartnerExpert);
     const skillPreparation =
       explicitSkillReference !== undefined
         ? await this.prepareExplicitSkillExecution(
@@ -932,7 +981,12 @@ export class RealKodaXSession implements ManagedSession {
             runPermissionMode,
             admissionSignal,
           )
-        : undefined;
+        : await this.preparePartnerExpertSkill(
+            prompt,
+            runPartnerExpert,
+            runPermissionMode,
+            admissionSignal,
+          );
     if (admissionSignal?.aborted || this.disposed) {
       await skillPreparation?.prepared?.finalize(
         new Error('Session send cancelled before admission'),
@@ -954,6 +1008,7 @@ export class RealKodaXSession implements ManagedSession {
       options?.operationId,
       false,
       skillPreparation?.prepared,
+      runPartnerExpert,
     );
     return { accepted: true, queued: false };
   }
@@ -981,6 +1036,9 @@ export class RealKodaXSession implements ManagedSession {
     operationId?: string,
     restoreDraftOnBoundaryConflict = false,
     explicitSkill?: PreparedExplicitSkillExecution,
+    runPartnerExpert: ManagedSession['partnerExpert'] | null = this.partnerExpert
+      ? structuredClone(this.partnerExpert)
+      : null,
   ): RuntimeAdmissionState | null {
     const abort = new AbortController();
     const runtimeAdmission =
@@ -991,23 +1049,66 @@ export class RealKodaXSession implements ManagedSession {
     this.runtimeAdmission = runtimeAdmission;
     this.lastActivityAt = Date.now();
     let runFailure: Error | undefined;
+    let preparedSkill = explicitSkill;
+    let streamStarted = false;
 
-    void this.runRealStream(
-      prompt,
-      abort.signal,
-      artifacts,
-      promptOverlay,
-      runtimeAdmission,
-      runPermissionMode,
-      operationId,
-      explicitSkill,
-    )
+    // Fresh sends arrive preflighted so they can reject before ACK. Internal queued
+    // turns enter here directly and must prepare the expert's one Skill as well.
+    const prepareAndRun = async (): Promise<Error | undefined> => {
+      if (
+        preparedSkill === undefined &&
+        this.surface === 'partner' &&
+        runPartnerExpert?.useSkill !== false &&
+        runPartnerExpert?.expert.skillRef
+      ) {
+        await this.requirePartnerExpertAvailable(runPartnerExpert);
+        const preparation = await this.preparePartnerExpertSkill(
+          prompt,
+          runPartnerExpert,
+          runPermissionMode,
+          abort.signal,
+        );
+        if (preparation?.rejectionReason) {
+          throw new Error(
+            `Partner expert Skill could not be prepared: ${preparation.rejectionReason}. Choose prompt-only or repair the configured Skill.`,
+          );
+        }
+        preparedSkill = preparation?.prepared;
+        if (this.disposed || abort.signal.aborted) {
+          throw new Error('Session run cancelled during expert Skill preparation');
+        }
+      }
+      streamStarted = true;
+      return this.runRealStream(
+        prompt,
+        abort.signal,
+        artifacts,
+        promptOverlay,
+        runtimeAdmission,
+        runPermissionMode,
+        operationId,
+        preparedSkill,
+        runPartnerExpert,
+      );
+    };
+    void prepareAndRun()
       .then((failure) => {
         runFailure = failure;
       })
       .catch((error: unknown) => {
         runFailure = error instanceof Error ? error : new Error(String(error));
-        if (this.disposed || abort.signal.aborted) return;
+        if (this.disposed) return;
+        if (abort.signal.aborted) {
+          if (!streamStarted)
+            this.emit({
+              kind: 'session_error',
+              sessionId: this.sessionId,
+              error: 'cancelled',
+              category: 'cancelled',
+              retriable: true,
+            });
+          return;
+        }
         const wrapped = wrapSdkError(error);
         console.warn(
           `[real-session ${this.sessionId}] stream preflight error ` +
@@ -1023,8 +1124,8 @@ export class RealKodaXSession implements ManagedSession {
         });
       })
       .finally(async () => {
-        if (explicitSkill !== undefined) {
-          await explicitSkill.finalize(runFailure).catch((error: unknown) => {
+        if (preparedSkill !== undefined) {
+          await preparedSkill.finalize(runFailure).catch((error: unknown) => {
             console.warn(
               `[real-session ${this.sessionId}] Skill finalization failed: ${
                 error instanceof Error ? error.message : String(error)
@@ -1051,6 +1152,8 @@ export class RealKodaXSession implements ManagedSession {
       queueMode: nextPrompt.queueMode,
       content: clampSessionEventText(nextPrompt.content) ?? nextPrompt.content,
     });
+    // Queued work starts a new turn: capture the latest committed expert here.
+    // Interrupts already consumed inside the previous SDK run keep its original profile.
     this.startRun(nextPrompt.content, undefined, nextPrompt.promptOverlay);
   }
 
@@ -1471,6 +1574,7 @@ export class RealKodaXSession implements ManagedSession {
     runPermissionMode: PermissionMode = this.permissionMode,
     operationId?: string,
     explicitSkill?: PreparedExplicitSkillExecution,
+    runPartnerExpert?: ManagedSession['partnerExpert'] | null,
   ): Promise<Error | undefined> {
     if (this.surface === 'code' && runtimeHostAdapter.isRuntimeSelected()) {
       return this.runCoderDaemon(
@@ -1486,6 +1590,7 @@ export class RealKodaXSession implements ManagedSession {
     if (this.surface === 'code') {
       await runtimeHostAdapter.ensureLegacyOwner();
     }
+    await this.requirePartnerExpertAvailable(runPartnerExpert ?? null);
     const sid = this.sessionId;
     // Embedded mode changes are documented as next-run settings. The immutable
     // mode was captured by send()/startRun() before any owner-recovery await.
@@ -2504,7 +2609,10 @@ export class RealKodaXSession implements ManagedSession {
             return [];
           })
         : undefined;
-    const partnerAgentProfile = this.surface === 'partner' ? buildPartnerAgentProfile() : undefined;
+    const partnerAgentProfile =
+      this.surface === 'partner'
+        ? buildPartnerAgentProfile(runPartnerExpert ?? undefined)
+        : undefined;
     const partnerRuntimeContextOverlay =
       this.surface === 'partner'
         ? buildPartnerRuntimeContextOverlay({ sources: partnerSources })
@@ -2780,6 +2888,7 @@ export class RealKodaXSession implements ManagedSession {
           }
         } else {
           // Partner inline driver, or the explicitly selected legacy Coder rollback driver.
+          await this.requirePartnerExpertAvailable(runPartnerExpert ?? null);
           await withSessionRunContext(
             {
               sessionId: sid,

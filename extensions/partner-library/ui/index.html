@@ -1,0 +1,671 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Partner 插件库</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --background: #fff;
+        --surface: #f7f7f8;
+        --text: #252529;
+        --muted: #74747e;
+        --line: #e7e7ec;
+        --accent: #ac740d;
+        --accent-wash: #fff7e6;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --background: #111113;
+          --surface: #1b1b1f;
+          --text: #ededf0;
+          --muted: #9797a2;
+          --line: #303038;
+          --accent: #edb64a;
+          --accent-wash: #2c2416;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--text);
+        background: var(--background);
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 40px 32px;
+      }
+      .eyebrow {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .eyebrow svg {
+        width: 18px;
+        height: 18px;
+      }
+      h1 {
+        margin: 14px 0 10px;
+        font-size: 28px;
+        font-weight: 650;
+        letter-spacing: -0.5px;
+      }
+      .intro {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.8;
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        border-bottom: 1px solid var(--line);
+        margin: 30px 0 24px;
+      }
+      .tab {
+        appearance: none;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        padding: 12px 16px;
+        background: transparent;
+        color: var(--muted);
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .tab[aria-selected='true'] {
+        color: var(--text);
+        border-bottom-color: var(--accent);
+      }
+      .tab:hover {
+        background: var(--surface);
+      }
+      .tab:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+        border-radius: 4px;
+      }
+      .count {
+        display: inline-block;
+        min-width: 20px;
+        margin-left: 6px;
+        padding: 1px 5px;
+        border-radius: 5px;
+        background: var(--surface);
+        font-size: 11px;
+      }
+      .panel {
+        min-height: 280px;
+        padding: 40px 24px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        text-align: center;
+      }
+      .panel[hidden] {
+        display: none;
+      }
+      .expert-panel {
+        text-align: left;
+        padding: 24px;
+      }
+      .expert-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .expert-toolbar h2 {
+        margin: 0;
+      }
+      .expert-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 14px;
+      }
+      .expert-card {
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+      }
+      .expert-card h3 {
+        margin: 0 0 9px;
+        font-size: 16px;
+      }
+      .expert-card p {
+        min-height: 44px;
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.8;
+        color: var(--muted);
+      }
+      .expert-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+      }
+      .action {
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 7px 12px;
+        background: var(--background);
+        color: var(--text);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .action:hover {
+        border-color: var(--accent);
+      }
+      .action:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .action:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      .action.primary {
+        background: var(--accent-wash);
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      #expert-status {
+        margin: 10px 0 16px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.8;
+      }
+      #expert-status[data-error='true'] {
+        color: #ce5252;
+      }
+      .editor {
+        margin: 20px 0;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+      }
+      .editor[hidden] {
+        display: none;
+      }
+      .editor p {
+        font-size: 12px;
+        line-height: 1.8;
+        color: var(--muted);
+      }
+      .editor label {
+        display: block;
+        margin: 16px 0 7px;
+        font-size: 13px;
+      }
+      .editor input,
+      .editor textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        color: var(--text);
+        background: var(--background);
+        font: inherit;
+        font-size: 13px;
+      }
+      .editor textarea {
+        resize: vertical;
+        line-height: 1.7;
+      }
+      .editor input:focus-visible,
+      .editor textarea:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .editor .editor-error {
+        color: #ce5252;
+      }
+      .editor-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+      }
+      .symbol {
+        display: grid;
+        place-items: center;
+        width: 52px;
+        height: 52px;
+        margin: 0 auto 18px;
+        border-radius: 14px;
+        background: var(--accent-wash);
+        color: var(--accent);
+      }
+      .symbol svg {
+        width: 25px;
+        height: 25px;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .description {
+        max-width: 400px;
+        margin: 0 auto;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.9;
+      }
+      .notice {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        padding: 16px 2px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+      .notice svg {
+        width: 15px;
+        height: 15px;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+      @media (max-width: 520px) {
+        main {
+          padding: 28px 18px;
+        }
+        .panel {
+          padding: 32px 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          aria-hidden="true"
+        >
+          <path
+            d="M8 3h3a2 2 0 0 0 4 0h3v6a2 2 0 0 1 0 4v6h-6a2 2 0 0 0-4 0H3v-6a2 2 0 0 0 0-4V3h5Z"
+          />
+        </svg>
+        Partner · 独立扩展
+      </div>
+      <h1>插件</h1>
+      <p class="intro">按任务选择专家，按需要连接资料与工具。你的工作仍在 Partner 对话里完成。</p>
+      <div class="tabs" role="tablist" aria-label="插件类别">
+        <button
+          class="tab"
+          id="experts-tab"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="experts-panel"
+        >
+          专家<span class="count" id="expert-count">…</span>
+        </button>
+        <button
+          class="tab"
+          id="connectors-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="connectors-panel"
+          tabindex="-1"
+        >
+          连接器<span class="count">0</span>
+        </button>
+      </div>
+      <section
+        class="panel expert-panel"
+        id="experts-panel"
+        role="tabpanel"
+        aria-labelledby="experts-tab"
+        tabindex="0"
+      >
+        <div class="expert-toolbar">
+          <h2>选择一位专家</h2>
+          <div>
+            <button class="action" type="button" id="refresh-experts">刷新</button>
+            <button class="action primary" type="button" id="create-expert">新建专家</button>
+          </div>
+        </div>
+        <p id="expert-status" role="status">正在读取已安装扩展中的专家…</p>
+        <form class="editor" id="expert-editor" aria-labelledby="editor-title" hidden>
+          <h2 id="editor-title">新建专家</h2>
+          <p id="editor-note">保存只加入专家库，不会选择专家、改写草稿或自动发送消息。</p>
+          <label for="editor-name">专家名称</label>
+          <input id="editor-name" maxlength="80" required autocomplete="off" />
+          <label for="editor-description">说明</label>
+          <textarea id="editor-description" maxlength="280" rows="2"></textarea>
+          <label for="editor-prompt">专家提示词</label>
+          <textarea id="editor-prompt" maxlength="8000" rows="6" required></textarea>
+          <p>专家提示词用于描述角色、方法和边界，不是自动发送的用户消息。</p>
+          <label for="editor-task-1">示例任务 1</label>
+          <textarea id="editor-task-1" maxlength="512" rows="2"></textarea>
+          <label for="editor-task-2">示例任务 2</label>
+          <textarea id="editor-task-2" maxlength="512" rows="2"></textarea>
+          <label for="editor-task-3">示例任务 3</label>
+          <textarea id="editor-task-3" maxlength="512" rows="2"></textarea>
+          <label for="editor-task-4">示例任务 4</label>
+          <textarea id="editor-task-4" maxlength="512" rows="2"></textarea>
+          <label for="editor-skill">Skill 名称（可选）</label>
+          <input id="editor-skill" maxlength="64" autocomplete="off" />
+          <p>
+            只填写一个现有 Skill 的准确名称；留空时仅使用提示词。这里不会搜索、安装或创建 Skill。
+          </p>
+          <p class="editor-error" id="editor-error" role="alert" hidden></p>
+          <div class="editor-actions">
+            <button class="action" type="button" id="cancel-editor">取消</button>
+            <button class="action primary" type="button" id="save-expert">保存专家</button>
+          </div>
+        </form>
+        <div class="expert-grid" id="expert-list"></div>
+      </section>
+      <section
+        class="panel"
+        id="connectors-panel"
+        role="tabpanel"
+        aria-labelledby="connectors-tab"
+        tabindex="0"
+        hidden
+      >
+        <div class="symbol">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <path
+              d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 4a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-1 1"
+              transform="translate(1 2) scale(.9)"
+            />
+          </svg>
+        </div>
+        <h2>还没有连接器</h2>
+        <p class="description">
+          连接器将在完成接入与授权后出现在这里。当前没有已连接的第三方服务，也不会自动读取或修改远端文档。
+        </p>
+      </section>
+      <div class="notice">
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          aria-hidden="true"
+        >
+          <path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" />
+          <path d="m8 12 3 3 5-6" />
+        </svg>
+        <span
+          >本页来自已安装的独立扩展包。安装和启用本身不会连接任何外部服务；停用后，插件入口与本页一同撤下。</span
+        >
+      </div>
+    </main>
+    <script>
+      (() => {
+        let token = null;
+        let requestSequence = 0;
+        const pending = new Map();
+        const status = document.getElementById('expert-status');
+        const refreshButton = document.getElementById('refresh-experts');
+        const list = document.getElementById('expert-list');
+        const editor = document.getElementById('expert-editor');
+        const editorError = document.getElementById('editor-error');
+        const saveButton = document.getElementById('save-expert');
+        const editorField = (name) => document.getElementById(`editor-${name}`);
+        let editingExpert = null;
+        function openEditor(expert = null) {
+          if (saveButton.disabled) return;
+          editingExpert = expert;
+          editor.reset();
+          const isUser = expert?.id.startsWith('user.');
+          document.getElementById('editor-title').textContent = !expert
+            ? '新建专家'
+            : isUser
+              ? '编辑专家'
+              : '修改预置副本';
+          document.getElementById('editor-note').textContent = !expert
+            ? '保存只加入专家库，不会选择专家、改写草稿或自动发送消息。'
+            : isUser
+              ? '保存会生成新版本；已有会话仍保留原版本，不会自动升级。'
+              : '预置专家不会被修改；保存后会创建一个属于你的副本。';
+          saveButton.textContent = !expert ? '保存专家' : isUser ? '保存新版本' : '保存为我的副本';
+          editorField('name').value = expert?.name ?? '';
+          editorField('description').value = expert?.description ?? '';
+          editorField('prompt').value = expert?.prompt ?? '';
+          editorField('skill').value = expert?.skillRef ?? '';
+          for (let index = 1; index <= 4; index += 1)
+            editorField(`task-${index}`).value = expert?.starterTasks[index - 1] ?? '';
+          editorError.hidden = true;
+          editor.hidden = false;
+          editorField('name').focus();
+        }
+        async function saveExpert() {
+          if (saveButton.disabled || !editor.reportValidity()) return;
+          const values = {
+            name: editorField('name').value.trim(),
+            description: editorField('description').value,
+            prompt: editorField('prompt').value.trim(),
+            starterTasks: [1, 2, 3, 4]
+              .map((index) => editorField(`task-${index}`).value)
+              .filter((value) => value.trim()),
+          };
+          const skillRef = editorField('skill').value.trim();
+          if (skillRef) values.skillRef = skillRef;
+          editorError.hidden = true;
+          if (
+            !values.name ||
+            !values.prompt ||
+            (skillRef && !/^[a-z0-9][a-z0-9._:-]{0,63}$/.test(skillRef))
+          ) {
+            editorError.textContent = '请填写名称和提示词；Skill 只能填写一个有效的现有名称。';
+            editorError.hidden = false;
+            return;
+          }
+          const controls = [...editor.querySelectorAll('input, textarea, button')];
+          for (const control of controls) control.disabled = true;
+          try {
+            await request('expert.save', {
+              values,
+              ...(editingExpert
+                ? { expertId: editingExpert.id, expectedRevision: editingExpert.revision }
+                : {}),
+            });
+            editor.hidden = true;
+            await loadExperts();
+            setStatus('已保存。需要重新选择专家，才会在会话中应用新版本。');
+          } catch (error) {
+            editorError.textContent = error.message || '保存失败，输入内容已保留，请重试。';
+            editorError.hidden = false;
+          } finally {
+            for (const control of controls) control.disabled = false;
+          }
+        }
+        function setStatus(message, error = false) {
+          status.textContent = message;
+          status.dataset.error = String(error);
+          status.setAttribute('role', error ? 'alert' : 'status');
+        }
+        function request(method, input = {}) {
+          if (!token) return Promise.reject(new Error('尚未连接到宿主，请稍后刷新。'));
+          const requestId = `request-${++requestSequence}`;
+          return new Promise((resolve, reject) => {
+            const timer =
+              method === 'expert.delete'
+                ? null
+                : setTimeout(() => {
+                    pending.delete(requestId);
+                    reject(new Error('请求超时，请重试；已有会话和草稿不会被清空。'));
+                  }, 15000);
+            pending.set(requestId, { resolve, reject, timer });
+            window.parent.postMessage(
+              { type: 'space-extension.request.v1', token, requestId, method, ...input },
+              '*',
+            );
+          });
+        }
+        function makeAction(label, method, expert, extra = {}) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = `action${method === 'expert.select' ? ' primary' : ''}`;
+          button.textContent = label;
+          button.addEventListener('click', async () => {
+            button.disabled = true;
+            setStatus(
+              method === 'expert.delete'
+                ? '请在宿主确认是否删除；历史会话会保留。'
+                : method === 'expert.select'
+                  ? '正在选择专家，原有草稿会保留…'
+                  : '正在打开专家详情…',
+            );
+            try {
+              const result = await request(method, {
+                expertId: expert.id,
+                revision: expert.revision,
+                ...extra,
+              });
+              if (method === 'expert.delete') {
+                if (result.cancelled) {
+                  setStatus('已取消删除，专家未发生变化。');
+                  return;
+                }
+                await loadExperts();
+                setStatus('已删除专家。历史会话中的专家快照仍会保留。');
+                return;
+              }
+              setStatus(
+                method === 'expert.select'
+                  ? '专家已选择，请在 Partner 中继续对话。'
+                  : '专家详情已打开。',
+              );
+            } catch (error) {
+              setStatus(error.message || '操作失败，请重试。', true);
+            } finally {
+              button.disabled = false;
+            }
+          });
+          return button;
+        }
+        async function loadExperts() {
+          refreshButton.disabled = true;
+          setStatus('正在读取已安装扩展中的专家…');
+          try {
+            const result = await request('catalog.list');
+            if (!Array.isArray(result.experts)) throw new Error('专家目录返回格式不正确。');
+            list.replaceChildren();
+            document.getElementById('expert-count').textContent = String(result.experts.length);
+            for (const expert of result.experts) {
+              const card = document.createElement('article');
+              card.className = 'expert-card';
+              const title = document.createElement('h3');
+              title.textContent = expert.name;
+              const description = document.createElement('p');
+              description.textContent = expert.description;
+              const actions = document.createElement('div');
+              actions.className = 'expert-actions';
+              const editButton = document.createElement('button');
+              editButton.type = 'button';
+              editButton.className = 'action';
+              editButton.textContent = expert.id.startsWith('user.') ? '编辑' : '修改副本';
+              editButton.addEventListener('click', () => openEditor(expert));
+              actions.append(
+                editButton,
+                makeAction('详情', 'expert.details', expert),
+                makeAction('使用专家', 'expert.select', expert),
+              );
+              if (expert.id.startsWith('user.'))
+                actions.prepend(makeAction('删除', 'expert.delete', expert));
+              if (expert.skillRef)
+                actions.append(
+                  makeAction('仅用提示词', 'expert.select', expert, { useSkill: false }),
+                );
+              card.append(title, description, actions);
+              list.append(card);
+            }
+            setStatus(
+              result.experts.length
+                ? '选择后将用于当前 Partner 会话；不会改写草稿或自动发送消息。'
+                : '当前扩展尚未收录专家。',
+            );
+          } catch (error) {
+            setStatus(error.message || '读取专家目录失败，请重试。', true);
+          } finally {
+            refreshButton.disabled = false;
+          }
+        }
+        window.addEventListener('message', (event) => {
+          if (event.source !== window.parent || !event.data || typeof event.data !== 'object')
+            return;
+          const message = event.data;
+          if (
+            message.type === 'space-extension.init.v1' &&
+            typeof message.token === 'string' &&
+            message.token !== token
+          ) {
+            token = message.token;
+            void loadExperts();
+          } else if (message.type === 'space-extension.response.v1' && message.token === token) {
+            const entry = pending.get(message.requestId);
+            if (!entry) return;
+            pending.delete(message.requestId);
+            if (entry.timer !== null) clearTimeout(entry.timer);
+            if (message.ok) entry.resolve(message.data);
+            else entry.reject(new Error(message.error || '操作失败。'));
+          }
+        });
+        refreshButton.addEventListener('click', () => void loadExperts());
+        document.getElementById('create-expert').addEventListener('click', () => openEditor());
+        document.getElementById('cancel-editor').addEventListener('click', () => {
+          editor.hidden = true;
+        });
+        saveButton.addEventListener('click', () => void saveExpert());
+        editor.addEventListener('submit', (event) => event.preventDefault());
+        window.parent.postMessage({ type: 'space-extension.ready.v1' }, '*');
+        const tabs = [...document.querySelectorAll('[role="tab"]')];
+        function selectTab(selected) {
+          for (const tab of tabs) {
+            const active = tab === selected;
+            tab.setAttribute('aria-selected', String(active));
+            tab.tabIndex = active ? 0 : -1;
+            document.getElementById(tab.getAttribute('aria-controls')).hidden = !active;
+          }
+        }
+        for (const tab of tabs) {
+          tab.addEventListener('click', () => selectTab(tab));
+          tab.addEventListener('keydown', (event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const index =
+              event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? tabs.length - 1
+                  : (tabs.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) %
+                    tabs.length;
+            selectTab(tabs[index]);
+            tabs[index].focus();
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

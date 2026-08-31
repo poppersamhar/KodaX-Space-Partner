@@ -9,6 +9,15 @@ import {
 const PARTNER_FRAME_NAME = 'kodax-partner-browser-4ef27e2f-c7de-4d8f-9f3a-3013ec6cf6b8';
 const RENAMED_PARTNER_FRAME_NAME = 'kodax-partner-browser-85ce53c4-bd67-4ca7-8df7-b0e817566ffc';
 
+test('extension bootstrap is allowed only as a child and cannot navigate to remote or privileged pages', () => {
+  const guard = installGuard({ allowPartnerBrowserFrames: true });
+  assert.equal(guard.frameNavigate('app://space/__space-extension-frame'), false);
+  assert.equal(guard.navigate('app://space/__space-extension-frame'), true);
+  assert.equal(guard.frameNavigate('app://space/index.html'), true);
+  assert.equal(guard.frameNavigate('https://example.com', 'space-extension'), true);
+  assert.equal(guard.frameNavigate('file:///etc/passwd', 'space-extension'), true);
+});
+
 type WindowOpenHandler = (details: { url: string }) => { action: 'deny' };
 type NavigateHandler = (event: { preventDefault(): void }, url: string) => void;
 type FrameNavigateHandler = (details: {

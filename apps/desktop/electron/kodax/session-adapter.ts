@@ -18,6 +18,7 @@ import type {
   AgentMode,
   AutoModeEngine,
   InputArtifact,
+  PartnerExpertSnapshotT,
   PermissionDecision,
   PermissionMode,
   SessionEvent,
@@ -46,6 +47,7 @@ export type SessionCreateOptions = {
   readonly autoModeEngine?: AutoModeEngine;
   readonly agentMode?: AgentMode;
   readonly surface?: Surface;
+  readonly partnerExpert?: PartnerExpertSnapshotT;
   readonly ephemeral?: boolean;
   readonly model?: string;
   readonly parentSessionId?: string;
@@ -134,6 +136,8 @@ export interface ManagedSession {
    * 持久化为 KodaX SDK session tag。决定 session 出现在哪个面的列表。
    */
   readonly surface: Surface;
+  /** Selected role for future Partner runs; every admitted run copies its own snapshot. */
+  partnerExpert?: PartnerExpertSnapshotT;
   /**
    * Host-only temporary sessions are hidden from normal session lists until the
    * user explicitly promotes them, e.g. Quick Ask -> Continue in Coder.

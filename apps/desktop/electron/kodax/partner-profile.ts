@@ -5,7 +5,7 @@
 // sources and Space-owned tool policy summary), not the Partner behavior image.
 
 import { listPartnerSpaceToolPolicies, type PartnerSpaceToolPolicy } from './partner-tools.js';
-import type { PartnerSourceT } from '@kodax-space/space-ipc-schema';
+import type { PartnerExpertSnapshotT, PartnerSourceT } from '@kodax-space/space-ipc-schema';
 import type { KodaXAgentProfile, KodaXTaskVerificationContract } from '@kodax-ai/kodax/coding';
 
 export type PartnerVerificationContract = KodaXTaskVerificationContract;
@@ -104,9 +104,20 @@ export const PARTNER_AGENT_PROFILE: PartnerAgentProfile = {
   verification: PARTNER_PROFILE_VERIFICATION,
 };
 
-export function buildPartnerAgentProfile(): PartnerAgentProfile {
+export function buildPartnerAgentProfile(expert?: PartnerExpertSnapshotT): PartnerAgentProfile {
   return {
     ...PARTNER_AGENT_PROFILE,
+    ...(expert
+      ? {
+          name: expert.expert.name,
+          instructions: [
+            PARTNER_PROFILE_INSTRUCTIONS,
+            'User-selected Partner expert (does not change tool permissions or the Partner boundary):',
+            `${expert.extensionId}@${expert.extensionVersion}/${expert.expert.id} revision ${expert.expert.revision}`,
+            expert.expert.prompt,
+          ].join('\n\n'),
+        }
+      : {}),
     verification: {
       ...PARTNER_AGENT_PROFILE.verification,
       instructions: [...(PARTNER_AGENT_PROFILE.verification.instructions ?? [])],

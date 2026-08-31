@@ -73,6 +73,11 @@ import { registerLicenseChannels } from './ipc/license.js';
 import { registerNotificationChannels, setNotificationWindowGetter } from './ipc/notification.js';
 import { registerUpdaterChannels, initAutoUpdater } from './ipc/updater.js';
 import { registerMcpbChannels, installMcpbFromOsHandoff } from './ipc/mcpb.js';
+import { registerSpaceExtensionChannels } from './ipc/space-extensions.js';
+import {
+  SPACE_EXTENSION_FRAME_CSP,
+  isSpaceExtensionFrameUrl,
+} from './window/space-extension-frame.js';
 import { registerTerminalChannels } from './ipc/terminal.js';
 import { registerClipboardChannels } from './ipc/clipboard.js';
 import { registerShellChannels } from './ipc/shell.js';
@@ -574,31 +579,33 @@ function applyCsp(): void {
     // receives a separate bootstrap CSP; the main renderer never receives its
     // unsafe-inline policy. The iframe omits allow-same-origin and the generated
     // document adds its own restrictive permission-specific CSP.
-    const csp = isArtifactHtmlFrameUrl(details.url)
-      ? ARTIFACT_HTML_FRAME_BOOTSTRAP_CSP
-      : isDev
-        ? [
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
-            "worker-src 'self' blob:",
-            "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data: blob: https:",
-            "media-src 'self' data: blob:",
-            "font-src 'self' data:",
-            APP_RENDERER_FRAME_SRC,
-            "connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*",
-          ].join('; ')
-        : [
-            "default-src 'self'",
-            `script-src 'self' '${THEME_BOOTSTRAP_INLINE_HASH}' blob:`,
-            "worker-src 'self' blob:",
-            "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data: blob: https:",
-            "media-src 'self' data: blob:",
-            "font-src 'self' data:",
-            APP_RENDERER_FRAME_SRC,
-            "connect-src 'self'",
-          ].join('; ');
+    const csp = isSpaceExtensionFrameUrl(details.url)
+      ? SPACE_EXTENSION_FRAME_CSP
+      : isArtifactHtmlFrameUrl(details.url)
+        ? ARTIFACT_HTML_FRAME_BOOTSTRAP_CSP
+        : isDev
+          ? [
+              "default-src 'self'",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
+              "worker-src 'self' blob:",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https:",
+              "media-src 'self' data: blob:",
+              "font-src 'self' data:",
+              APP_RENDERER_FRAME_SRC,
+              "connect-src 'self' ws://localhost:* ws://127.0.0.1:* http://localhost:* http://127.0.0.1:*",
+            ].join('; ')
+          : [
+              "default-src 'self'",
+              `script-src 'self' '${THEME_BOOTSTRAP_INLINE_HASH}' blob:`,
+              "worker-src 'self' blob:",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob: https:",
+              "media-src 'self' data: blob:",
+              "font-src 'self' data:",
+              APP_RENDERER_FRAME_SRC,
+              "connect-src 'self'",
+            ].join('; ');
 
     callback({
       responseHeaders: {
@@ -2496,6 +2503,7 @@ const startupPromise = app
     );
     // F021 .mcpb / .dxt bundle install — IPC handlers，UI 点 "Install extension..." 走
     registerMcpbChannels();
+    registerSpaceExtensionChannels();
     // F011 内置终端 (xterm.js + node-pty) — terminal.create/write/resize/kill + output/exit push
     registerTerminalChannels();
     // OC-31 v0.1.9 clipboard image paste — renderer 把粘贴板图片落到 app temp dir

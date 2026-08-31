@@ -30,7 +30,8 @@ const CODER_NAMESPACE =
   /^(runtime|session|askUser|permission|slash|skill|agent|mcp|mcpb|kodax|provider|settings|workflow|memory|artifact|diagnostics|handoff|notification)\./;
 
 export function isCoderEntrypointNamespace(name: string): name is InvokeChannelName {
-  return CODER_NAMESPACE.test(name);
+  // F146 expert bindings belong to embedded Partner, not the Coder daemon surface.
+  return CODER_NAMESPACE.test(name) && !name.startsWith('session.partnerExpert.');
 }
 
 export const FROZEN_V0131_CODER_ENTRYPOINTS = [
