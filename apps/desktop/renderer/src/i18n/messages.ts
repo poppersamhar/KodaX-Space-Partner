@@ -2,6 +2,31 @@ import type { SupportedLocaleT } from '@kodax-space/space-ipc-schema';
 
 export const messages = {
   'en-US': {
+    'connectors.resourceScope': 'Resource scope',
+    'connectors.addResource': 'Add resource',
+    'connectors.readResourceNow': 'Read selected resource',
+    'connectors.readOnlyScopeHint':
+      'Only the exact resources selected here may be read. This connector does not support writes in this release.',
+    'connectors.invalidResourceScope':
+      'Use the exact resource reference shown in the example, without query parameters, duplicates or resources from another service.',
+    'connectors.emptyResourceScope': 'Choose resources in Resource scope before reading.',
+    'connectors.providerInstall':
+      'Install official {package} {version} into Space’s private connector directory. No global CLI or shared Skills are changed. This release supports macOS Apple Silicon.',
+    'connectors.providerRequired': 'Official connector component required',
+    'connectors.providerPreparation':
+      'Space is preparing the local connector. The official authorization page opens after preparation succeeds.',
+    'connectors.providerCancelled':
+      'Space stopped waiting. Permissions already granted on the provider website are not revoked.',
+    'connectors.providerDisconnect':
+      'Disconnect this account from Space? Conversation bindings become unavailable. This does not log out other CLI accounts or revoke permissions on the provider website.',
+    'connectors.readOnlyConnected':
+      'Account connected. Enable it for this conversation and select exact resources to read. Resource access still depends on the provider’s permissions. This release is read-only.',
+    'connectors.wecomHint':
+      'Connect a WeCom bot and read documents it can access. Use a doc.weixin.qq.com/doc/… link or wecom://document/<document-id>. This is not unrestricted personal account access.',
+    'connectors.dingtalkHint':
+      'Your organization must enable CLI Access and required document permissions. Use an alidocs.dingtalk.com/i/nodes/… link or dingtalk://document/<node-id>.',
+    'connectors.meetingHint':
+      'Read details of a specified meeting using tmeet://meeting/<meeting-id>, not its 9-digit meeting code. Business and Enterprise accounts may require provider approval. No automatic recording, transcript or participant export.',
     'connectors.manage': 'Manage connectors',
     'connectors.composer': 'Conversation connectors',
     'connectors.connect': 'Connect',
@@ -2814,6 +2839,29 @@ export const messages = {
     'partner.permissionMode.footer': 'Automatic actions remain protected by safety rules.',
   },
   'zh-CN': {
+    'connectors.resourceScope': '资源范围',
+    'connectors.addResource': '添加资源',
+    'connectors.readResourceNow': '读取已选资源',
+    'connectors.readOnlyScopeHint': '仅能读取这里明确选择的资源，本版连接器不提供写入能力。',
+    'connectors.invalidResourceScope':
+      '请按示例填写确切资源引用，不要附加查询参数、重复资源或混入其他服务的链接。',
+    'connectors.emptyResourceScope': '读取前请通过「资源范围」选择资料。',
+    'connectors.providerInstall':
+      '将官方 {package} {version} 安装到 Space 私有连接组件目录，不修改全局 CLI 或共享 Skill。本版支持 Apple 芯片 Mac。',
+    'connectors.providerRequired': '需要安装官方连接组件',
+    'connectors.providerPreparation':
+      'Space 正在准备本地连接组件，准备成功后会自动打开官方授权网页。',
+    'connectors.providerCancelled': 'Space 已停止等待，不会撤销你已经在服务官方网页授予的权限。',
+    'connectors.providerDisconnect':
+      '从 Space 断开此账号？已有会话绑定将不可用；不会退出其他 CLI 账号，也不会撤销服务官方网页中的授权。',
+    'connectors.readOnlyConnected':
+      '账号已连接。启用本会话后，请单独选择可读取的资源；具体访问权限仍以服务端为准。本版仅支持读取。',
+    'connectors.wecomHint':
+      '连接企业微信机器人，读取机器人有权访问的文档。支持 doc.weixin.qq.com/doc/… 链接或 wecom://document/<文档ID>，不代表获得个人账号的全部资料。',
+    'connectors.dingtalkHint':
+      '企业需开启 CLI Access，并授予相应文档权限。支持 alidocs.dingtalk.com/i/nodes/… 链接或 dingtalk://document/<节点ID>。',
+    'connectors.meetingHint':
+      '通过 tmeet://meeting/<会议ID> 读取指定会议详情，不是九位会议码。商业版、企业版可能需要官方灰度批准。本版不自动导出录制、转写或参会者。',
     'connectors.manage': '管理连接器',
     'connectors.composer': '本会话连接器',
     'connectors.connect': '连接',

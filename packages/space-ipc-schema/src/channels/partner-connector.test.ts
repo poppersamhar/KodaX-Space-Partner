@@ -8,6 +8,59 @@ import {
   spaceConnectorDefinitionSchema,
 } from './partner-connector.js';
 
+test('read-only providers pin their adapter and cannot inherit Feishu scope or write consent', () => {
+  const connectionId = 'b6c4724a-979d-4267-9968-8ce67653c880';
+  for (const [adapter, url] of [
+    ['wecom-cli', 'wecom://document/Doc123'],
+    ['dingtalk-cli', 'dingtalk://document/Node123'],
+    ['tencent-meeting-cli', 'tmeet://meeting/1234567890123'],
+  ]) {
+    assert.equal(
+      spaceConnectorDefinitionSchema.safeParse({
+        id: 'provider',
+        adapter,
+        name: 'Provider',
+        description: '',
+      }).success,
+      true,
+    );
+    const selection = {
+      extensionId: 'partner.library',
+      connectorId: 'provider',
+      connectionId,
+      connectionRevision: 1,
+      adapter,
+      documents: [{ url, access: 'read' }],
+    };
+    assert.equal(partnerConnectorSelectionSchema.safeParse(selection).success, true);
+    assert.equal(
+      partnerConnectorSelectionSchema.safeParse({
+        ...selection,
+        documents: [{ url, access: 'append' }],
+      }).success,
+      false,
+    );
+    assert.equal(
+      partnerConnectorSelectionSchema.safeParse({
+        ...selection,
+        createFolderUrl: 'https://test.feishu.cn/drive/folder/Folder1',
+      }).success,
+      false,
+    );
+    assert.equal(
+      partnerConnectorSelectionSchema.safeParse({ ...selection, adapter: 'feishu-cli' }).success,
+      false,
+    );
+    assert.equal(
+      partnerConnectorSelectionSchema.safeParse({
+        ...selection,
+        documents: [{ url: url + '?token=secret', access: 'read' }],
+      }).success,
+      false,
+    );
+  }
+});
+
 test('a Feishu connector declares a host adapter, never a command or credential', () => {
   const definition = {
     id: 'feishu-docs',

@@ -24,9 +24,10 @@ import {useAppStore} from '../../store/appStore.ts';
 import {useSurfaceStore} from '../../store/surface.ts';
 import {useConfirmStore} from '../../store/confirmStore.ts';
 import {startNewConversation} from '../../store/newConversation.ts';
-const connector={id:'feishu-docs',adapter:'feishu-cli',name:'Feishu documents',description:''};
+const connector={id:'feishu-docs',adapter:window.fixtureAdapter??'feishu-cli',name:'Feishu documents',description:''};
 const extension={id:'library',version:'0.4.0',name:'Library',description:'',enabled:true,installedAt:1,expertCount:0,connectorCount:1};
 const connection={id:'00000000-0000-4000-8000-000000000001',extensionId:'library',connectorId:'feishu-docs',revision:1,profile:'qa',accountLabel:'QA account',connected:true,permissions:{read:true,create:true,append:true}};
+if(window.fixtureAdapter){connection.adapter=window.fixtureAdapter;connection.permissions={read:true,create:false,append:false};}
 let connected=true;let allowed=false;let selected=[];
 const proposal={id:'00000000-0000-4000-8000-000000000002',sessionId:'test-session',projectRoot:'/project',extensionId:'library',connectorId:'feishu-docs',connectionId:connection.id,connectionRevision:1,operation:'append',targetUrl:'https://example.feishu.cn/docx/Doc1',title:'Append conclusion',content:'Only append this reviewed sentence.',rationale:'Requested summary',contentHash:'a'.repeat(64),scopeHash:'b'.repeat(64),baseRevision:8,status:'pending',createdAt:'2026-09-01T00:00:00Z',updatedAt:'2026-09-01T00:00:00Z'};
 window.calls=[];
@@ -52,6 +53,73 @@ function Confirm(){const current=useConfirmStore(state=>state.current);return cu
 function RefreshBinding(){const context=usePartnerConnectors();const [finished,setFinished]=useState(false);return <><button onClick={async()=>{await context.binding.refresh();setFinished(true);}}>Refresh binding metadata</button><output>{finished?'Metadata refreshed':'Waiting metadata'}</output></>;}
 createRoot(document.getElementById('root')).render(<I18nProvider><SpaceExtensionsProvider><PartnerConnectorProvider><textarea aria-label="Draft" defaultValue="Keep this draft"/><PartnerConnectorChips/><RefreshBinding/><button onClick={()=>startNewConversation()}>New conversation</button><button onClick={()=>useAppStore.getState().setCurrentSession('test-session')}>Enter test session</button><button onClick={()=>useAppStore.getState().setCurrentProject('/other')}>Switch project</button><button onClick={()=>window.finishRead?.()}>Finish old read</button><PartnerConnectorDetails extensionId="library" connector={connector}/><PartnerRemoteRecords kind="pendingReview"/><Confirm/></PartnerConnectorProvider></SpaceExtensionsProvider></I18nProvider>);
 `;
+
+test(
+  'read-only provider details save the adapter and hide irrelevant Feishu write controls',
+  { skip: !browserPath },
+  async (t) => {
+    const output = await build({
+      stdin: {
+        contents: `window.fixtureAdapter='tencent-meeting-cli';\n${fixture}`,
+        resolveDir: fileURLToPath(new URL('.', import.meta.url)),
+        loader: 'tsx',
+      },
+      bundle: true,
+      write: false,
+      format: 'iife',
+      platform: 'browser',
+      jsx: 'automatic',
+      loader: { '.png': 'dataurl' },
+      logLevel: 'silent',
+      define: { 'import.meta.env': '{}' },
+    });
+    const browser = await chromium.launch({ executablePath: browserPath, headless: true });
+    t.after(() => browser.close());
+    const page = await browser.newPage({ locale: 'en-US' });
+    page.setDefaultTimeout(3000);
+    await page.route('http://readonly.test/', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }),
+    );
+    await page.goto('http://readonly.test/');
+    await page.addScriptTag({ content: output.outputFiles[0].text });
+    const details = page.getByTestId('partner-connector-details');
+    await details.getByRole('combobox', { name: 'Account connection' }).waitFor();
+    assert.equal(
+      await details.getByRole('button', { name: 'Allow reviewed writes globally' }).count(),
+      0,
+    );
+    assert.equal(
+      await details.getByRole('textbox', { name: 'Optional folder for new documents' }).count(),
+      0,
+    );
+    await details.getByRole('button', { name: 'Add resource', exact: true }).click();
+    await details
+      .getByRole('textbox', { name: 'Exact target 1', exact: true })
+      .fill('tmeet://meeting/12345');
+    await details
+      .getByRole('button', { name: 'Use this scope in the conversation', exact: true })
+      .click();
+    await page
+      .getByText('Scope saved. Your draft was not changed and no message was sent.', {
+        exact: true,
+      })
+      .waitFor();
+    const calls = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
+      channel: string;
+      input: { connectors?: { adapter?: string; documents: { url: string }[] }[] };
+    }[];
+    const saved = calls.filter((call) => call.channel === 'partner.connectors.resolve').at(-1)
+      ?.input.connectors?.[0];
+    assert.equal(saved?.adapter, 'tencent-meeting-cli');
+    assert.equal(saved?.documents[0].url, 'tmeet://meeting/12345');
+    assert.equal(
+      calls.some((call) =>
+        /onboarding|partner.connectors.read|admin.policy.set/.test(call.channel),
+      ),
+      false,
+    );
+  },
+);
 
 test(
   'trusted connector setup separates account verification, document scope, draft chips and explicit global policy',

@@ -71,13 +71,13 @@ test('builds an independently installable, self-contained Partner library archiv
   const manifest = JSON.parse(await zip.file('manifest.json').async('string'));
   const html = await zip.file('ui/index.html').async('string');
   assert.equal(manifest.id, 'kodax.partner-library');
-  assert.equal(manifest.version, '0.5.1');
+  assert.equal(manifest.version, '0.6.0');
   assert.equal(manifest.experts.length, 9);
   assert.equal(manifest.experts[0].id, 'writing-mentor');
   assert.equal(manifest.experts[0].revision, 1);
   assert.ok(manifest.experts[0].prompt.length > 0);
   assert.equal(manifest.experts[0].skillRef, undefined);
-  assert.deepEqual(manifest.connectors, [
+  assert.deepEqual(manifest.connectors.slice(0, 1), [
     {
       id: 'feishu-docs',
       adapter: 'feishu-cli',
@@ -85,16 +85,27 @@ test('builds an independently installable, self-contained Partner library archiv
       description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
     },
   ]);
+  assert.deepEqual(
+    manifest.connectors.map(({ id, adapter, name }) => [id, adapter, name]),
+    [
+      ['feishu-docs', 'feishu-cli', '飞书'],
+      ['wecom', 'wecom-cli', '企业微信'],
+      ['dingtalk', 'dingtalk-cli', '钉钉'],
+      ['tencent-meeting', 'tencent-meeting-cli', '腾讯会议'],
+    ],
+  );
   assert.equal(manifest.ui.sha256, createHash('sha256').update(html).digest('hex'));
   assert.match(html, /专家/);
   assert.match(html, /连接器/);
   assert.match(html, /role="tablist"/);
-  const embeddedLogo = html.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
-  assert.ok(embeddedLogo, 'The official Feishu logo must load without network access');
-  assert.deepEqual(
-    Buffer.from(embeddedLogo[1], 'base64'),
-    await fs.readFile(new URL('../../resources/brands/feishu.png', import.meta.url)),
-  );
+  const embeddedLogos = [...html.matchAll(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g)];
+  assert.equal(embeddedLogos.length, 4, 'Every implemented provider has its own offline brand');
+  for (const [index, brand] of ['feishu', 'wecom', 'dingtalk', 'tencent-meeting'].entries()) {
+    assert.deepEqual(
+      Buffer.from(embeddedLogos[index][1], 'base64'),
+      await fs.readFile(new URL(`../../resources/brands/${brand}.png`, import.meta.url)),
+    );
+  }
   assert.doesNotMatch(html, /(?:src|href)\s*=\s*["'](?:https?:|\/\/)|\bimport\s*\(/i);
   assert.doesNotMatch(html, /window\.kodaxSpace|require\(['"]electron/);
 });
@@ -103,7 +114,7 @@ test('the library contains eight stable scene experts with original tasks and re
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'partner-scene-experts-'));
   t.after(() => fs.rm(outDir, { recursive: true, force: true }));
   const { manifest } = await buildPartnerExtension({ outDir });
-  assert.equal(manifest.version, '0.5.1');
+  assert.equal(manifest.version, '0.6.0');
   assert.deepEqual(
     manifest.experts.map((expert) => expert.id),
     ['writing-mentor', ...migratedScenes.map(([id]) => id)],

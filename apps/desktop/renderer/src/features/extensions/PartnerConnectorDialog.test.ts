@@ -20,9 +20,10 @@ import {PartnerConnectorChips} from './PartnerConnectorChips.tsx';
 import {ConfirmDialog} from '../../shell/ConfirmDialog.tsx';
 import {useAppStore} from '../../store/appStore.ts';
 import {useSurfaceStore} from '../../store/surface.ts';
-const connector={id:'feishu-docs',adapter:'feishu-cli',name:'Feishu documents',description:'Read documents and review writes.'};
+const connector={id:'feishu-docs',adapter:window.fixtureOptions?.adapter??'feishu-cli',name:window.fixtureOptions?.adapter?'Tencent Meeting':'Feishu documents',description:'Read only selected resources.'};
 const extension={id:'library',version:'0.5.0',name:'Library',description:'',enabled:true,installedAt:1,expertCount:0,connectorCount:1};
 const connection={id:'00000000-0000-4000-8000-000000000001',extensionId:'library',connectorId:'feishu-docs',revision:1,profile:'private-profile',accountLabel:'Test account',connected:true,permissions:{read:true,create:true,append:true}};
+if(connector.adapter!=='feishu-cli')Object.assign(connection,{adapter:connector.adapter,permissions:{read:true,create:false,append:false}});
 const savedBindings=[{binding:{extensionId:'library',connectorId:'feishu-docs',connectionId:connection.id,connectionRevision:1,documents:[{url:'https://example.feishu.cn/docx/Saved',access:'append'}],createFolderUrl:'https://example.feishu.cn/drive/folder/SavedFolder',name:connector.name,accountLabel:connection.accountLabel},available:true},{binding:{extensionId:'library',connectorId:'feishu-docs',connectionId:'00000000-0000-4000-8000-000000000002',connectionRevision:4,documents:[{url:'https://example.feishu.cn/docx/Other',access:'read'}],name:connector.name,accountLabel:'Other account'},available:true}];
 let accounts=[];let listeners={};let job={id:'00000000-0000-4000-8000-000000000003',extensionId:'library',connectorId:'feishu-docs',phase:'needs_install',canReopen:false};
 window.calls=[];
@@ -54,7 +55,11 @@ createRoot(document.getElementById('root')).render(<I18nProvider><SpaceExtension
 
 async function openFixture(
   t: TestContext,
-  options: { existingSession?: boolean; installPhase?: 'installing' } = {},
+  options: {
+    existingSession?: boolean;
+    installPhase?: 'installing';
+    adapter?: 'tencent-meeting-cli';
+  } = {},
 ) {
   const output = await build({
     stdin: {
@@ -84,6 +89,34 @@ async function openFixture(
   await page.addScriptTag({ content: output.outputFiles[0].text });
   return { page, errors };
 }
+
+test(
+  'another provider keeps its own brand, requirements, explicit installation and read-only session binding',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t, { adapter: 'tencent-meeting-cli' });
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('heading', { name: 'Tencent Meeting', exact: true }).waitFor();
+    assert.equal(await dialog.locator('details').count(), 0);
+    const logo = dialog.locator('img[data-testid="partner-connector-icon"]');
+    await logo.evaluate((image: HTMLImageElement) => image.decode());
+    assert.equal(await logo.evaluate((image: HTMLImageElement) => image.naturalWidth), 128);
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+    await dialog.getByText(/@tencentcloud\/tmeet/).waitFor();
+    assert.equal(await dialog.getByText(/Feishu/).count(), 0);
+    await dialog.getByRole('button', { name: 'Install and continue', exact: true }).click();
+    await page.evaluate(() => Reflect.get(window, 'finishConnection')());
+    await dialog.getByRole('button', { name: 'Try it', exact: true }).click();
+    await page.getByText('Conversation focused', { exact: true }).waitFor();
+    const state = (await page.evaluate(() => Reflect.get(window, 'readBindings')())) as {
+      connectors: { binding: { adapter: string; documents: unknown[] } }[];
+    };
+    assert.equal(state.connectors[0].binding.adapter, 'tencent-meeting-cli');
+    assert.deepEqual(state.connectors[0].binding.documents, []);
+    assert.equal(await page.getByRole('textbox', { name: 'Draft' }).inputValue(), 'Keep my draft');
+    assert.deepEqual(errors, []);
+  },
+);
 
 test(
   'the Feishu connection dialog loads its decorative brand image and retains the catalog name',

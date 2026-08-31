@@ -3,8 +3,8 @@
   "hostApiVersion": 1,
   "id": "kodax.partner-library",
   "name": "Partner 插件库",
-  "description": "选择或创建专家，并通过飞书文档连接器在明确范围内读取资料、审核远端写入。",
-  "version": "0.5.1",
+  "description": "选择或创建专家，连接飞书、企业微信、钉钉与腾讯会议，在指定范围内读取资料。飞书远端写入需单独审核。",
+  "version": "0.6.0",
   "ui": {
     "entry": "ui/index.html",
     "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
@@ -109,6 +109,24 @@
       "adapter": "feishu-cli",
       "name": "飞书",
       "description": "连接飞书文档，读取指定资料；新建和追加内容审核后提交。"
+    },
+    {
+      "id": "wecom",
+      "adapter": "wecom-cli",
+      "name": "企业微信",
+      "description": "通过官方 CLI 连接企业微信机器人，读取本会话指定且机器人有权访问的文档。首版仅只读。"
+    },
+    {
+      "id": "dingtalk",
+      "adapter": "dingtalk-cli",
+      "name": "钉钉",
+      "description": "通过官方 CLI 连接钉钉，读取指定文档。企业需开启 CLI Access，并具备对应业务权限；首版仅只读。"
+    },
+    {
+      "id": "tencent-meeting",
+      "adapter": "tencent-meeting-cli",
+      "name": "腾讯会议",
+      "description": "通过官方 CLI 连接腾讯会议，按会议 ID 读取指定会议的基本信息。首版不导出录制、参会人员或纪要。"
     }
   ]
 }

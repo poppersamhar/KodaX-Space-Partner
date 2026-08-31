@@ -313,7 +313,6 @@ import { diagnosticsExportChannel, diagnosticsReportChannel } from './diagnostic
 import { spaceControlRequestedChannel, spaceControlResolveChannel } from './space-control.js';
 
 const coreInvokeChannels = {
-  ...connectorInvokeChannels,
   [spaceExtensionsListChannel.name]: spaceExtensionsListChannel,
   [spaceExtensionsInstallChannel.name]: spaceExtensionsInstallChannel,
   [spaceExtensionsSetEnabledChannel.name]: spaceExtensionsSetEnabledChannel,
@@ -541,11 +540,13 @@ const coreInvokeChannels = {
 
 // Keep the declaration type in named parts: flattening the growing registry exceeds
 // TypeScript's declaration serialization limit while losing none of the channel types.
-export const invokeChannels: typeof coreInvokeChannels & typeof connectorOnboardingInvokeChannels =
-  {
-    ...coreInvokeChannels,
-    ...connectorOnboardingInvokeChannels,
-  };
+export const invokeChannels: typeof coreInvokeChannels &
+  typeof connectorInvokeChannels &
+  typeof connectorOnboardingInvokeChannels = {
+  ...coreInvokeChannels,
+  ...connectorInvokeChannels,
+  ...connectorOnboardingInvokeChannels,
+};
 
 export const pushChannels = {
   ...connectorOnboardingPushChannels,

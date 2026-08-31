@@ -12,10 +12,26 @@ import {
 } from '../kodax/atomic-file.js';
 import { assertOwnedDirectory, readRegularFile } from '../space-extensions/files.js';
 
-const connectionSchema = partnerConnectorConnectionSchema.extend({
-  appId: z.string().max(160),
-  openId: z.string().max(160),
-});
+const connectionSchema = partnerConnectorConnectionSchema
+  .extend({
+    appId: z.string().max(160).optional(),
+    openId: z.string().max(160).optional(),
+    providerIdentity: z
+      .object({
+        authorityId: z.string().min(1).max(160),
+        subjectId: z.string().min(1).max(160),
+        label: z.string().min(1).max(160),
+      })
+      .strict()
+      .optional(),
+  })
+  .refine(
+    (value) =>
+      (value.adapter ?? 'feishu-cli') === 'feishu-cli'
+        ? value.appId !== undefined && value.openId !== undefined && !value.providerIdentity
+        : !!value.providerIdentity && value.appId === undefined && value.openId === undefined,
+    'Account identity must match its adapter',
+  );
 const databaseSchema = z
   .object({
     version: z.literal(1),

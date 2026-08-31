@@ -6,9 +6,9 @@ import {
   partnerRemoteProposalSchema,
   partnerRemoteSourceSchema,
   partnerRemoteReceiptSchema,
-  feishuDocumentUrlSchema,
   feishuFolderUrlSchema,
   feishuProfileSchema,
+  partnerReadResourceSchema,
   type PartnerConnectorConnectionT,
   type PartnerConnectorInspectionT,
   type PartnerConnectorSelectionT,
@@ -24,6 +24,12 @@ import {
 } from '@kodax-space/space-ipc-schema';
 import { FeishuCli, FeishuCliError, type FeishuWriteResult } from './feishu-cli.js';
 import { PartnerConnectorStore, type ConnectorAccount } from './store.js';
+import {
+  checkReadConnectorDocument,
+  type ReadConnector,
+  type ReadConnectorId,
+  type ReadConnectorDocument,
+} from './read-connector.js';
 
 export interface PartnerConnectorContext {
   sessionId: string;
@@ -37,6 +43,7 @@ export interface PartnerConnectorContext {
 /** Main-owned task lease; never accepted from IPC or an extension package. */
 export interface PartnerConnectorConnectionLease {
   readonly signal?: AbortSignal;
+  readonly expectedAdapter?: ReadConnectorId;
   assertActive(): void;
   complete(connection: PartnerConnectorConnectionT): void;
 }
@@ -48,6 +55,7 @@ export class PartnerConnectorCommitError extends Error {
 }
 interface Dependencies {
   cli: Pick<FeishuCli, 'inspect' | 'listProfiles' | 'read' | 'create' | 'append'>;
+  readConnectors?: Partial<Record<ReadConnectorId, ReadConnector>>;
   catalog: (extensionId: string) => Promise<SpaceConnectorDefinitionT[]>;
   checkPolicy: (connectorId: string, write: boolean) => Promise<void>;
   getPolicyRevision?: () => number;
@@ -62,6 +70,7 @@ const scopeHash = (binding: PartnerConnectorSnapshotT): string =>
       connectorId: binding.connectorId,
       connectionId: binding.connectionId,
       connectionRevision: binding.connectionRevision,
+      ...(binding.adapter ? { adapter: binding.adapter } : {}),
       documents: [...binding.documents].sort((a, b) => a.url.localeCompare(b.url)),
       createFolderUrl: binding.createFolderUrl,
     }),
@@ -78,7 +87,7 @@ const own = (
   record: { sessionId: string; projectRoot: string },
 ): boolean => context.sessionId === record.sessionId && context.projectRoot === record.projectRoot;
 const publicAccount = (account: ConnectorAccount): PartnerConnectorConnectionT => {
-  const { appId: _appId, openId: _openId, ...value } = account;
+  const { appId: _appId, openId: _openId, providerIdentity: _identity, ...value } = account;
   return partnerConnectorConnectionSchema.parse(value);
 };
 
@@ -102,13 +111,90 @@ export class PartnerConnectorService {
   }
   private async definition(extensionId: string, connectorId: string) {
     const definition = (await this.catalog(extensionId)).find(
-      (item) => item.id === connectorId && item.adapter === 'feishu-cli',
+      (item) =>
+        item.id === connectorId &&
+        (item.adapter === 'feishu-cli' || !!this.deps.readConnectors?.[item.adapter]),
     );
-    if (!definition) throw new Error('飞书连接器已不可用');
+    if (!definition) throw new Error('连接器已不可用');
     return definition;
   }
+  async onboardingAdapter(
+    extensionId: string,
+    connectorId: string,
+  ): Promise<ReadConnector | undefined> {
+    const definition = await this.definition(extensionId, connectorId);
+    return definition.adapter === 'feishu-cli'
+      ? undefined
+      : this.deps.readConnectors?.[definition.adapter];
+  }
+  private async verifiedStatus(
+    definition: SpaceConnectorDefinitionT,
+    profile: string,
+    lease?: PartnerConnectorConnectionLease,
+  ) {
+    if (definition.adapter !== 'feishu-cli') {
+      const adapter = this.deps.readConnectors?.[definition.adapter];
+      if (!adapter) throw new Error('连接组件不可用');
+      const status = await adapter.inspect(profile, lease?.signal);
+      if (!status.installed || !status.identity)
+        throw new Error(status.reason ?? '账号验证未通过，请重新连接');
+      const identity = status.identity;
+      if (
+        [identity.authorityId, identity.subjectId, identity.label].some(
+          (value) =>
+            typeof value !== 'string' ||
+            !value.trim() ||
+            value.length > 160 ||
+            /[\u0000-\u001f\u007f]/u.test(value),
+        )
+      )
+        throw new Error('账号身份无法验证');
+      return {
+        account: { adapter: definition.adapter, providerIdentity: identity },
+        label: identity.label,
+        permissions: { read: true, create: false, append: false },
+      };
+    }
+    const status = await this.deps.cli.inspect(profile, lease?.signal);
+    if (!status.installed || status.version !== '1.0.92' || !status.identity)
+      throw new Error(status.reason ?? '请先在官方飞书 CLI 配置并登录用户账号');
+    const identity = status.identity;
+    const permissions = {
+      read: identity.scopes.includes('docx:document:readonly'),
+      create: identity.scopes.includes('docx:document:create'),
+      append: identity.scopes.includes('docx:document:write_only'),
+    };
+    if (lease && Object.values(permissions).some((allowed) => !allowed))
+      throw new Error('飞书账号缺少向导要求的文档权限，请重新授权');
+    return {
+      account: { appId: identity.appId, openId: identity.openId },
+      label: identity.label,
+      permissions,
+    };
+  }
+  private sameIdentity(a: Partial<ConnectorAccount>, b: Partial<ConnectorAccount>): boolean {
+    return (
+      (a.adapter ?? 'feishu-cli') === (b.adapter ?? 'feishu-cli') &&
+      a.appId === b.appId &&
+      a.openId === b.openId &&
+      a.providerIdentity?.authorityId === b.providerIdentity?.authorityId &&
+      a.providerIdentity?.subjectId === b.providerIdentity?.subjectId
+    );
+  }
+  private feishuArgs(account: ConnectorAccount) {
+    if ((account.adapter ?? 'feishu-cli') !== 'feishu-cli' || !account.appId || !account.openId)
+      throw new Error('此连接器不支持飞书文档操作');
+    return { profile: account.profile, expected: { appId: account.appId, openId: account.openId } };
+  }
   async inspect(extensionId: string, connectorId: string): Promise<PartnerConnectorInspectionT> {
-    await this.definition(extensionId, connectorId);
+    const adapter = await this.onboardingAdapter(extensionId, connectorId);
+    if (adapter)
+      return {
+        installed: false,
+        profiles: [],
+        reason: '此连接器使用 Space 专用账号配置，请通过连接向导添加。',
+        connections: await this.accounts(extensionId, connectorId),
+      };
     const status = await this.deps.cli.inspect('default');
     const profiles = status.installed ? await this.deps.cli.listProfiles().catch(() => []) : [];
     return {
@@ -158,23 +244,17 @@ export class PartnerConnectorService {
         item.profile === input.profile,
     );
     if (lease && started) throw new Error('向导专用账号配置已经存在，拒绝覆盖');
-    await this.definition(input.extensionId, input.connectorId);
+    const definition = await this.definition(input.extensionId, input.connectorId);
+    if (lease?.expectedAdapter && definition.adapter !== lease.expectedAdapter)
+      throw new Error('连接器类型已变化');
     await this.deps.checkPolicy(input.connectorId, false);
-    const status = await this.deps.cli.inspect(
+    const verified = await this.verifiedStatus(
+      definition,
       feishuProfileSchema.parse(input.profile),
-      lease?.signal,
+      lease,
     );
-    if (!status.installed || status.version !== '1.0.92' || !status.identity)
-      throw new Error(status.reason ?? '请先在官方飞书 CLI 配置并登录用户账号');
-    const identity = status.identity;
-    if (
-      lease &&
-      ['docx:document:readonly', 'docx:document:create', 'docx:document:write_only'].some(
-        (scope) => !identity.scopes.includes(scope),
-      )
-    )
-      throw new Error('飞书账号缺少向导要求的文档权限，请重新授权');
-    await this.definition(input.extensionId, input.connectorId);
+    const latestDefinition = await this.definition(input.extensionId, input.connectorId);
+    if (latestDefinition.adapter !== definition.adapter) throw new Error('连接器类型已变化');
     const connection = await this.store.mutate((db) => {
       assertActive();
       const old = db.connections.find(
@@ -183,17 +263,12 @@ export class PartnerConnectorService {
           item.connectorId === input.connectorId &&
           item.profile === input.profile,
       );
-      const permissions = {
-        read: identity.scopes.includes('docx:document:readonly'),
-        create: identity.scopes.includes('docx:document:create'),
-        append: identity.scopes.includes('docx:document:write_only'),
-      };
+      const permissions = verified.permissions;
       if (this.revocationEpoch !== startedEpoch || old?.revision !== started?.revision)
         throw new Error('连接期间授权状态已改变，请重新验证');
       if (
         old?.connected &&
-        old.appId === identity.appId &&
-        old.openId === identity.openId &&
+        this.sameIdentity(old, verified.account) &&
         JSON.stringify(old.permissions) === JSON.stringify(permissions)
       )
         return publicAccount(old);
@@ -201,11 +276,10 @@ export class PartnerConnectorService {
         id: old?.id ?? randomUUID(),
         ...input,
         revision: (old?.revision ?? 0) + 1,
-        accountLabel: identity.label,
+        accountLabel: verified.label,
         connected: true,
         permissions,
-        appId: identity.appId,
-        openId: identity.openId,
+        ...verified.account,
       };
       if (old) db.connections[db.connections.indexOf(old)] = record;
       else db.connections.push(record);
@@ -270,7 +344,22 @@ export class PartnerConnectorService {
     const result: PartnerConnectorSnapshotT[] = [];
     for (const selection of partnerConnectorSelectionsSchema.parse(selections)) {
       const definition = await this.definition(selection.extensionId, selection.connectorId);
+      if ((selection.adapter ?? 'feishu-cli') !== definition.adapter)
+        throw new Error('连接器类型与范围不符');
       const account = await this.account(selection);
+      if (definition.adapter !== 'feishu-cli') {
+        const adapter = this.deps.readConnectors?.[definition.adapter];
+        if (
+          !adapter ||
+          selection.documents.some((document) => !adapter.acceptsResource(document.url))
+        )
+          throw new Error('资源引用无效或不属于此连接器');
+        const status = await this.verifiedStatus(definition, account.profile);
+        if (!this.sameIdentity(account, status.account)) throw new Error('账号已变化，请重新连接');
+        await this.account(selection);
+        result.push({ ...selection, name: definition.name, accountLabel: account.accountLabel });
+        continue;
+      }
       const status = await this.deps.cli.inspect(account.profile);
       if (
         !status.installed ||
@@ -301,7 +390,9 @@ export class PartnerConnectorService {
       connectors: await Promise.all(
         bindings.map(async (binding) => {
           try {
-            await this.definition(binding.extensionId, binding.connectorId);
+            const definition = await this.definition(binding.extensionId, binding.connectorId);
+            if (definition.adapter !== (binding.adapter ?? 'feishu-cli'))
+              throw new Error('连接器类型已变化');
             await this.account(binding);
             return { binding, available: true };
           } catch {
@@ -325,6 +416,8 @@ export class PartnerConnectorService {
         item.connected,
     );
     if (!record) throw new Error('连接已断开或授权版本变化，请重新选择');
+    if ((record.adapter ?? 'feishu-cli') !== (binding.adapter ?? 'feishu-cli'))
+      throw new Error('账号与连接器类型不符');
     return record;
   }
   private assertContext(context: PartnerConnectorContext): void {
@@ -347,7 +440,7 @@ export class PartnerConnectorService {
       feishuFolderUrlSchema.parse(targetUrl);
       if (binding.createFolderUrl !== targetUrl) throw new Error('未授权在此文件夹新建文档');
     } else {
-      feishuDocumentUrlSchema.parse(targetUrl);
+      partnerReadResourceSchema.parse(targetUrl);
       const scope = binding.documents.find((item) => item.url === targetUrl);
       if (!scope || (operation === 'append' && scope.access !== 'append'))
         throw new Error('文档不在本会话授权范围内');
@@ -359,7 +452,16 @@ export class PartnerConnectorService {
       throw new Error('计划模式不允许远端写入提案或提交');
     const accountEpoch = this.accountEpochs.get(connectionId) ?? 0;
     const policyRevision = this.deps.getPolicyRevision?.() ?? 0;
-    await this.definition(binding.extensionId, binding.connectorId);
+    const definition = await this.definition(binding.extensionId, binding.connectorId);
+    if (definition.adapter !== (binding.adapter ?? 'feishu-cli'))
+      throw new Error('连接器类型已变化');
+    if (definition.adapter !== 'feishu-cli') {
+      if (
+        operation !== 'read' ||
+        !this.deps.readConnectors?.[definition.adapter]?.acceptsResource(targetUrl)
+      )
+        throw new Error('此连接器仅允许读取已选择的资源');
+    }
     await this.deps.checkPolicy(binding.connectorId, operation !== 'read');
     const account = await this.account(binding);
     // No await after this live check until the caller's next operation.
@@ -391,10 +493,6 @@ export class PartnerConnectorService {
       binding,
       account,
       assertLive,
-      args: {
-        profile: account.profile,
-        expected: { appId: account.appId, openId: account.openId },
-      },
     };
   }
   async read(
@@ -402,20 +500,51 @@ export class PartnerConnectorService {
     input: { connectionId: string; documentUrl: string },
   ): Promise<PartnerRemoteSourceT> {
     const auth = await this.authorize(context, input.connectionId, input.documentUrl, 'read');
-    const document = await this.deps.cli.read({
-      ...auth.args,
-      documentUrl: input.documentUrl,
-      beforeRead: async () => {
-        await this.authorize(context, input.connectionId, input.documentUrl, 'read');
-      },
-      assertRead: auth.assertLive,
-    });
+    const beforeRead = async () => {
+      await this.authorize(context, input.connectionId, input.documentUrl, 'read');
+    };
+    let document: ReadConnectorDocument;
+    if (auth.account.adapter && auth.account.adapter !== 'feishu-cli') {
+      const adapter = this.deps.readConnectors?.[auth.account.adapter];
+      const expected = auth.account.providerIdentity;
+      if (!adapter || !expected) throw new Error('连接组件不可用');
+      const status = await this.verifiedStatus(
+        await this.definition(auth.binding.extensionId, auth.binding.connectorId),
+        auth.account.profile,
+      );
+      if (!this.sameIdentity(auth.account, status.account))
+        throw new Error('账号已变化，请重新连接');
+      let checked = false;
+      let dispatched = false;
+      document = await adapter.read({
+        profile: auth.account.profile,
+        expected,
+        documentUrl: input.documentUrl,
+        beforeRead: async () => {
+          await beforeRead();
+          checked = true;
+        },
+        assertRead: () => {
+          auth.assertLive();
+          if (!checked) throw new Error('读取未通过权限检查');
+          dispatched = true;
+        },
+      });
+      if (!dispatched) throw new Error('读取未通过权限检查');
+      checkReadConnectorDocument(document);
+    } else
+      document = await this.deps.cli.read({
+        ...this.feishuArgs(auth.account),
+        documentUrl: input.documentUrl,
+        beforeRead,
+        assertRead: auth.assertLive,
+      });
     await this.authorize(context, input.connectionId, input.documentUrl, 'read');
     if (
       document.url !== input.documentUrl ||
       document.documentId !== input.documentUrl.split('/').at(-1)
     )
-      throw new Error('飞书返回的文档与请求不一致');
+      throw new Error('返回的资源与请求不一致');
     const source = partnerRemoteSourceSchema.parse({
       id: randomUUID(),
       sessionId: context.sessionId,
@@ -463,7 +592,7 @@ export class PartnerConnectorService {
     const base =
       input.operation === 'append'
         ? await this.deps.cli.read({
-            ...auth.args,
+            ...this.feishuArgs(auth.account),
             documentUrl: input.targetUrl,
             beforeRead: async () => {
               await this.authorize(context, input.connectionId, input.targetUrl, input.operation);
@@ -584,7 +713,7 @@ export class PartnerConnectorService {
         throw new Error('提案授权范围已变化');
       if (p.operation === 'append') {
         const base = await this.deps.cli.read({
-          ...auth.args,
+          ...this.feishuArgs(auth.account),
           documentUrl: p.targetUrl,
           beforeRead: async () => {
             await this.authorize(context, p.connectionId, p.targetUrl, p.operation);
@@ -625,7 +754,7 @@ export class PartnerConnectorService {
       const result: FeishuWriteResult =
         p.operation === 'create'
           ? await this.deps.cli.create({
-              ...auth.args,
+              ...this.feishuArgs(auth.account),
               folderUrl: p.targetUrl,
               title: p.title,
               text: p.content,
@@ -633,7 +762,7 @@ export class PartnerConnectorService {
               assertDispatch,
             })
           : await this.deps.cli.append({
-              ...auth.args,
+              ...this.feishuArgs(auth.account),
               documentUrl: p.targetUrl,
               baseRevision: p.baseRevision!,
               text: p.content,

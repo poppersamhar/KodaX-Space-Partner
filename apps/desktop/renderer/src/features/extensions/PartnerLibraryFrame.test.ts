@@ -38,7 +38,7 @@ async function openLibrary(
   t: TestContext,
   initialExperts: SpaceExpertDefinitionT[] = [preset],
   initialTab: 'experts' | 'connectors' = 'experts',
-  options: { twoConnectors?: boolean; holdConfiguration?: boolean } = {},
+  options: { twoConnectors?: boolean; allProviders?: boolean; holdConfiguration?: boolean } = {},
 ) {
   const browser = await chromium.launch({ executablePath: browserPath, headless: true });
   t.after(() => browser.close());
@@ -56,12 +56,39 @@ async function openLibrary(
     if (request.method === 'connector.catalog')
       return {
         connectedIds: connected ? ['feishu-docs'] : [],
-        connectors: Array.from({ length: options.twoConnectors ? 2 : 1 }, (_, index) => ({
-          id: index === 0 ? 'feishu-docs' : 'feishu-secondary',
-          adapter: 'feishu-cli',
-          name: index === 0 ? '飞书' : '飞书备用',
-          description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
-        })),
+        connectors: options.allProviders
+          ? [
+              {
+                id: 'feishu-docs',
+                adapter: 'feishu-cli',
+                name: '飞书',
+                description: 'Read documents',
+              },
+              {
+                id: 'wecom',
+                adapter: 'wecom-cli',
+                name: '企业微信',
+                description: 'Read bot documents',
+              },
+              {
+                id: 'dingtalk',
+                adapter: 'dingtalk-cli',
+                name: '钉钉',
+                description: 'Read permitted documents',
+              },
+              {
+                id: 'tencent-meeting',
+                adapter: 'tencent-meeting-cli',
+                name: '腾讯会议',
+                description: 'Read a selected meeting',
+              },
+            ]
+          : Array.from({ length: options.twoConnectors ? 2 : 1 }, (_, index) => ({
+              id: index === 0 ? 'feishu-docs' : 'feishu-secondary',
+              adapter: 'feishu-cli',
+              name: index === 0 ? '飞书' : '飞书备用',
+              description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
+            })),
       };
     if (request.method === 'connector.configure' && options.holdConfiguration)
       return new Promise((resolve) => {
@@ -151,6 +178,35 @@ async function openLibrary(
     },
   };
 }
+
+test(
+  'each implemented provider has its own offline brand and exact trusted configure action',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, requests } = await openLibrary(t, [preset], 'connectors', {
+      allProviders: true,
+    });
+    for (const [name, id, width] of [
+      ['飞书', 'feishu-docs', 700],
+      ['企业微信', 'wecom', 48],
+      ['钉钉', 'dingtalk', 200],
+      ['腾讯会议', 'tencent-meeting', 128],
+    ] as const) {
+      const card = frame
+        .getByRole('article')
+        .filter({ has: frame.getByRole('heading', { name, exact: true }) });
+      const logo = card.locator('img');
+      await logo.evaluate((image: HTMLImageElement) => image.decode());
+      assert.equal(await logo.evaluate((image: HTMLImageElement) => image.naturalWidth), width);
+      await card.getByRole('button', { name: '连接', exact: true }).click();
+      await frame.getByText('请在连接弹窗中继续。', { exact: true }).waitFor();
+      assert.equal(
+        requests.filter((request) => request.method === 'connector.configure').at(-1)?.connectorId,
+        id,
+      );
+    }
+  },
+);
 
 test(
   'the independent connector card opens only trusted configuration and never receives secrets or document content',

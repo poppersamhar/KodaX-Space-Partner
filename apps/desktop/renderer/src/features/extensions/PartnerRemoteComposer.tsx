@@ -122,7 +122,13 @@ export function PartnerRemoteComposer({
               disabled={busy || !active}
               onClick={() => void act(true)}
             >
-              {t('connectors.readNow')}
+              {t(
+                selected.some(
+                  (item) => item.binding.adapter && item.binding.adapter !== 'feishu-cli',
+                )
+                  ? 'connectors.readResourceNow'
+                  : 'connectors.readNow',
+              )}
             </button>
           )}
           {active && active.operation !== 'read' && (

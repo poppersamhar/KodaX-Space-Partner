@@ -55,6 +55,38 @@ const service = {
   },
 };
 
+test('read-only connector runs never advertise proposals and accept only their scoped resource', async () => {
+  const selected: PartnerConnectorSnapshotT = {
+    ...binding,
+    adapter: 'tencent-meeting-cli',
+    connectorId: 'tencent-meeting',
+    name: '腾讯会议',
+    documents: [{ url: 'tmeet://meeting/12345', access: 'read' }],
+  };
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    { ...context, bindings: [selected] },
+    service,
+  );
+  assert.ok(runtime);
+  assert.deepEqual(
+    runtime.listRunTools!('mcp').map((tool) => tool.name),
+    [PARTNER_CONNECTOR_READ],
+  );
+  assert.doesNotMatch(runtime.listRunTools!('mcp')[0].description, /Feishu document/);
+  await runtime.executeCapability('mcp', 'partner-connectors/read', {
+    connectionId,
+    documentUrl: 'tmeet://meeting/12345',
+  });
+  await assert.rejects(
+    runtime.executeCapability('mcp', 'partner-connectors/read', {
+      connectionId,
+      documentUrl: 'tmeet://meeting/999',
+    }),
+  );
+  await assert.rejects(runtime.executeCapability('mcp', 'partner-connectors/propose', {}));
+});
+
 test('connector tools are run-scoped, Partner-only, available-only and never registered globally', async () => {
   const sdk = await import('@kodax-ai/kodax/coding');
   const before = sdk.getAllRegisteredTools().map((tool) => tool.name);

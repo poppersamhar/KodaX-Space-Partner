@@ -7,6 +7,9 @@ import { FeishuCli } from './feishu-cli.js';
 import { PartnerConnectorService } from './service.js';
 import { PartnerConnectorTasks } from './connection-tasks.js';
 import { createFeishuOnboardingCli } from './feishu-onboarding-cli.js';
+import { createWecomConnector } from './wecom-cli.js';
+import { createDingtalkConnector } from './dingtalk-connector.js';
+import { createTencentMeetingConnector } from './tencent-meeting-connector.js';
 
 let service: PartnerConnectorService | undefined;
 let tasks: PartnerConnectorTasks | undefined;
@@ -24,6 +27,17 @@ export function getPartnerConnectorService(): PartnerConnectorService {
     path.join(getSpaceDataDir(), 'partner-connectors'),
     {
       cli: new FeishuCli((request) => cli().runner(request)),
+      readConnectors: {
+        'wecom-cli': createWecomConnector({
+          root: path.join(getSpaceDataDir(), 'partner-connectors'),
+        }),
+        'dingtalk-cli': createDingtalkConnector({
+          root: path.join(getSpaceDataDir(), 'partner-connectors'),
+        }),
+        'tencent-meeting-cli': createTencentMeetingConnector({
+          root: path.join(getSpaceDataDir(), 'partner-connectors'),
+        }),
+      },
       revokeConnections: (extensionId) =>
         tasks?.cancelForExtension(extensionId) ?? Promise.resolve(),
       getPolicyRevision: () => policyRevision,
@@ -52,6 +66,8 @@ export function getPartnerConnectorTasks(): PartnerConnectorTasks {
   return (tasks ??= new PartnerConnectorTasks({
     service: getPartnerConnectorService(),
     run: (input) => cli().run(input),
+    resolveAdapter: (owner) =>
+      getPartnerConnectorService().onboardingAdapter(owner.extensionId, owner.connectorId),
     openExternal: async (url, assertActive) => {
       const { shell } = await import('electron');
       assertActive();

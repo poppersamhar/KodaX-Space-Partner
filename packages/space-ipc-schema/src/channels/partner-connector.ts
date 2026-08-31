@@ -15,11 +15,51 @@ export const feishuFolderUrlSchema = z
   .max(512)
   .regex(/^https:\/\/[a-z0-9-]+\.feishu\.cn\/drive\/folder\/[A-Za-z0-9]{1,128}$/);
 
+export const partnerConnectorAdapterSchema = z.enum([
+  'feishu-cli',
+  'wecom-cli',
+  'dingtalk-cli',
+  'tencent-meeting-cli',
+]);
+export type PartnerConnectorAdapterT = z.infer<typeof partnerConnectorAdapterSchema>;
+export const wecomResourceSchema = z
+  .string()
+  .max(512)
+  .regex(/^(?:wecom:\/\/document\/|https:\/\/doc\.weixin\.qq\.com\/doc\/)[A-Za-z0-9_-]{1,128}$/);
+export const dingtalkResourceSchema = z
+  .string()
+  .max(512)
+  .regex(
+    /^(?:dingtalk:\/\/document\/|https:\/\/alidocs\.dingtalk\.com\/i\/nodes\/)[A-Za-z0-9_-]{1,128}$/,
+  );
+export const tencentMeetingResourceSchema = z
+  .string()
+  .max(512)
+  .regex(/^tmeet:\/\/meeting\/[0-9]{1,128}$/);
+export const partnerReadResourceSchema: z.ZodType<string> = z.union([
+  feishuDocumentUrlSchema,
+  wecomResourceSchema,
+  dingtalkResourceSchema,
+  tencentMeetingResourceSchema,
+]);
+export function isPartnerConnectorResource(
+  adapter: PartnerConnectorAdapterT,
+  value: string,
+): boolean {
+  const schemas = {
+    'feishu-cli': feishuDocumentUrlSchema,
+    'wecom-cli': wecomResourceSchema,
+    'dingtalk-cli': dingtalkResourceSchema,
+    'tencent-meeting-cli': tencentMeetingResourceSchema,
+  };
+  return schemas[adapter].safeParse(value).success;
+}
+
 /** Only adapters implemented by the trusted host can be declared by a package. */
 export const spaceConnectorDefinitionSchema = z
   .object({
     id: identity,
-    adapter: z.literal('feishu-cli'),
+    adapter: partnerConnectorAdapterSchema,
     name: z.string().trim().min(1).max(80),
     description: z.string().max(280),
   })
@@ -32,9 +72,11 @@ const selectionObject = z
     connectorId: identity,
     connectionId: z.string().uuid(),
     connectionRevision: revision,
+    /** Missing adapter is the legacy Feishu format, never an inferred new provider. */
+    adapter: partnerConnectorAdapterSchema.optional(),
     documents: z
       .array(
-        z.object({ url: feishuDocumentUrlSchema, access: z.enum(['read', 'append']) }).strict(),
+        z.object({ url: partnerReadResourceSchema, access: z.enum(['read', 'append']) }).strict(),
       )
       .max(32),
     createFolderUrl: feishuFolderUrlSchema.optional(),
@@ -43,10 +85,17 @@ const selectionObject = z
 const uniqueDocuments = (value: z.infer<typeof selectionObject>): boolean =>
   new Set(value.documents.map((document) => document.url.split('/').at(-1))).size ===
   value.documents.length;
-export const partnerConnectorSelectionSchema = selectionObject.refine(
-  uniqueDocuments,
-  'Duplicate document scope',
-);
+const validProviderScope = (value: z.infer<typeof selectionObject>): boolean => {
+  const adapter = value.adapter ?? 'feishu-cli';
+  return (
+    value.documents.every((item) => isPartnerConnectorResource(adapter, item.url)) &&
+    (adapter === 'feishu-cli' ||
+      (!value.createFolderUrl && value.documents.every((item) => item.access === 'read')))
+  );
+};
+export const partnerConnectorSelectionSchema = selectionObject
+  .refine(uniqueDocuments, 'Duplicate document scope')
+  .refine(validProviderScope, 'Resource does not match adapter or read-only capability');
 export type PartnerConnectorSelectionT = z.infer<typeof partnerConnectorSelectionSchema>;
 
 export const partnerConnectorSnapshotSchema = selectionObject
@@ -54,7 +103,8 @@ export const partnerConnectorSnapshotSchema = selectionObject
     name: z.string().min(1).max(80),
     accountLabel: z.string().min(1).max(160),
   })
-  .refine(uniqueDocuments, 'Duplicate document scope');
+  .refine(uniqueDocuments, 'Duplicate document scope')
+  .refine(validProviderScope, 'Resource does not match adapter or read-only capability');
 export type PartnerConnectorSnapshotT = z.infer<typeof partnerConnectorSnapshotSchema>;
 export const partnerConnectorSelectionsSchema = z
   .array(partnerConnectorSelectionSchema)
@@ -92,6 +142,7 @@ export const partnerConnectorConnectionSchema = z
     extensionId: identity,
     connectorId: identity,
     revision,
+    adapter: partnerConnectorAdapterSchema.optional(),
     profile: feishuProfileSchema,
     accountLabel: z.string().min(1).max(160),
     connected: z.boolean(),
@@ -139,7 +190,7 @@ export const partnerRemoteSourceSchema = z
   .object({
     ...owner,
     documentId: z.string().min(1).max(128),
-    url: feishuDocumentUrlSchema,
+    url: partnerReadResourceSchema,
     title: z.string().max(280),
     revision: z.number().int().nonnegative(),
     content: remoteText,
@@ -267,7 +318,7 @@ export const connectorInvokeChannels = {
     direction: 'invoke',
     input: context.extend({
       connectionId: z.string().uuid(),
-      documentUrl: feishuDocumentUrlSchema,
+      documentUrl: partnerReadResourceSchema,
     }),
     output: z.object({ source: partnerRemoteSourceSchema }).strict(),
   },

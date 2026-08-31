@@ -10,6 +10,64 @@ import { PartnerConnectorService } from './service.js';
 import type { FeishuCli } from './feishu-cli.js';
 import type { FeishuOnboardingInput } from './feishu-onboarding-cli.js';
 import { FeishuOnboardingError } from './feishu-onboarding-cli.js';
+import { ReadConnectorError, type ReadConnector } from './read-connector.js';
+
+test('provider onboarding uses its own URL validator and preserves safe installation errors', async () => {
+  const opened: string[] = [];
+  const events: PartnerConnectorOnboardingT[] = [];
+  const adapter: ReadConnector = {
+    id: 'wecom-cli',
+    inspect: async () => ({ installed: false }),
+    acceptsResource: () => false,
+    read: async () => {
+      throw new Error('No read');
+    },
+    isAuthorizationUrl: (value): value is string =>
+      value === 'https://work.weixin.qq.com/ai/qc/gen?key=fixture',
+    run: async (input) => {
+      if (!input.installCli) throw new ReadConnectorError('needs_install');
+      input.onProgress({
+        phase: 'waiting_authorization',
+        authorizationUrl: 'https://work.weixin.qq.com/ai/qc/gen?key=fixture',
+      });
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    },
+  };
+  const tasks = new PartnerConnectorTasks({
+    service: {
+      assertConnectionAllowed: async () => undefined,
+      connect: async () => {
+        throw new Error('Cancelled flow must never commit');
+      },
+    },
+    resolveAdapter: async () => adapter,
+    run: async () => {
+      throw new Error('Must not run Feishu auth');
+    },
+    openExternal: async (url) => {
+      opened.push(url);
+    },
+    changed: (job) => events.push(job),
+  });
+  try {
+    const first = tasks.start({ ...owner, connectorId: 'wecom' });
+    await settleUntil(() => tasks.get(first).phase === 'needs_install');
+    assert.doesNotMatch(tasks.get(first).error ?? '', /飞书/);
+    const second = tasks.start({ ...owner, connectorId: 'wecom', installCli: true });
+    await settleUntil(() => opened.length === 1);
+    await tasks.reopen(second);
+    assert.equal(opened.length, 2);
+    assert.equal(JSON.stringify(events).includes('key=fixture'), false);
+    await tasks.cancel(second);
+    assert.equal(tasks.get(second).phase, 'cancelled');
+    assert.doesNotMatch(tasks.get(second).error ?? '', /飞书/);
+    await assert.rejects(tasks.reopen(second));
+  } finally {
+    await tasks.dispose();
+  }
+});
 
 const owner = { extensionId: 'partner.library', connectorId: 'feishu' };
 const url = 'https://open.feishu.cn/page/cli?user_code=not-public';

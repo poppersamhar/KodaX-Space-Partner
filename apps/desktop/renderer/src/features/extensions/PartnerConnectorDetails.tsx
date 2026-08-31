@@ -13,6 +13,7 @@ import { requestPartnerConnectorDialog, usePartnerConnectors } from './PartnerCo
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { PartnerRemoteComposer } from './PartnerRemoteComposer.js';
 import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
+import { connectorPresentation } from './partnerConnectorPresentation.js';
 
 export const connectorButtonClass =
   'rounded-md border border-border-default px-2.5 py-1.5 text-xs hover:bg-hover-bg disabled:opacity-40';
@@ -63,6 +64,8 @@ function ConnectorDetailsContent({
   readonly initialConnectionId?: string;
 }): JSX.Element {
   const { t } = useI18n();
+  const readOnly = connector.adapter !== 'feishu-cli';
+  const presentation = connectorPresentation[connector.adapter];
   const context = usePartnerConnectors();
   const { catalog, snapshot: extensions } = useSpaceExtensions();
   const [connections, setConnections] = useState<PartnerConnectorConnectionT[]>([]);
@@ -103,11 +106,11 @@ function ConnectorDetailsContent({
           extensionId,
           connectorId: connector.id,
         }),
-        invokeExtensionHost('admin.policy.get', undefined),
+        readOnly ? Promise.resolve(null) : invokeExtensionHost('admin.policy.get', undefined),
       ]);
       if (!isActive() || revision !== loadRevision.current) return;
       setConnections(next.connections);
-      setWritesAllowed(policy.policy.connectors.writesAllowed);
+      setWritesAllowed(policy?.policy.connectors.writesAllowed ?? null);
       setConnectionId((current) =>
         next.connections.some((item) => item.id === current)
           ? current
@@ -117,7 +120,7 @@ function ConnectorDetailsContent({
       if (isActive() && revision === loadRevision.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [extensionId, connector.id, isActive]);
+  }, [extensionId, connector.id, isActive, readOnly]);
   useEffect(() => {
     mounted.current = true;
     void load();
@@ -166,10 +169,12 @@ function ConnectorDetailsContent({
       connectorId: connector.id,
       connectionId: connection.id,
       connectionRevision: connection.revision,
+      ...(readOnly ? { adapter: connector.adapter } : {}),
       documents: documents.map((item) => ({ ...item, url: item.url.trim() })),
       ...(folder.trim() ? { createFolderUrl: folder.trim() } : {}),
     });
-    if (!parsed.success) throw new Error(t('connectors.invalidScope'));
+    if (!parsed.success)
+      throw new Error(t(readOnly ? 'connectors.invalidResourceScope' : 'connectors.invalidScope'));
     await context.binding.select(parsed.data);
     if (isActive()) setNotice(t('connectors.saved'));
   };
@@ -195,7 +200,7 @@ function ConnectorDetailsContent({
           />
           <h2 className="text-base font-medium">{connector.name}</h2>
         </div>
-        <p className="mt-2 text-xs leading-5 text-fg-muted">{t('connectors.scopeHint')}</p>
+        <p className="mt-2 text-xs leading-5 text-fg-muted">{t(presentation.requirementsKey)}</p>
       </header>
       {!installed?.enabled && (
         <p role="alert" className="text-xs text-danger">
@@ -259,8 +264,12 @@ function ConnectorDetailsContent({
       </section>
       {connection && (
         <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
-          <h3 className="font-medium">{t('connectors.scope')}</h3>
-          <p className="text-fg-muted">{t('connectors.scopeHint')}</p>
+          <h3 className="font-medium">
+            {t(readOnly ? 'connectors.resourceScope' : 'connectors.scope')}
+          </h3>
+          <p className="text-fg-muted">
+            {t(readOnly ? 'connectors.readOnlyScopeHint' : 'connectors.scopeHint')}
+          </p>
           {documents.map((document, index) => (
             <div key={index} className="space-y-1">
               <input
@@ -268,7 +277,7 @@ function ConnectorDetailsContent({
                 className={connectorInputClass}
                 value={document.url}
                 disabled={busy}
-                placeholder="https://example.feishu.cn/docx/…"
+                placeholder={presentation.placeholder}
                 onChange={(event) =>
                   setDocuments((items) =>
                     items.map((item, i) =>
@@ -294,9 +303,11 @@ function ConnectorDetailsContent({
                   }
                 >
                   <option value="read">{t('connectors.read')}</option>
-                  <option value="append" disabled={!connection.permissions.append}>
-                    {t('connectors.append')}
-                  </option>
+                  {!readOnly && (
+                    <option value="append" disabled={!connection.permissions.append}>
+                      {t('connectors.append')}
+                    </option>
+                  )}
                 </select>
                 <button
                   type="button"
@@ -316,18 +327,20 @@ function ConnectorDetailsContent({
             disabled={busy || documents.length >= 32}
             onClick={() => setDocuments((items) => [...items, { url: '', access: 'read' }])}
           >
-            {t('connectors.addDocument')}
+            {t(readOnly ? 'connectors.addResource' : 'connectors.addDocument')}
           </button>
-          <label className="block">
-            {t('connectors.folder')}
-            <input
-              className={`${connectorInputClass} mt-2`}
-              value={folder}
-              disabled={busy || !connection.permissions.create}
-              placeholder="https://example.feishu.cn/drive/folder/…"
-              onChange={(event) => setFolder(event.target.value)}
-            />
-          </label>
+          {!readOnly && (
+            <label className="block">
+              {t('connectors.folder')}
+              <input
+                className={`${connectorInputClass} mt-2`}
+                value={folder}
+                disabled={busy || !connection.permissions.create}
+                placeholder="https://example.feishu.cn/drive/folder/…"
+                onChange={(event) => setFolder(event.target.value)}
+              />
+            </label>
+          )}
           <button
             type="button"
             className={connectorButtonClass}
@@ -338,25 +351,27 @@ function ConnectorDetailsContent({
           </button>
         </section>
       )}
-      <section className="space-y-2 rounded-lg border border-border-default p-3 text-xs">
-        <p>
-          {t(
-            writesAllowed === null
-              ? 'connectors.policyUnknown'
-              : writesAllowed
-                ? 'connectors.policyOn'
-                : 'connectors.policyOff',
-          )}
-        </p>
-        <button
-          type="button"
-          className={connectorButtonClass}
-          disabled={busy || writesAllowed === null || !installed?.enabled}
-          onClick={() => void perform(changePolicy)}
-        >
-          {t(writesAllowed ? 'connectors.blockWrites' : 'connectors.allowWrites')}
-        </button>
-      </section>
+      {!readOnly && (
+        <section className="space-y-2 rounded-lg border border-border-default p-3 text-xs">
+          <p>
+            {t(
+              writesAllowed === null
+                ? 'connectors.policyUnknown'
+                : writesAllowed
+                  ? 'connectors.policyOn'
+                  : 'connectors.policyOff',
+            )}
+          </p>
+          <button
+            type="button"
+            className={connectorButtonClass}
+            disabled={busy || writesAllowed === null || !installed?.enabled}
+            onClick={() => void perform(changePolicy)}
+          >
+            {t(writesAllowed ? 'connectors.blockWrites' : 'connectors.allowWrites')}
+          </button>
+        </section>
+      )}
       <PartnerRemoteComposer extensionId={extensionId} connectorId={connector.id} />
     </div>
   );

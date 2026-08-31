@@ -7,6 +7,7 @@ import {
   type FeishuOnboardingProgress,
 } from './feishu-onboarding-cli.js';
 import { PartnerConnectorCommitError, type PartnerConnectorService } from './service.js';
+import { ReadConnectorError, type ReadConnector } from './read-connector.js';
 
 type Owner = { extensionId: string; connectorId: string };
 type Identity = Owner & { id: string };
@@ -19,10 +20,12 @@ interface Task {
   timer?: ReturnType<typeof setTimeout>;
   authorizationUrl?: string;
   abortReason?: 'cancelled' | 'expired';
+  adapter?: ReadConnector;
 }
 interface Dependencies {
   service: Pick<PartnerConnectorService, 'assertConnectionAllowed' | 'connect'>;
   run(input: FeishuOnboardingInput): Promise<void>;
+  resolveAdapter?(owner: Owner): Promise<ReadConnector | undefined>;
   openExternal(url: string, assertActive: () => void): Promise<void>;
   changed?(job: PartnerConnectorOnboardingT): void;
 }
@@ -45,7 +48,7 @@ export class PartnerConnectorTasks {
     const active = [...this.tasks.values()].find((task) => !terminal(task.job));
     if (active) {
       if (sameOwner(active.job, input)) return structuredClone(active.job);
-      throw new Error('已有飞书连接流程正在进行，请先完成或取消');
+      throw new Error('已有连接流程正在进行，请先完成或取消');
     }
     if (this.tasks.size >= MAX_TASKS) this.tasks.delete(this.tasks.keys().next().value!);
     const id = randomUUID();
@@ -84,7 +87,7 @@ export class PartnerConnectorTasks {
     if (
       !task.authorizationUrl ||
       !task.job.canReopen ||
-      !isFeishuOnboardingAuthorizationUrl(task.authorizationUrl)
+      !this.validAuthorizationUrl(task, task.authorizationUrl)
     )
       throw new Error('没有可重新打开的有效授权页面');
     try {
@@ -109,6 +112,11 @@ export class PartnerConnectorTasks {
     const task = this.tasks.get(input.id);
     if (!task || !sameOwner(task.job, input)) throw new Error('连接任务不存在或不属于此连接器');
     return task;
+  }
+  private validAuthorizationUrl(task: Task, value: unknown): value is string {
+    return task.adapter
+      ? task.adapter.isAuthorizationUrl(value)
+      : isFeishuOnboardingAuthorizationUrl(value);
   }
   private assertLive(task: Task): void {
     if (task.controller.signal.aborted || terminal(task.job) || this.disposed)
@@ -143,7 +151,7 @@ export class PartnerConnectorTasks {
     if (
       progress.authorizationUrl &&
       (!['waiting_app', 'waiting_authorization'].includes(progress.phase) ||
-        !isFeishuOnboardingAuthorizationUrl(progress.authorizationUrl))
+        !this.validAuthorizationUrl(task, progress.authorizationUrl))
     )
       throw new FeishuOnboardingError('invalid_response');
     const requestedDeadline =
@@ -174,13 +182,16 @@ export class PartnerConnectorTasks {
     try {
       this.assertLive(task);
       await this.deps.service.assertConnectionAllowed(task.job.extensionId, task.job.connectorId);
+      task.adapter = await this.deps.resolveAdapter?.(task.job);
       this.assertLive(task);
-      await this.deps.run({
+      const input: FeishuOnboardingInput = {
         profile: task.profile,
         installCli,
         signal: task.controller.signal,
         onProgress: (event) => this.progress(task, event),
-      });
+      };
+      if (task.adapter) await task.adapter.run(input);
+      else await this.deps.run(input);
       this.assertLive(task);
       this.progress(task, { phase: 'verifying' });
       await this.deps.service.connect(
@@ -191,6 +202,7 @@ export class PartnerConnectorTasks {
         },
         {
           signal: task.controller.signal,
+          ...(task.adapter ? { expectedAdapter: task.adapter.id } : {}),
           assertActive: () => this.assertLive(task),
           complete: (connection) => this.finish(task, { phase: 'connected', connection }),
         },
@@ -200,14 +212,22 @@ export class PartnerConnectorTasks {
         error instanceof PartnerConnectorCommitError
           ? 'authorization_failed'
           : (task.abortReason ??
-            (error instanceof FeishuOnboardingError ? error.code : 'authorization_failed'));
+            (error instanceof FeishuOnboardingError || error instanceof ReadConnectorError
+              ? error.code
+              : 'authorization_failed'));
       this.finish(task, {
         phase:
           code === 'needs_install' || code === 'cancelled' || code === 'expired' ? code : 'failed',
         error:
           error instanceof PartnerConnectorCommitError
             ? error.message
-            : new FeishuOnboardingError(code).message,
+            : task.adapter
+              ? task.abortReason
+                ? new ReadConnectorError(task.abortReason).message
+                : error instanceof ReadConnectorError
+                  ? error.message
+                  : new ReadConnectorError('authorization_failed').message
+              : new FeishuOnboardingError(code as FeishuOnboardingError['code']).message,
       });
     }
   }

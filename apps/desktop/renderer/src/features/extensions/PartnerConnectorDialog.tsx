@@ -19,6 +19,7 @@ import { usePartnerConnectors } from './PartnerConnectorProvider.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { PartnerConnectorAdvanced } from './PartnerConnectorAdvanced.js';
 import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
+import { connectorPresentation } from './partnerConnectorPresentation.js';
 
 const surface = floatingSurfaceForBlockingModal(
   'partner-connector-dialog',
@@ -59,6 +60,20 @@ export function PartnerConnectorDialog({
   readonly onScope: (connectionId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const readOnly = connector.adapter !== 'feishu-cli';
+  const presentation = connectorPresentation[connector.adapter];
+  const hint = (phase: PartnerConnectorOnboardingT['phase']): string => {
+    if (!readOnly) return t(onboardingHints[phase]);
+    if (phase === 'needs_install')
+      return t('connectors.providerInstall', {
+        package: presentation.packageName,
+        version: presentation.version,
+      });
+    if (phase === 'preparing' || phase === 'installing') return t('connectors.providerPreparation');
+    if (phase === 'cancelled') return t('connectors.providerCancelled');
+    if (phase === 'connected') return t('connectors.readOnlyConnected');
+    return t(onboardingHints[phase]);
+  };
   const context = usePartnerConnectors();
   const { catalog } = useSpaceExtensions();
   const [storedJob, setJob] = useState<PartnerConnectorOnboardingT | null>(null);
@@ -215,6 +230,7 @@ export function PartnerConnectorDialog({
         connectorId: connector.id,
         connectionId: account.id,
         connectionRevision: account.revision,
+        ...(readOnly ? { adapter: connector.adapter } : {}),
         documents: [],
       });
     if (isActive()) onTry();
@@ -223,7 +239,7 @@ export function PartnerConnectorDialog({
     if (
       !(await requestConfirm({
         title: t('connectors.disconnect'),
-        message: t('connectors.disconnectConfirm'),
+        message: t(readOnly ? 'connectors.providerDisconnect' : 'connectors.disconnectConfirm'),
         danger: true,
       })) ||
       !isActive()
@@ -266,7 +282,12 @@ export function PartnerConnectorDialog({
         <h2 id="partner-connector-title" className="text-xl font-semibold text-fg-primary">
           {connector.name}
         </h2>
-        <p className="mt-2 text-sm leading-6 text-fg-muted">{t('connectors.dialogDescription')}</p>
+        <p className="mt-2 text-sm leading-6 text-fg-muted">
+          {readOnly ? connector.description : t('connectors.dialogDescription')}
+        </p>
+        {readOnly && (
+          <p className="mt-2 text-xs leading-5 text-fg-muted">{t(presentation.requirementsKey)}</p>
+        )}
         {error && (
           <p role="alert" className="mt-4 break-words text-sm text-danger">
             {error}
@@ -309,7 +330,7 @@ export function PartnerConnectorDialog({
             ) : (
               <p className="text-sm text-fg-secondary">{connection.accountLabel}</p>
             )}
-            <p className="text-xs leading-5 text-fg-muted">{t('connectors.connectedHint')}</p>
+            <p className="text-xs leading-5 text-fg-muted">{hint('connected')}</p>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -325,7 +346,7 @@ export function PartnerConnectorDialog({
                 disabled={busy}
                 onClick={() => onScope(connection.id)}
               >
-                {t('connectors.documentScope')}
+                {t(readOnly ? 'connectors.resourceScope' : 'connectors.documentScope')}
               </button>
               <button
                 ref={firstButton}
@@ -359,11 +380,13 @@ export function PartnerConnectorDialog({
                   ) : job.phase === 'cancelled' ? (
                     <Check className="h-4 w-4" aria-hidden />
                   ) : null}
-                  {t(`connectors.phase.${job.phase}`)}
+                  {t(
+                    readOnly && job.phase === 'needs_install'
+                      ? 'connectors.providerRequired'
+                      : `connectors.phase.${job.phase}`,
+                  )}
                 </p>
-                <p className="mt-2 text-xs leading-5 text-fg-muted">
-                  {t(onboardingHints[job.phase])}
-                </p>
+                <p className="mt-2 text-xs leading-5 text-fg-muted">{hint(job.phase)}</p>
                 {job.error && <p className="mt-2 text-xs text-danger">{job.error}</p>}
               </div>
             )}
@@ -420,7 +443,7 @@ export function PartnerConnectorDialog({
             )}
           </div>
         )}
-        {!activeJob && (
+        {!activeJob && !readOnly && (
           <div className="mt-6 border-t border-border-default pt-4">
             <button
               type="button"

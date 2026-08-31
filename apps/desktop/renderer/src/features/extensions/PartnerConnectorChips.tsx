@@ -80,7 +80,7 @@ export function PartnerConnectorChips(): JSX.Element | null {
       extensionId: item.binding.extensionId,
       connector: {
         id: item.binding.connectorId,
-        adapter: 'feishu-cli',
+        adapter: item.binding.adapter ?? 'feishu-cli',
         name: item.binding.name,
         description: '',
       },
@@ -89,6 +89,7 @@ export function PartnerConnectorChips(): JSX.Element | null {
         extensionId: item.binding.extensionId,
         connectorId: item.binding.connectorId,
         revision: item.binding.connectionRevision,
+        ...(item.binding.adapter ? { adapter: item.binding.adapter } : {}),
         profile: 'unavailable',
         accountLabel: item.binding.accountLabel,
         connected: false,
@@ -107,6 +108,7 @@ export function PartnerConnectorChips(): JSX.Element | null {
           connectorId: connection.connectorId,
           connectionId: connection.id,
           connectionRevision: connection.revision,
+          ...(connection.adapter ? { adapter: connection.adapter } : {}),
           documents: [],
         });
     } catch (reason) {
@@ -215,11 +217,19 @@ export function PartnerConnectorChips(): JSX.Element | null {
                         });
                       }}
                     >
-                      {t('connectors.documentScope')}
+                      {t(
+                        connector.adapter === 'feishu-cli'
+                          ? 'connectors.documentScope'
+                          : 'connectors.resourceScope',
+                      )}
                     </button>
                     {item && !item.binding.documents.length && (
                       <span className="text-[10px] text-fg-muted">
-                        {t('connectors.emptyScope')}
+                        {t(
+                          connector.adapter === 'feishu-cli'
+                            ? 'connectors.emptyScope'
+                            : 'connectors.emptyResourceScope',
+                        )}
                       </span>
                     )}
                   </div>
