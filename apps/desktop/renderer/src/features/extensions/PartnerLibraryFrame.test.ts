@@ -22,13 +22,18 @@ const preset: SpaceExpertDefinitionT = {
   starterTasks: ['请检查这份提纲'],
 };
 
-async function openLibrary(t: TestContext, initialExperts: SpaceExpertDefinitionT[] = [preset]) {
+async function openLibrary(
+  t: TestContext,
+  initialExperts: SpaceExpertDefinitionT[] = [preset],
+  initialTab: 'experts' | 'connectors' = 'experts',
+) {
   const browser = await chromium.launch({ executablePath: browserPath, headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage();
   page.setDefaultTimeout(2000);
   const requests: ExtensionFrameRequest[] = [];
   let experts = initialExperts;
+  let connected = false;
   await page.exposeFunction('partnerTestHost', (data: unknown) => {
     const request = parseExtensionFrameRequest(data);
     if (!request) throw new Error('Unbounded package request');
@@ -36,6 +41,7 @@ async function openLibrary(t: TestContext, initialExperts: SpaceExpertDefinition
     if (request.method === 'catalog.list') return { experts };
     if (request.method === 'connector.catalog')
       return {
+        connectedIds: connected ? ['feishu-docs'] : [],
         connectors: [
           {
             id: 'feishu-docs',
@@ -67,51 +73,78 @@ async function openLibrary(t: TestContext, initialExperts: SpaceExpertDefinition
     new URL('../../../../../../extensions/partner-library/ui/index.html', import.meta.url),
     'utf8',
   );
-  await page.evaluate((documentHtml) => {
-    const frame = document.querySelector('iframe')!;
-    window.addEventListener('message', (event) => {
-      if (event.source !== frame.contentWindow) return;
-      if (event.data?.type === 'space-extension.ready.v1') {
-        frame.contentWindow!.postMessage(
-          { type: 'space-extension.init.v1', token: 'test-frame' },
-          '*',
-        );
-      } else if (event.data?.type === 'space-extension.request.v1') {
-        const request = event.data as { requestId: string; token: string };
-        const host = (window as unknown as { partnerTestHost(data: unknown): Promise<unknown> })
-          .partnerTestHost;
-        void host(event.data).then((data) =>
+  await page.evaluate(
+    ({ documentHtml, initialTab }) => {
+      const frame = document.querySelector('iframe')!;
+      window.addEventListener('message', (event) => {
+        if (event.source !== frame.contentWindow) return;
+        if (event.data?.type === 'space-extension.ready.v1') {
           frame.contentWindow!.postMessage(
-            {
-              type: 'space-extension.response.v1',
-              requestId: request.requestId,
-              token: request.token,
-              ok: true,
-              data,
-            },
+            { type: 'space-extension.init.v1', token: 'test-frame', initialTab },
+            '*',
+          );
+        } else if (event.data?.type === 'space-extension.request.v1') {
+          const request = event.data as { requestId: string; token: string };
+          const host = (window as unknown as { partnerTestHost(data: unknown): Promise<unknown> })
+            .partnerTestHost;
+          void host(event.data).then((data) =>
+            frame.contentWindow!.postMessage(
+              {
+                type: 'space-extension.response.v1',
+                requestId: request.requestId,
+                token: request.token,
+                ok: true,
+                data,
+              },
+              '*',
+            ),
+          );
+        }
+      });
+      frame.srcdoc = documentHtml;
+    },
+    { documentHtml: buildRestrictedExtensionDocument(html), initialTab },
+  );
+  const frame = page.frameLocator('iframe');
+  await frame
+    .getByRole('heading', {
+      name: initialTab === 'connectors' ? '飞书文档' : '写作导师',
+      exact: true,
+    })
+    .waitFor();
+  return {
+    frame,
+    requests,
+    changeConnected: async () => {
+      connected = true;
+      await page.evaluate(() =>
+        document
+          .querySelector('iframe')!
+          .contentWindow!.postMessage(
+            { type: 'space-extension.connectors.changed.v1', token: 'test-frame' },
             '*',
           ),
-        );
-      }
-    });
-    frame.srcdoc = documentHtml;
-  }, buildRestrictedExtensionDocument(html));
-  const frame = page.frameLocator('iframe');
-  await frame.getByText('写作导师', { exact: true }).waitFor();
-  return { frame, requests };
+      );
+    },
+  };
 }
 
 test(
   'the independent connector card opens only trusted configuration and never receives secrets or document content',
   { skip: !browserPath },
   async (t) => {
-    const { frame, requests } = await openLibrary(t);
-    await frame.getByRole('tab', { name: '连接器' }).click();
+    const { frame, requests, changeConnected } = await openLibrary(t, [preset], 'connectors');
+    assert.equal(
+      await frame.getByRole('tab', { name: '连接器' }).getAttribute('aria-selected'),
+      'true',
+    );
     await frame.getByRole('heading', { name: '飞书文档', exact: true }).waitFor();
-    await frame.getByRole('button', { name: '设置连接与会话范围' }).click();
-    await frame
-      .getByText('已打开 Space 的可信配置面板；本页不收集密钥。', { exact: true })
-      .waitFor();
+    await frame.getByText('未连接', { exact: true }).waitFor();
+    await frame.getByRole('button', { name: '连接', exact: true }).click();
+    await frame.getByText('请在连接弹窗中继续。', { exact: true }).waitFor();
+    await changeConnected();
+    await frame.getByText('已连接', { exact: true }).waitFor();
+    await frame.getByRole('button', { name: '管理连接', exact: true }).waitFor();
     assert.deepEqual(
       requests
         .filter((item) => item.method === 'connector.configure')

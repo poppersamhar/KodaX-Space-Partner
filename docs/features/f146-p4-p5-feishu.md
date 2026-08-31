@@ -6,7 +6,7 @@
 
 - 首版只支持官方 `@larksuite/cli@1.0.92`，命令 `lark-cli`。来源：[官方版本](https://github.com/larksuite/cli/releases/tag/v1.0.92)。该 CLI 不是 MCP server；宿主用受限原生适配，保留原 MCP 通道。
 - 包内声明 `adapter: feishu-cli`，不能声明命令、脚本、token。库 frame 只展示目录和请求可信宿主打开配置，不获得账号凭据、任意 IPC 或审批能力。
-- CLI 安装、应用配置和用户登录由用户在官方 CLI 完成。Space 仅列出 profile，验证用户身份并保存 profile + appId/openId 的私有引用，不复制 token，不自动登录或替换现有账号。
+- P4/P5 初版由用户在官方 CLI 完成安装、应用配置和登录，Space 验证已有 profile。后续用户批准的 [首次连接向导](f146-feishu-onboarding.md) 将安装确认与官方网页授权接入可信宿主；仍不复制 token、自动授权或替换现有账号。
 - `auth status --json --verify` 必须验证用户而非仅机器人；业务命令固定 `--profile` 与 `--as user`。清除继承的 CLI 账号 / 配置覆写环境。每次执行前重验账号和权限；分开的 CLI 进程不是跨进程原子账号锁，不宣称该保证。
 - 账号连接与会话范围分离。最多 8 个连接，每个最多 32 个明确的 `https://租户.feishu.cn/docx/ID` 文档，分别授权读取 / 追加；新建文档只允许一个明确飞书文件夹 URL。不支持任意域、Wiki URL、覆盖、删除、图片 / 附件上传。
 - 运行时只向选中连接器的 Partner 会话提供 run-scoped read/propose，不注册全局 SDK 工具。每次调用重新检查包启用状态、账号版本、会话范围和既有管理员策略；标签移除可撤销本会话的后续调用。

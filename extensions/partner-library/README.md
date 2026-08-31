@@ -2,7 +2,7 @@
 
 This is an independently built UI package, not a module imported by the trusted
 desktop renderer. The archive contains exactly `manifest.json` and a
-self-contained `ui/index.html`. Version 0.4.0 retains the writing mentor and
+self-contained `ui/index.html`. Version 0.5.0 retains the writing mentor and
 eight scene experts: document processing, research, data analysis, presentations,
 finance, product management, design, and email editing. Their persistent role
 prompts are separate from the original task templates, which remain starter tasks.
@@ -20,7 +20,7 @@ npm run build:packages
 node scripts/build-partner-extension.mjs
 ```
 
-The default output is `out/extensions/kodax.partner-library-0.4.0.space-extension`.
+The default output is `out/extensions/kodax.partner-library-0.5.0.space-extension`.
 Use `--out-dir <directory>` for another artifact directory. The archive is a ZIP;
 the builder computes the HTML SHA-256 and replaces the placeholder from the
 source manifest in the archive only.
@@ -114,14 +114,23 @@ whole F146 feature or the interactive Electron install/select/send flow is compl
 The package frame can only request `connector.catalog` and `connector.configure`.
 It cannot provide an extension/session identity, obtain tokens, read documents,
 change global policy, or approve writes. Configuration opens the trusted Space
-detail panel. Install the supported official CLI separately with
-`npm install -g @larksuite/cli@1.0.92`, and follow `lark-cli --help` for account
-setup. Space's Connect button only verifies a previously configured profile.
+connection dialog. The 0.5.0 host adds explicit private installation of official
+CLI 1.0.92 and a cancellable first-connection flow through official Feishu pages.
+Merely opening the library or dialog cannot install, start authorization or bind
+an account. Existing CLI profiles remain available through the advanced account
+option; creating a new connection uses a distinct Space-owned profile and preserves
+existing profile entries and the default selection. Credentials remain owned by
+the official CLI: choosing an existing app on Feishu's website may share its
+app/user credential storage with other profiles. The package frame receives only connected connector
+IDs for its status indicators, never account details or authorization links.
 
 The trusted panel separates account connection from per-conversation selection.
 Users select exact `https://<tenant>.feishu.cn/docx/<id>` links with read or
 read-plus-append scope, and optionally an exact folder URL for new documents.
-Selections become composer chips without changing drafts or sending messages.
+The composer connection menu enables/disables each account for this conversation
+without changing drafts or sending messages. A newly enabled account may have an
+empty document scope; that is not permission to read the user's entire Drive.
+The existing right-hand document-scope panel remains the place to grant access.
 The existing global connector-write policy remains off unless explicitly changed
 in the trusted confirmation dialog. Enabling it affects all connectors but does
 not bypass account permissions, document scopes or individual write approvals.
@@ -141,3 +150,9 @@ profile-connect versus session-select, policy cancellation/confirmation, draft
 preservation, and a late read after switching projects. These are isolated fake
 host tests, not a claim that a user's real Feishu account has been authenticated
 or a real remote document has been written.
+
+The first-connection contract, cancellation and private-install boundaries are
+documented in [F146 onboarding](../../docs/features/f146-feishu-onboarding.md).
+Cancelling stops local waiting; it does not revoke consent already granted on
+Feishu's website. Disconnecting makes the Space account binding unavailable,
+without logging out another app or deleting CLI credentials and remote documents.

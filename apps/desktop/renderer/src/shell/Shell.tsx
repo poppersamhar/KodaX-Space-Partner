@@ -81,9 +81,12 @@ import {
   useSpaceExtensions,
 } from '../features/extensions/SpaceExtensionsProvider.js';
 import { PartnerExtensionView } from '../features/extensions/PartnerExtensionView.js';
+import { PartnerConnectorDialog } from '../features/extensions/PartnerConnectorDialog.js';
 import {
   PartnerConnectorProvider,
   PARTNER_CONNECTOR_DETAIL_EVENT,
+  PARTNER_CONNECTOR_DIALOG_EVENT,
+  PARTNER_CONNECTOR_MANAGE_EVENT,
   type PartnerConnectorDetailRequest,
 } from '../features/extensions/PartnerConnectorProvider.js';
 import {
@@ -97,6 +100,7 @@ import {
   enabledPartnerExtensions,
   resolveExtensionView,
   type ExtensionViewSelection,
+  type ExtensionViewContext,
 } from '../features/extensions/extensionViewPolicy.js';
 import { AdminAuditPanel } from '../features/partner/AdminAuditPanel.js';
 import {
@@ -331,6 +335,12 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
   const currentProjectPathForPartnerDetail = useAppStore((s) => s.currentProjectPath);
   const { snapshot: extensionCatalog } = useSpaceExtensions();
   const [extensionSelection, setExtensionSelection] = useState<ExtensionViewSelection | null>(null);
+  const [extensionTab, setExtensionTab] = useState<'experts' | 'connectors'>('experts');
+  const [extensionNavigationRevision, setExtensionNavigationRevision] = useState(0);
+  const [connectorDialog, setConnectorDialog] = useState<{
+    selection: ExtensionViewSelection;
+    request: PartnerConnectorDetailRequest;
+  } | null>(null);
   const extensionContext = {
     surface: currentSurface,
     projectRoot: currentProjectPathForPartnerDetail,
@@ -342,12 +352,21 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
     extensionContext,
     extensionCatalog.extensions,
   );
+  const connectorDialogExtension = resolveExtensionView(
+    connectorDialog?.selection ?? null,
+    extensionContext,
+    extensionCatalog.extensions,
+  );
+  useEffect(() => {
+    if (connectorDialog && !connectorDialogExtension) setConnectorDialog(null);
+  }, [connectorDialog, connectorDialogExtension]);
   const closeExtensionView = useCallback((): void => setExtensionSelection(null), []);
   useEffect(() => {
     window.addEventListener(NEW_CONVERSATION_EVENT, closeExtensionView);
     return () => window.removeEventListener(NEW_CONVERSATION_EVENT, closeExtensionView);
   }, [closeExtensionView]);
   const openExtensionView = (extension: SpaceExtensionT): void => {
+    setExtensionTab('experts');
     setExtensionSelection(createExtensionViewSelection(extension, extensionContext));
   };
   // Derive visibility synchronously; never leave an old frame visible for an effect tick.
@@ -730,6 +749,7 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
         kind: 'connector',
         extensionId: detail.extensionId,
         connector: detail.connector,
+        connectionId: detail.connectionId,
       });
     };
     window.addEventListener(PARTNER_CONNECTOR_DETAIL_EVENT, onConnectorDetails);
@@ -740,6 +760,58 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
     currentSessionIdForPlan,
     closeExtensionView,
     openPartnerDetail,
+  ]);
+
+  useEffect(() => {
+    const matches = (context: ExtensionViewContext): boolean =>
+      context.surface === 'partner' &&
+      currentSurface === 'partner' &&
+      context.projectRoot === currentProjectPathForPartnerDetail &&
+      context.sessionId === currentSessionIdForPlan;
+    const openDialog = (event: Event): void => {
+      const request = (event as CustomEvent<PartnerConnectorDetailRequest>).detail;
+      if (!request || !matches(request.context)) return;
+      const extension = extensionCatalog.extensions.find(
+        (item) => item.id === request.extensionId && item.enabled,
+      );
+      if (extension)
+        setConnectorDialog({
+          selection: createExtensionViewSelection(extension, request.context),
+          request,
+        });
+    };
+    const manage = (event: Event): void => {
+      const request = (
+        event as CustomEvent<{ context: ExtensionViewContext; extensionId?: string }>
+      ).detail;
+      if (!request || !matches(request.context)) return;
+      const enabled = extensionCatalog.extensions.filter(
+        (item) => item.enabled && item.connectorCount > 0,
+      );
+      const extension = enabled.find((item) => item.id === request.extensionId) ?? enabled[0];
+      if (!extension) {
+        setSettingsInitialTab('extensions');
+        setSettingsOpen(true);
+        return;
+      }
+      setExtensionTab('connectors');
+      setExtensionNavigationRevision((value) => value + 1);
+      setExtensionSelection(createExtensionViewSelection(extension, request.context));
+    };
+    const close = (): void => setConnectorDialog(null);
+    window.addEventListener(PARTNER_CONNECTOR_DIALOG_EVENT, openDialog);
+    window.addEventListener(PARTNER_CONNECTOR_MANAGE_EVENT, manage);
+    window.addEventListener(NEW_CONVERSATION_EVENT, close);
+    return () => {
+      window.removeEventListener(PARTNER_CONNECTOR_DIALOG_EVENT, openDialog);
+      window.removeEventListener(PARTNER_CONNECTOR_MANAGE_EVENT, manage);
+      window.removeEventListener(NEW_CONVERSATION_EVENT, close);
+    };
+  }, [
+    currentSurface,
+    currentProjectPathForPartnerDetail,
+    currentSessionIdForPlan,
+    extensionCatalog.extensions,
   ]);
 
   useEffect(() => {
@@ -1352,6 +1424,8 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
                 onSelect={openExtensionView}
                 onClose={closeExtensionView}
                 onManage={() => openSettingsAt('extensions')}
+                initialTab={extensionTab}
+                navigationRevision={extensionNavigationRevision}
                 onExpertSelected={() => {
                   closeExtensionView();
                   window.dispatchEvent(new Event('kodax-space.focus-textarea'));
@@ -1361,11 +1435,13 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
                   openPartnerDetail({ kind: 'expert', expert });
                 }}
                 onConnectorDetails={(connector) => {
-                  closeExtensionView();
-                  openPartnerDetail({
-                    kind: 'connector',
-                    extensionId: visibleExtension.id,
-                    connector,
+                  setConnectorDialog({
+                    selection: createExtensionViewSelection(visibleExtension, extensionContext),
+                    request: {
+                      context: extensionContext,
+                      extensionId: visibleExtension.id,
+                      connector,
+                    },
                   });
                 }}
               />
@@ -1483,6 +1559,30 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
 
       {/* 模态/命令面板：在面板区之外，保证 position:fixed 相对视口正常铺满 */}
       <PermissionModal />
+      {connectorDialog && connectorDialogExtension && (
+        <PartnerConnectorDialog
+          key={`${connectorDialogExtension.id}:${connectorDialogExtension.version}:${connectorDialogExtension.installedAt}:${JSON.stringify(connectorDialog.request.context)}:${connectorDialog.request.connector.id}:${connectorDialog.request.connectionId ?? ''}`}
+          extension={connectorDialogExtension}
+          connector={connectorDialog.request.connector}
+          connectionId={connectorDialog.request.connectionId}
+          onClose={() => setConnectorDialog(null)}
+          onTry={() => {
+            setConnectorDialog(null);
+            closeExtensionView();
+            window.dispatchEvent(new Event('kodax-space.focus-textarea'));
+          }}
+          onScope={(connectionId) => {
+            setConnectorDialog(null);
+            closeExtensionView();
+            openPartnerDetail({
+              kind: 'connector',
+              extensionId: connectorDialogExtension.id,
+              connector: connectorDialog.request.connector,
+              connectionId,
+            });
+          }}
+        />
+      )}
       <ConfirmDialog />
       {/* FEATURE_032 v2：max 模式下 center-pane 隐藏，停靠条在此兜底常驻
           （点击「查看」会退出 max 模式并定位到队首卡，见上方 FOCUS_ASK_USER_EVENT 监听） */}

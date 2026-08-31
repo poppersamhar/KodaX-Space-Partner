@@ -371,16 +371,17 @@ export class FeishuCli {
     });
   }
 
-  async inspect(profile: string): Promise<FeishuStatus> {
+  async inspect(profile: string, signal?: AbortSignal): Promise<FeishuStatus> {
     requireProfile(profile);
     let version: string | undefined;
     try {
-      const probe = await this.runner({ args: ['--version'] });
+      const probe = await this.runner({ args: ['--version'], ...(signal ? { signal } : {}) });
       version = /^lark-cli version (\d+\.\d+\.\d+)\s*$/u.exec(probe.stdout)?.[1];
       if (probe.exitCode !== 0 || version !== '1.0.92')
         throw new FeishuCliError('unsupported_version', false);
       const result = await this.runner({
         args: [`--profile=${profile}`, 'auth', 'status', '--json', '--verify'],
+        ...(signal ? { signal } : {}),
       });
       if (result.exitCode !== 0) throw new FeishuCliError('not_connected', false);
       return {

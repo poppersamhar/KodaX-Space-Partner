@@ -2,6 +2,23 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createFeishuCliRunner, FeishuCliError } from './feishu-cli-runner.js';
 
+test('a caller aborts a live verification subprocess without leaking output or leaving it active', async () => {
+  const controller = new AbortController();
+  const run = createFeishuCliRunner({ executable: process.execPath });
+  const pending = run({
+    args: ['-e', 'process.stderr.write("SECRET");setTimeout(()=>process.exit(0),250);'],
+    signal: controller.signal,
+  });
+  controller.abort();
+  await assert.rejects(
+    pending,
+    (error: unknown) =>
+      error instanceof FeishuCliError &&
+      error.code === 'cancelled' &&
+      !String(error).includes('SECRET'),
+  );
+});
+
 test('subprocess runner preserves argument boundaries and stdin without inheriting credential or runtime overrides', async () => {
   const run = createFeishuCliRunner({
     executable: process.execPath,

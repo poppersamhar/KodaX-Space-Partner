@@ -5,6 +5,7 @@ export interface FeishuCliRequest {
   args: readonly string[];
   stdin?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface FeishuCliResponse {
@@ -15,6 +16,7 @@ export interface FeishuCliResponse {
 export type FeishuCliRunner = (request: FeishuCliRequest) => Promise<FeishuCliResponse>;
 
 const ERROR_MESSAGES = {
+  cancelled: '飞书操作已取消。',
   invalid_input: '飞书连接器参数无效。',
   cli_missing: '未找到飞书 CLI，请先安装官方 lark-cli。',
   unsupported_version: '请安装飞书官方 CLI 1.0.92。',
@@ -48,7 +50,7 @@ export interface FeishuCliRunnerOptions {
   maxOutputBytes?: number;
 }
 
-function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function createSafeFeishuEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const allowed = new Set([
     'PATH',
     'HOME',
@@ -76,9 +78,13 @@ function safeEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): FeishuCliRunner {
   const source = options.env ?? process.env;
   const executable = options.executable ?? source.KODAX_SPACE_FEISHU_CLI ?? 'lark-cli';
-  const env = safeEnvironment(source);
+  const env = createSafeFeishuEnvironment(source);
   return (request) =>
     new Promise((resolve, reject) => {
+      if (request.signal?.aborted) {
+        reject(new FeishuCliError('cancelled', false));
+        return;
+      }
       const timeoutMs = request.timeoutMs ?? options.timeoutMs ?? 45000;
       const maxOutputBytes = options.maxOutputBytes ?? 2 * 1024 * 1024;
       if (
@@ -113,10 +119,12 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
       let outputBytes = 0;
       let settled = false;
       let dispatched = false;
+      let cancelled = false;
       const finish = (error?: FeishuCliError, exitCode: number | null = null) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        request.signal?.removeEventListener('abort', cancel);
         if (error) reject(error);
         else
           resolve({
@@ -138,6 +146,13 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
         stop();
         finish(new FeishuCliError('timeout', dispatched));
       }, timeoutMs);
+      const cancel = () => {
+        cancelled = true;
+        clearTimeout(timer);
+        stop();
+      };
+      request.signal?.addEventListener('abort', cancel, { once: true });
+      if (request.signal?.aborted) cancel();
       child.on('spawn', () => {
         dispatched = true;
       });
@@ -154,15 +169,17 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
       child.on('error', (error: NodeJS.ErrnoException) =>
         finish(
           new FeishuCliError(
-            error.code === 'ENOENT' ? 'cli_missing' : 'command_failed',
+            cancelled ? 'cancelled' : error.code === 'ENOENT' ? 'cli_missing' : 'command_failed',
             dispatched,
           ),
         ),
       );
-      child.on('close', (exitCode) => finish(undefined, exitCode));
+      child.on('close', (exitCode) =>
+        finish(cancelled ? new FeishuCliError('cancelled', dispatched) : undefined, exitCode),
+      );
       child.stdin.on('error', () => {
         stop();
-        finish(new FeishuCliError('command_failed', dispatched));
+        finish(new FeishuCliError(cancelled ? 'cancelled' : 'command_failed', dispatched));
       });
       child.stdin.end(request.stdin ?? '');
     });

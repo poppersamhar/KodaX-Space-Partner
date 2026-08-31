@@ -34,12 +34,25 @@ export interface PartnerConnectorContext {
   getCurrentBindings?: () => readonly PartnerConnectorSnapshotT[];
   getCurrentPermissionMode?: () => PermissionMode;
 }
+/** Main-owned task lease; never accepted from IPC or an extension package. */
+export interface PartnerConnectorConnectionLease {
+  readonly signal?: AbortSignal;
+  assertActive(): void;
+  complete(connection: PartnerConnectorConnectionT): void;
+}
+export class PartnerConnectorCommitError extends Error {
+  constructor() {
+    super('连接取消后的本地清理未完成，请检查并断开该账号后重试');
+    this.name = 'PartnerConnectorCommitError';
+  }
+}
 interface Dependencies {
   cli: Pick<FeishuCli, 'inspect' | 'listProfiles' | 'read' | 'create' | 'append'>;
   catalog: (extensionId: string) => Promise<SpaceConnectorDefinitionT[]>;
   checkPolicy: (connectorId: string, write: boolean) => Promise<void>;
   getPolicyRevision?: () => number;
   changed?: (context?: { sessionId?: string; projectRoot?: string; extensionId?: string }) => void;
+  revokeConnections?: (extensionId?: string) => Promise<void>;
 }
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
 const scopeHash = (binding: PartnerConnectorSnapshotT): string =>
@@ -108,26 +121,62 @@ export class PartnerConnectorService {
         .map(publicAccount),
     };
   }
-  async connect(input: {
-    extensionId: string;
-    connectorId: string;
-    profile: string;
-  }): Promise<PartnerConnectorConnectionT> {
+  async accounts(extensionId: string, connectorId: string): Promise<PartnerConnectorConnectionT[]> {
+    return (await this.store.read()).connections
+      .filter((item) => item.extensionId === extensionId && item.connectorId === connectorId)
+      .map(publicAccount);
+  }
+  async assertConnectionAllowed(extensionId: string, connectorId: string): Promise<void> {
+    await this.definition(extensionId, connectorId);
+    await this.deps.checkPolicy(connectorId, false);
+  }
+  async connect(
+    input: {
+      extensionId: string;
+      connectorId: string;
+      profile: string;
+    },
+    lease?: PartnerConnectorConnectionLease,
+  ): Promise<PartnerConnectorConnectionT> {
     const startedEpoch = this.revocationEpoch;
+    const policyRevision = this.deps.getPolicyRevision?.() ?? 0;
+    const assertActive = () => {
+      lease?.assertActive();
+      if (
+        this.revocationEpoch !== startedEpoch ||
+        this.blocked.has('*') ||
+        this.blocked.has(input.extensionId) ||
+        (this.deps.getPolicyRevision?.() ?? 0) !== policyRevision
+      )
+        throw new Error('连接期间授权状态已改变，请重新验证');
+    };
+    assertActive();
     const started = (await this.store.read()).connections.find(
       (item) =>
         item.extensionId === input.extensionId &&
         item.connectorId === input.connectorId &&
         item.profile === input.profile,
     );
+    if (lease && started) throw new Error('向导专用账号配置已经存在，拒绝覆盖');
     await this.definition(input.extensionId, input.connectorId);
     await this.deps.checkPolicy(input.connectorId, false);
-    const status = await this.deps.cli.inspect(feishuProfileSchema.parse(input.profile));
+    const status = await this.deps.cli.inspect(
+      feishuProfileSchema.parse(input.profile),
+      lease?.signal,
+    );
     if (!status.installed || status.version !== '1.0.92' || !status.identity)
       throw new Error(status.reason ?? '请先在官方飞书 CLI 配置并登录用户账号');
     const identity = status.identity;
+    if (
+      lease &&
+      ['docx:document:readonly', 'docx:document:create', 'docx:document:write_only'].some(
+        (scope) => !identity.scopes.includes(scope),
+      )
+    )
+      throw new Error('飞书账号缺少向导要求的文档权限，请重新授权');
     await this.definition(input.extensionId, input.connectorId);
     const connection = await this.store.mutate((db) => {
+      assertActive();
       const old = db.connections.find(
         (item) =>
           item.extensionId === input.extensionId &&
@@ -162,8 +211,28 @@ export class PartnerConnectorService {
       else db.connections.push(record);
       return publicAccount(record);
     });
+    try {
+      assertActive();
+    } catch (error) {
+      if (connection.revision !== started?.revision) {
+        try {
+          await this.store.mutate((db) => {
+            const index = db.connections.findIndex(
+              (item) => item.id === connection.id && item.revision === connection.revision,
+            );
+            if (index < 0) return;
+            if (started) db.connections[index] = { ...started, revision: connection.revision + 1 };
+            else db.connections.splice(index, 1);
+          });
+        } catch {
+          throw new PartnerConnectorCommitError();
+        }
+      }
+      throw error;
+    }
     if (connection.revision !== started?.revision)
       this.accountEpochs.set(connection.id, (this.accountEpochs.get(connection.id) ?? 0) + 1);
+    lease?.complete(connection);
     this.deps.changed?.({ extensionId: input.extensionId });
     return connection;
   }
@@ -173,6 +242,7 @@ export class PartnerConnectorService {
     connectionId: string;
   }): Promise<void> {
     this.revocationEpoch++;
+    const cancelledConnections = this.deps.revokeConnections?.(input.extensionId);
     this.accountEpochs.set(
       input.connectionId,
       (this.accountEpochs.get(input.connectionId) ?? 0) + 1,
@@ -191,6 +261,7 @@ export class PartnerConnectorService {
     await Promise.allSettled(
       [...this.active].filter(([, id]) => id === input.extensionId).map(([promise]) => promise),
     );
+    await cancelledConnections;
     this.deps.changed?.({ extensionId: input.extensionId });
   }
   async resolveSelections(
@@ -642,6 +713,7 @@ export class PartnerConnectorService {
     const key = extensionId ?? '*';
     this.blocked.set(key, (this.blocked.get(key) ?? 0) + 1);
     try {
+      await this.deps.revokeConnections?.(extensionId);
       await Promise.allSettled(
         [...this.active].filter(([, id]) => key === '*' || id === key).map(([promise]) => promise),
       );

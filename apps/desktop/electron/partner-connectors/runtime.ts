@@ -5,8 +5,16 @@ import { getSpaceExtensionStore } from '../space-extensions/runtime.js';
 import { pushToRenderer } from '../ipc/push.js';
 import { FeishuCli } from './feishu-cli.js';
 import { PartnerConnectorService } from './service.js';
+import { PartnerConnectorTasks } from './connection-tasks.js';
+import { createFeishuOnboardingCli } from './feishu-onboarding-cli.js';
 
 let service: PartnerConnectorService | undefined;
+let tasks: PartnerConnectorTasks | undefined;
+let onboardingCli: ReturnType<typeof createFeishuOnboardingCli> | undefined;
+const cli = () =>
+  (onboardingCli ??= createFeishuOnboardingCli({
+    root: path.join(getSpaceDataDir(), 'partner-connectors'),
+  }));
 let policyRevision = 0;
 export function invalidateConnectorPolicy(): void {
   policyRevision++;
@@ -15,7 +23,9 @@ export function getPartnerConnectorService(): PartnerConnectorService {
   return (service ??= new PartnerConnectorService(
     path.join(getSpaceDataDir(), 'partner-connectors'),
     {
-      cli: new FeishuCli(),
+      cli: new FeishuCli((request) => cli().runner(request)),
+      revokeConnections: (extensionId) =>
+        tasks?.cancelForExtension(extensionId) ?? Promise.resolve(),
       getPolicyRevision: () => policyRevision,
       catalog: async (extensionId) =>
         (await getSpaceExtensionStore().getManifest(extensionId)).connectors,
@@ -36,4 +46,21 @@ export function getPartnerConnectorService(): PartnerConnectorService {
       changed: (context) => pushToRenderer('partner.connectors.changed', context ?? {}),
     },
   ));
+}
+
+export function getPartnerConnectorTasks(): PartnerConnectorTasks {
+  return (tasks ??= new PartnerConnectorTasks({
+    service: getPartnerConnectorService(),
+    run: (input) => cli().run(input),
+    openExternal: async (url, assertActive) => {
+      const { shell } = await import('electron');
+      assertActive();
+      await shell.openExternal(url);
+    },
+    changed: (job) => pushToRenderer('partner.connectors.onboarding.changed', { job }),
+  }));
+}
+
+export async function disposePartnerConnectorTasks(): Promise<void> {
+  await tasks?.dispose();
 }

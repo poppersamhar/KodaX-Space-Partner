@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { IpcMainInvokeEvent, WebContents, WebFrameMain } from 'electron';
 import {
   connectorInvokeChannels,
+  connectorOnboardingInvokeChannels,
   type ChannelInput,
   type ChannelOutput,
   type InvokeChannelName,
@@ -35,7 +36,7 @@ after(async () => {
 test('all account, scope, content and apply handlers reject extension/subframes before inspecting input', async () => {
   assert.deepEqual(
     [...handlers.keys()].sort(),
-    Object.keys(connectorInvokeChannels)
+    Object.keys({ ...connectorInvokeChannels, ...connectorOnboardingInvokeChannels })
       .filter((name) => !name.startsWith('session.'))
       .sort(),
   );
@@ -124,4 +125,83 @@ test('first records request resumes a disk-only Partner session and still reject
       /会话与项目不匹配/,
     );
   }
+});
+
+test('primary-frame onboarding IPC invokes real task start/get/reopen/cancel without granting a session', async (t) => {
+  const { PartnerConnectorTasks } = await import('../partner-connectors/connection-tasks.js');
+  let opens = 0;
+  let runs = 0;
+  const tasks = new PartnerConnectorTasks({
+    service: {
+      assertConnectionAllowed: async () => undefined,
+      connect: async () => {
+        assert.fail('Cancelled authorization must not commit');
+      },
+    },
+    run: async (input) => {
+      runs++;
+      input.onProgress({
+        phase: 'waiting_app',
+        authorizationUrl: 'https://open.feishu.cn/page/cli?user_code=private-code',
+      });
+      await new Promise<void>((resolve) =>
+        input.signal.addEventListener('abort', () => resolve(), { once: true }),
+      );
+    },
+    openExternal: async (_url, assertActive) => {
+      assertActive();
+      opens++;
+    },
+  });
+  t.after(() => tasks.dispose());
+  const routes = new Map<string, Handler>();
+  registerPartnerConnectorChannels(
+    (name, handler) => {
+      routes.set(name, handler as Handler);
+    },
+    () => tasks,
+  );
+  const event = { sender, senderFrame: mainFrame } as IpcMainInvokeEvent;
+  const owner = { extensionId: 'partner.library', connectorId: 'feishu' };
+  const input = { ...owner, installCli: false };
+  const start = (await routes.get('partner.connectors.onboarding.start')!(
+    input,
+    event,
+  )) as ChannelOutput<'partner.connectors.onboarding.start'>;
+  const duplicate = (await routes.get('partner.connectors.onboarding.start')!(
+    input,
+    event,
+  )) as ChannelOutput<'partner.connectors.onboarding.start'>;
+  assert.equal(duplicate.job.id, start.job.id);
+  for (let count = 0; count < 30 && runs === 0; count++)
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  const identity = { ...owner, id: start.job.id };
+  const current = (await routes.get('partner.connectors.onboarding.get')!(
+    identity,
+    event,
+  )) as ChannelOutput<'partner.connectors.onboarding.get'>;
+  assert.equal(current.job.phase, 'waiting_app');
+  assert.equal(JSON.stringify(current).includes('private-code'), false);
+  assert.deepEqual(await routes.get('partner.connectors.onboarding.reopen')!(identity, event), {
+    ok: true,
+  });
+  assert.equal(opens, 2);
+  const cancelled = (await routes.get('partner.connectors.onboarding.cancel')!(
+    identity,
+    event,
+  )) as ChannelOutput<'partner.connectors.onboarding.cancel'>;
+  assert.equal(cancelled.job.phase, 'cancelled');
+  assert.equal(runs, 1);
+  await assert.rejects(
+    async () =>
+      routes.get('partner.connectors.onboarding.get')!(
+        { ...identity, extensionId: 'another.library' },
+        event,
+      ),
+    /不属于/,
+  );
+  await assert.rejects(
+    async () => routes.get('partner.connectors.onboarding.reopen')!(identity, event),
+    /取消/,
+  );
 });

@@ -18,6 +18,21 @@ const validIdentity = {
   },
 };
 
+test('inspect forwards its optional cancellation signal to both verification subprocesses', async () => {
+  const signal = new AbortController().signal;
+  const cli = new FeishuCli(async (request) => {
+    assert.equal(request.signal, signal);
+    return {
+      exitCode: 0,
+      stderr: '',
+      stdout: request.args.includes('--version')
+        ? 'lark-cli version 1.0.92'
+        : JSON.stringify(validIdentity),
+    };
+  });
+  assert.ok((await cli.inspect('partner', signal)).identity);
+});
+
 function fixture(business: FeishuCliRunner, identity: unknown = validIdentity): FeishuCliRunner {
   return async (request) => {
     if (request.args.includes('--version'))

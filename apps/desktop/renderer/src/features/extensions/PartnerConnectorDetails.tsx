@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   partnerConnectorSelectionSchema,
-  type PartnerConnectorInspectionT,
+  type PartnerConnectorConnectionT,
   type SpaceConnectorDefinitionT,
 } from '@kodax-space/space-ipc-schema';
 import { useI18n } from '../../i18n/I18nProvider.js';
@@ -9,7 +9,7 @@ import { useAppStore } from '../../store/appStore.js';
 import { useSurfaceStore } from '../../store/surface.js';
 import { requestConfirm } from '../../store/confirmStore.js';
 import { invokeExtensionHost, useSpaceExtensions } from './SpaceExtensionsProvider.js';
-import { usePartnerConnectors } from './PartnerConnectorProvider.js';
+import { requestPartnerConnectorDialog, usePartnerConnectors } from './PartnerConnectorProvider.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { PartnerRemoteComposer } from './PartnerRemoteComposer.js';
 
@@ -18,13 +18,15 @@ export const connectorButtonClass =
 export const connectorInputClass =
   'w-full rounded-md border border-border-default bg-surface px-2 py-1.5 text-xs';
 
-/** Account credentials stay in the CLI. This host panel handles only safe profile names and exact scope. */
+/** Exact document scope stays in the host; account setup has its own connection dialog. */
 export function PartnerConnectorDetails({
   extensionId,
   connector,
+  connectionId,
 }: {
   readonly extensionId: string;
   readonly connector: SpaceConnectorDefinitionT;
+  readonly connectionId?: string;
 }): JSX.Element {
   const projectRoot = useAppStore((state) => state.currentProjectPath);
   const sessionId = useAppStore((state) => state.currentSessionId);
@@ -38,23 +40,32 @@ export function PartnerConnectorDetails({
     installed?.version,
     installed?.installedAt,
     installed?.enabled,
+    connectionId,
   ]);
-  return <ConnectorDetailsContent key={key} extensionId={extensionId} connector={connector} />;
+  return (
+    <ConnectorDetailsContent
+      key={key}
+      extensionId={extensionId}
+      connector={connector}
+      initialConnectionId={connectionId}
+    />
+  );
 }
 
 function ConnectorDetailsContent({
   extensionId,
   connector,
+  initialConnectionId,
 }: {
   readonly extensionId: string;
   readonly connector: SpaceConnectorDefinitionT;
+  readonly initialConnectionId?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const context = usePartnerConnectors();
   const { catalog, snapshot: extensions } = useSpaceExtensions();
-  const [inspection, setInspection] = useState<PartnerConnectorInspectionT | null>(null);
-  const [profile, setProfile] = useState('');
-  const [connectionId, setConnectionId] = useState('');
+  const [connections, setConnections] = useState<PartnerConnectorConnectionT[]>([]);
+  const [connectionId, setConnectionId] = useState(initialConnectionId ?? '');
   const [documents, setDocuments] = useState<{ url: string; access: 'read' | 'append' }[]>([]);
   const [folder, setFolder] = useState('');
   const [writesAllowed, setWritesAllowed] = useState<boolean | null>(null);
@@ -87,20 +98,15 @@ function ConnectorDetailsContent({
     setError(null);
     try {
       const [next, policy] = await Promise.all([
-        invokeExtensionHost('partner.connectors.inspect', {
+        invokeExtensionHost('partner.connectors.accounts', {
           extensionId,
           connectorId: connector.id,
         }),
         invokeExtensionHost('admin.policy.get', undefined),
       ]);
       if (!isActive() || revision !== loadRevision.current) return;
-      setInspection(next);
+      setConnections(next.connections);
       setWritesAllowed(policy.policy.connectors.writesAllowed);
-      setProfile((current) =>
-        next.profiles.some((item) => item.name === current)
-          ? current
-          : (next.profiles[0]?.name ?? ''),
-      );
       setConnectionId((current) =>
         next.connections.some((item) => item.id === current)
           ? current
@@ -148,9 +154,7 @@ function ConnectorDetailsContent({
       if (isActive()) setBusy(false);
     }
   };
-  const connection = inspection?.connections.find(
-    (item) => item.id === connectionId && item.connected,
-  );
+  const connection = connections.find((item) => item.id === connectionId && item.connected);
   const selected =
     context?.snapshot.state.connectors.some((item) => item.binding.connectionId === connectionId) ??
     false;
@@ -184,7 +188,7 @@ function ConnectorDetailsContent({
     <div className="h-full space-y-5 overflow-y-auto p-4" data-testid="partner-connector-details">
       <header>
         <h2 className="text-base font-medium">{connector.name}</h2>
-        <p className="mt-2 text-xs leading-5 text-fg-muted">{t('connectors.intro')}</p>
+        <p className="mt-2 text-xs leading-5 text-fg-muted">{t('connectors.scopeHint')}</p>
       </header>
       {!installed?.enabled && (
         <p role="alert" className="text-xs text-danger">
@@ -209,61 +213,17 @@ function ConnectorDetailsContent({
           {notice}
         </p>
       )}
-      {inspection?.reason && (
-        <p role="status" className="break-words text-xs text-danger">
-          {inspection.reason}
-        </p>
-      )}
-      {inspection && !inspection.installed && (
-        <section className="space-y-2 rounded-lg border border-border-default p-3 text-xs">
-          <p>{t('connectors.missing')}</p>
-          <p>{t('connectors.install')}</p>
-          <code className="block break-all">npm install -g @larksuite/cli@1.0.92</code>
-          <code className="block">lark-cli --help</code>
-        </section>
-      )}
-      {inspection?.installed && (
-        <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
-          <p>lark-cli {inspection.version}</p>
-          <label className="block">
-            {t('connectors.profile')}
-            <select
-              className={`${connectorInputClass} mt-2`}
-              value={profile}
-              onChange={(event) => setProfile(event.target.value)}
-              disabled={busy}
-            >
-              {inspection.profiles.map((item) => (
-                <option key={item.name} value={item.name}>
-                  {item.label || item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!inspection.profiles.length && (
-            <p className="text-fg-muted">{t('connectors.noProfiles')}</p>
-          )}
-          <button
-            type="button"
-            className={connectorButtonClass}
-            disabled={busy || !profile}
-            onClick={() =>
-              void perform(async () => {
-                const result = await invokeExtensionHost('partner.connectors.connect', {
-                  extensionId,
-                  connectorId: connector.id,
-                  profile,
-                });
-                if (!isActive()) return;
-                await load();
-                if (isActive()) setConnectionId(result.connection.id);
-              })
-            }
-          >
-            {t('connectors.verify')}
-          </button>
-        </section>
-      )}
+      <button
+        type="button"
+        className={connectorButtonClass}
+        disabled={!installed?.enabled || !scope}
+        onClick={() => {
+          if (scope)
+            requestPartnerConnectorDialog({ context: scope, extensionId, connector, connectionId });
+        }}
+      >
+        {t('connectors.manage')}
+      </button>
       <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
         <label className="block">
           {t('connectors.account')}
@@ -274,9 +234,9 @@ function ConnectorDetailsContent({
             disabled={busy}
           >
             <option value="">{t('connectors.selectAccount')}</option>
-            {inspection?.connections.map((item) => (
+            {connections.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.accountLabel} · {item.profile}
+                {item.accountLabel}
                 {!item.connected ? ` · ${t('connectors.unavailable')}` : ''}
               </option>
             ))}
@@ -287,31 +247,6 @@ function ConnectorDetailsContent({
             <p className="text-fg-muted">
               {t(selected ? 'connectors.selected' : 'connectors.notSelected')}
             </p>
-            <button
-              type="button"
-              className={connectorButtonClass}
-              disabled={busy}
-              onClick={() =>
-                void perform(async () => {
-                  if (
-                    !(await requestConfirm({
-                      message: t('connectors.disconnectConfirm'),
-                      danger: true,
-                    })) ||
-                    !isActive()
-                  )
-                    return;
-                  await invokeExtensionHost('partner.connectors.disconnect', {
-                    extensionId,
-                    connectorId: connector.id,
-                    connectionId,
-                  });
-                  await load();
-                })
-              }
-            >
-              {t('connectors.disconnect')}
-            </button>
           </>
         )}
       </section>

@@ -81,7 +81,7 @@ test('builds an independently installable, self-contained Partner library archiv
       id: 'feishu-docs',
       adapter: 'feishu-cli',
       name: '飞书文档',
-      description: '通过已有飞书 CLI 账号读取指定文档；新建和追加内容逐条审核后提交。',
+      description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
     },
   ]);
   assert.equal(manifest.ui.sha256, createHash('sha256').update(html).digest('hex'));
@@ -96,7 +96,7 @@ test('the library contains eight stable scene experts with original tasks and re
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'partner-scene-experts-'));
   t.after(() => fs.rm(outDir, { recursive: true, force: true }));
   const { manifest } = await buildPartnerExtension({ outDir });
-  assert.equal(manifest.version, '0.4.0');
+  assert.equal(manifest.version, '0.5.0');
   assert.deepEqual(
     manifest.experts.map((expert) => expert.id),
     ['writing-mentor', ...migratedScenes.map(([id]) => id)],

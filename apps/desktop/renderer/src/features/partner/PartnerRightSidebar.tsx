@@ -236,6 +236,7 @@ export function PartnerRightSidebar({
                 <PartnerConnectorDetails
                   extensionId={tab.extensionId!}
                   connector={tab.connector!}
+                  connectionId={tab.connectionId}
                 />
               )}
             </DetailTabPanel>

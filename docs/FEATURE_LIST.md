@@ -527,6 +527,7 @@
 - Design: [FEATURE_146 block](features/v0.1.61.md#feature_146-partner-plugin-library-extension); detailed scope, phases, public-contract evidence, acceptance and rollback: [Partner plugin plan](features/v0.1.61-partner-plugin-library.md).
 - Progress: user approved sequential implementation; P1–P3 code, automatic checks and independent reviews passed, as did macOS arm64 packaging and isolated Electron install/disable/uninstall/reinstall plus core expert interactions. Full F146 remains InProgress.
 - P4/P5: user selected official Feishu CLI; the bounded host adapter, per-session document consent, remote snapshots, reviewed create/append proposals and receipts are implemented. Contract and verification boundaries: [Feishu slice](features/f146-p4-p5-feishu.md). P6 still requires user-authorized real-service validation. No third-party authorization or remote document write has been performed.
+- Follow-up implemented: WorkBuddy-inspired minimal cards/dialog and composer toggles using Space styles, explicit private CLI installation and cancellable official onboarding; library 0.5.0. [Contract, reviews and verification limits](features/f146-feishu-onboarding.md); shared Skills and document review authority are unchanged. Real-service authorization and the locked-Mac visual check remain unverified.
 
 ## Recent completed features
 

@@ -2598,7 +2598,6 @@ export function BottomBar(): JSX.Element {
         >
           <ChipBar />
           {currentSurface === 'partner' && <PartnerExpertChip running={isStreaming} />}
-          {currentSurface === 'partner' && <PartnerConnectorChips />}
 
           {(pendingImages.length > 0 || pendingFileRefs.length > 0 || imageErr) && (
             <div className="space-y-1">
@@ -2844,6 +2843,7 @@ export function BottomBar(): JSX.Element {
                   />
                 </div>
               )}
+              {currentSurface === 'partner' && <PartnerConnectorChips />}
               {currentSurface !== 'partner' && <AgentPicker insertAtCaret={insertAtCaret} />}
               <ModeSelector />
               {currentSurface === 'partner' && (

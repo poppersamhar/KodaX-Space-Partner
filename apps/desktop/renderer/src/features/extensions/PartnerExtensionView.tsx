@@ -19,6 +19,7 @@ import { usePartnerExpert } from './PartnerExpertProvider.js';
 import { createPartnerExtensionActions } from './partnerExtensionActions.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { requestConfirm } from '../../store/confirmStore.js';
+import { usePartnerConnectors } from './PartnerConnectorProvider.js';
 
 interface PartnerExtensionViewProps {
   readonly extension: SpaceExtensionT;
@@ -29,6 +30,8 @@ interface PartnerExtensionViewProps {
   readonly onExpertSelected: () => void;
   readonly onExpertDetails: (expert: PartnerExpertSnapshotT) => void;
   readonly onConnectorDetails: (connector: SpaceConnectorDefinitionT) => void;
+  readonly initialTab?: 'experts' | 'connectors';
+  readonly navigationRevision?: number;
 }
 
 /** Only a bounded, source-checked business bridge is exposed to the opaque package frame. */
@@ -36,10 +39,16 @@ export function ExtensionFrame({
   html,
   title,
   onRequest,
+  initialTab = 'experts',
+  navigationRevision = 0,
+  connectorStatusKey = '',
 }: {
   readonly html: string;
   readonly title: string;
   readonly onRequest?: (request: ExtensionFrameRequest) => Promise<unknown>;
+  readonly initialTab?: 'experts' | 'connectors';
+  readonly navigationRevision?: number;
+  readonly connectorStatusKey?: string;
 }): JSX.Element {
   const documentHtml = useMemo(() => buildRestrictedExtensionDocument(html), [html]);
   const sentDocument = useRef<string | null>(null);
@@ -47,6 +56,8 @@ export function ExtensionFrame({
   const [token] = useState(() => globalThis.crypto.randomUUID());
   const requestHandler = useRef(onRequest);
   requestHandler.current = onRequest;
+  const tabRef = useRef(initialTab);
+  tabRef.current = initialTab;
   useEffect(() => {
     const bridge = createExtensionFrameBridge({
       token,
@@ -59,7 +70,10 @@ export function ExtensionFrame({
     const onMessage = (event: MessageEvent): void => {
       if (!frame.current?.contentWindow || event.source !== frame.current.contentWindow) return;
       if (event.data?.type === 'space-extension.ready.v1') {
-        frame.current.contentWindow.postMessage({ type: 'space-extension.init.v1', token }, '*');
+        frame.current.contentWindow.postMessage(
+          { type: 'space-extension.init.v1', token, initialTab: tabRef.current },
+          '*',
+        );
         return;
       }
       void bridge.receive(event);
@@ -70,6 +84,19 @@ export function ExtensionFrame({
       window.removeEventListener('message', onMessage);
     };
   }, [token]);
+  useEffect(() => {
+    frame.current?.contentWindow?.postMessage(
+      { type: 'space-extension.connectors.changed.v1', token },
+      '*',
+    );
+  }, [token, connectorStatusKey]);
+  useEffect(() => {
+    if (initialTab === 'connectors')
+      frame.current?.contentWindow?.postMessage(
+        { type: 'space-extension.navigate.v1', token, tab: 'connectors' },
+        '*',
+      );
+  }, [token, initialTab, navigationRevision]);
   return (
     <iframe
       ref={frame}
@@ -87,7 +114,7 @@ export function ExtensionFrame({
           '*',
         );
         event.currentTarget.contentWindow?.postMessage(
-          { type: 'space-extension.init.v1', token },
+          { type: 'space-extension.init.v1', token, initialTab },
           '*',
         );
       }}
@@ -105,11 +132,14 @@ export function PartnerExtensionView({
   onExpertSelected,
   onExpertDetails,
   onConnectorDetails,
+  initialTab,
+  navigationRevision,
 }: PartnerExtensionViewProps): JSX.Element {
   const { t } = useI18n();
   const [view, setView] = useState<{ key: string; html?: string; error?: string } | null>(null);
   const [retry, setRetry] = useState(0);
   const expertContext = usePartnerExpert();
+  const connectorContext = usePartnerConnectors();
   const { catalog } = useSpaceExtensions();
   const mounted = useRef(true);
   useEffect(() => {
@@ -150,8 +180,27 @@ export function PartnerExtensionView({
   const handleRequest = createPartnerExtensionActions({
     extensionId: id,
     connectors: {
-      catalog: () =>
-        invokeExtensionHost('space.extensions.connectors.catalog', { extensionId: id }),
+      catalog: async () => {
+        const result = await invokeExtensionHost('space.extensions.connectors.catalog', {
+          extensionId: id,
+        });
+        const statuses = await Promise.all(
+          result.connectors.map(async (connector) => ({
+            id: connector.id,
+            connected: (
+              await invokeExtensionHost('partner.connectors.accounts', {
+                extensionId: id,
+                connectorId: connector.id,
+              })
+            ).connections.some((account) => account.connected),
+          })),
+        );
+        // The independent page receives declarations plus booleans, never account fields or auth jobs.
+        return {
+          connectors: result.connectors,
+          connectedIds: statuses.filter((item) => item.connected).map((item) => item.id),
+        };
+      },
       onConfigure: onConnectorDetails,
     },
     isActive: () =>
@@ -240,6 +289,16 @@ export function PartnerExtensionView({
           html={currentView.html}
           title={extension.name}
           onRequest={handleRequest}
+          initialTab={initialTab}
+          navigationRevision={navigationRevision}
+          connectorStatusKey={JSON.stringify(
+            connectorContext?.connectorCatalog.entries
+              .filter((item) => item.extensionId === id)
+              .map((item) => [
+                item.connector.id,
+                item.connections.some((connection) => connection.connected),
+              ]),
+          )}
         />
       ) : currentView?.error ? (
         <div role="alert" className="m-auto max-w-md p-6 text-center">

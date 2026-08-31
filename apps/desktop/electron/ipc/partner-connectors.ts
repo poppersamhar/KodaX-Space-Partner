@@ -1,7 +1,10 @@
 import { canonProjectRoot } from '@kodax-space/space-ipc-schema';
 import { kodaxHost } from '../kodax/host.js';
 import { projectStore } from '../projects/store.js';
-import { getPartnerConnectorService } from '../partner-connectors/runtime.js';
+import {
+  getPartnerConnectorService,
+  getPartnerConnectorTasks,
+} from '../partner-connectors/runtime.js';
 import type { PartnerConnectorContext } from '../partner-connectors/service.js';
 import { assertSpaceExtensionSender } from './space-extensions.js';
 import { registerChannelWithEvent } from './register.js';
@@ -32,7 +35,36 @@ async function context(input: {
 }
 
 /** No connector account, source content or review endpoint is exposed to extension frames. */
-export function registerPartnerConnectorChannels(register = registerChannelWithEvent): void {
+export function registerPartnerConnectorChannels(
+  register = registerChannelWithEvent,
+  getTasks = getPartnerConnectorTasks,
+): void {
+  register('partner.connectors.accounts', async (input, event) => {
+    assertSpaceExtensionSender(event);
+    return {
+      connections: await getPartnerConnectorService().accounts(
+        input.extensionId,
+        input.connectorId,
+      ),
+    };
+  });
+  register('partner.connectors.onboarding.start', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return { job: getTasks().start(input) };
+  });
+  register('partner.connectors.onboarding.get', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return { job: getTasks().get(input) };
+  });
+  register('partner.connectors.onboarding.cancel', async (input, event) => {
+    assertSpaceExtensionSender(event);
+    return { job: await getTasks().cancel(input) };
+  });
+  register('partner.connectors.onboarding.reopen', async (input, event) => {
+    assertSpaceExtensionSender(event);
+    await getTasks().reopen(input);
+    return { ok: true };
+  });
   register('space.extensions.connectors.catalog', async (input, event) => {
     assertSpaceExtensionSender(event);
     return { connectors: await getPartnerConnectorService().catalog(input.extensionId) };

@@ -155,6 +155,72 @@
         gap: 8px;
         margin-top: 20px;
       }
+      .connector-panel {
+        padding: 0;
+        border: 0;
+        text-align: left;
+      }
+      .connector-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 16px;
+      }
+      .connector-card {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 22px;
+        background: var(--background);
+      }
+      .connector-card h3 {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 14px;
+        font-size: 16px;
+      }
+      .connector-card svg {
+        width: 36px;
+        height: 36px;
+        padding: 8px;
+        border-radius: 10px;
+        background: var(--accent-wash);
+        color: var(--accent);
+      }
+      .connector-card p {
+        margin: 0;
+        min-height: 52px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.8;
+      }
+      .connector-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 20px;
+      }
+      .connection-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .connection-status::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+      }
+      .connection-status.connected {
+        color: #27844e;
+      }
+      #connector-status {
+        color: var(--muted);
+        font-size: 12px;
+      }
       .action {
         border: 1px solid var(--line);
         border-radius: 7px;
@@ -378,33 +444,15 @@
         <div class="expert-grid" id="expert-list"></div>
       </section>
       <section
-        class="panel"
+        class="panel connector-panel"
         id="connectors-panel"
         role="tabpanel"
         aria-labelledby="connectors-tab"
         tabindex="0"
         hidden
       >
-        <div class="symbol">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            aria-hidden="true"
-          >
-            <path
-              d="m10 13 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 4a4 4 0 0 0 6 0l4-4a4 4 0 0 0-6-6l-1 1"
-              transform="translate(1 2) scale(.9)"
-            />
-          </svg>
-        </div>
-        <h2>连接资料与文档</h2>
-        <p class="description">
-          账户连接、当前会话范围与写入批准彼此独立。安装扩展不会读取或修改任何远端文档。
-        </p>
         <p id="connector-status" role="status"></p>
-        <div class="expert-grid" id="connector-list"></div>
+        <div class="connector-grid" id="connector-list"></div>
       </section>
       <div class="notice">
         <svg
@@ -614,7 +662,14 @@
             refreshButton.disabled = false;
           }
         }
+        let connectorLoading = false;
+        let connectorRefreshPending = false;
         async function loadConnectors() {
+          if (connectorLoading) {
+            connectorRefreshPending = true;
+            return;
+          }
+          connectorLoading = true;
           const connectorStatus = document.getElementById('connector-status');
           const connectorList = document.getElementById('connector-list');
           connectorStatus.textContent = '正在读取连接器…';
@@ -627,36 +682,59 @@
             );
             for (const connector of result.connectors) {
               const card = document.createElement('article');
-              card.className = 'expert-card';
+              card.className = 'connector-card';
               const heading = document.createElement('h3');
               heading.textContent = connector.name;
+              const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+              icon.setAttribute('viewBox', '0 0 24 24');
+              icon.setAttribute('fill', 'none');
+              icon.setAttribute('stroke', 'currentColor');
+              icon.setAttribute('stroke-width', '1.6');
+              icon.setAttribute('aria-hidden', 'true');
+              const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              path.setAttribute(
+                'd',
+                'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h5',
+              );
+              icon.append(path);
+              heading.prepend(icon);
               const description = document.createElement('p');
               description.textContent = connector.description;
               const actions = document.createElement('div');
-              actions.className = 'expert-actions';
+              actions.className = 'connector-footer';
+              const connected =
+                Array.isArray(result.connectedIds) && result.connectedIds.includes(connector.id);
+              const state = document.createElement('span');
+              state.className = `connection-status${connected ? ' connected' : ''}`;
+              state.textContent = connected ? '已连接' : '未连接';
               const configure = document.createElement('button');
               configure.type = 'button';
               configure.className = 'action primary';
-              configure.textContent = '设置连接与会话范围';
+              configure.textContent = connected ? '管理连接' : '连接';
               configure.addEventListener('click', async () => {
                 configure.disabled = true;
                 try {
                   await request('connector.configure', { connectorId: connector.id });
-                  connectorStatus.textContent = '已打开 Space 的可信配置面板；本页不收集密钥。';
+                  connectorStatus.textContent = '请在连接弹窗中继续。';
                 } catch (error) {
                   connectorStatus.textContent = error.message || '无法打开连接器，请重试。';
                 } finally {
                   configure.disabled = false;
                 }
               });
-              actions.append(configure);
+              actions.append(state, configure);
               card.append(heading, description, actions);
               connectorList.append(card);
             }
-            connectorStatus.textContent =
-              '连接状态和资料范围在 Space 配置面板中管理；文档内容不会进入本扩展页面。';
+            connectorStatus.textContent = '';
           } catch (error) {
             connectorStatus.textContent = error.message || '读取连接器失败，请重新打开插件库。';
+          } finally {
+            connectorLoading = false;
+            if (connectorRefreshPending) {
+              connectorRefreshPending = false;
+              void loadConnectors();
+            }
           }
         }
         window.addEventListener('message', (event) => {
@@ -669,8 +747,21 @@
             message.token !== token
           ) {
             token = message.token;
+            if (message.initialTab === 'connectors')
+              selectTab(document.getElementById('connectors-tab'));
             void loadExperts();
             void loadConnectors();
+          } else if (
+            message.type === 'space-extension.connectors.changed.v1' &&
+            message.token === token
+          ) {
+            void loadConnectors();
+          } else if (
+            message.type === 'space-extension.navigate.v1' &&
+            message.token === token &&
+            message.tab === 'connectors'
+          ) {
+            selectTab(document.getElementById('connectors-tab'));
           } else if (message.type === 'space-extension.response.v1' && message.token === token) {
             const entry = pending.get(message.requestId);
             if (!entry) return;

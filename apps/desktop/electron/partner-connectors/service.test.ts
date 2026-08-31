@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PartnerConnectorService, type PartnerConnectorContext } from './service.js';
@@ -487,6 +488,73 @@ test('an old asynchronous verification cannot reconnect after a newer disconnect
     (await f.service.describeBindings(f.context.bindings)).connectors[0].available,
     false,
   );
+});
+
+test('a cancelled onboarding lease during account persistence cannot leave a connected account', async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const rename = fs.rename.bind(fs);
+  let intercepted = false;
+  t.mock.method(
+    fs,
+    'rename',
+    async (from: Parameters<typeof fs.rename>[0], to: Parameters<typeof fs.rename>[1]) => {
+      if (!intercepted && String(to) === path.join(f.root, 'records.json')) {
+        intercepted = true;
+        entered();
+        await held;
+      }
+      return rename(from, to);
+    },
+  );
+  let cancelled = false;
+  let completed = false;
+  const connection = f.service.connect(
+    { extensionId: 'partner.library', connectorId: 'feishu', profile: 'space-new' },
+    {
+      assertActive: () => {
+        if (cancelled) throw new Error('cancelled');
+      },
+      complete: () => {
+        completed = true;
+      },
+    },
+  );
+  await waiting;
+  cancelled = true;
+  release();
+  await assert.rejects(connection, /cancelled/);
+  assert.equal(completed, false);
+  const accounts = await f.service.accounts('partner.library', 'feishu');
+  assert.deepEqual(accounts, [f.connection]);
+});
+
+test('onboarding cannot overwrite an existing profile or connect without all three scopes; accounts is local only', async (t) => {
+  const f = await fixture(t);
+  let inspections = 0;
+  const inspect = f.cli.inspect;
+  f.cli.inspect = async (profile) => {
+    inspections++;
+    const status = await inspect(profile);
+    return { ...status, identity: { ...status.identity!, scopes: ['docx:document:readonly'] } };
+  };
+  const lease = { assertActive: () => undefined, complete: () => assert.fail('must not commit') };
+  await assert.rejects(f.service.connect({ ...f.connection, profile: 'test' }, lease), /拒绝覆盖/);
+  assert.equal(inspections, 0);
+  await assert.rejects(
+    f.service.connect({ ...f.connection, profile: 'space-fresh' }, lease),
+    /缺少/,
+  );
+  assert.equal(inspections, 1);
+  assert.deepEqual(await f.service.accounts('partner.library', 'feishu'), [f.connection]);
+  assert.equal(inspections, 1);
 });
 
 test('late revocation discards a read before returning or publishing its persisted body', async (t) => {

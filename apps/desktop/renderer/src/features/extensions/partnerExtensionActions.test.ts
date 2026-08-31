@@ -119,3 +119,51 @@ test('prompt-only selection carries an explicit Skill opt-out without changing t
     ['selected'],
   ]);
 });
+
+test('connector catalog replies expose only declarations and connected IDs, never account or onboarding fields', async () => {
+  const connector = {
+    id: 'feishu-docs',
+    adapter: 'feishu-cli' as const,
+    name: 'Feishu documents',
+    description: '',
+  };
+  const catalog = {
+    connectors: [connector],
+    connectedIds: ['feishu-docs'],
+    connections: [{ accountLabel: 'Private account', profile: 'private-profile' }],
+    job: { id: 'private-job' },
+  };
+  const { dispatch } = fixture({
+    connectors: { catalog: async () => catalog, onConfigure: () => undefined },
+  });
+  assert.deepEqual(await dispatch({ ...envelope, method: 'connector.catalog' }), {
+    connectors: [connector],
+    connectedIds: ['feishu-docs'],
+  });
+});
+
+test('closing or replacing context while connector metadata loads cannot open a stale connection modal', async () => {
+  let active = true;
+  let opened = false;
+  const { dispatch } = fixture({
+    isActive: () => active,
+    connectors: {
+      catalog: async () => {
+        active = false;
+        return {
+          connectors: [
+            { id: 'feishu-docs', adapter: 'feishu-cli', name: 'Feishu', description: '' },
+          ],
+        };
+      },
+      onConfigure: () => {
+        opened = true;
+      },
+    },
+  });
+  await assert.rejects(
+    dispatch({ ...envelope, method: 'connector.configure', connectorId: 'feishu-docs' }),
+    /closed or changed/,
+  );
+  assert.equal(opened, false);
+});

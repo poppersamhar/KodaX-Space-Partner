@@ -14,6 +14,10 @@
 import { versionChannel } from './version.js';
 import { connectorInvokeChannels, connectorPushChannels } from './partner-connector.js';
 import {
+  connectorOnboardingInvokeChannels,
+  connectorOnboardingPushChannels,
+} from './partner-connector-onboarding.js';
+import {
   spaceExtensionsListChannel,
   spaceExtensionsInstallChannel,
   spaceExtensionsSetEnabledChannel,
@@ -308,7 +312,7 @@ import {
 import { diagnosticsExportChannel, diagnosticsReportChannel } from './diagnostics.js';
 import { spaceControlRequestedChannel, spaceControlResolveChannel } from './space-control.js';
 
-export const invokeChannels = {
+const coreInvokeChannels = {
   ...connectorInvokeChannels,
   [spaceExtensionsListChannel.name]: spaceExtensionsListChannel,
   [spaceExtensionsInstallChannel.name]: spaceExtensionsInstallChannel,
@@ -535,7 +539,16 @@ export const invokeChannels = {
   [learningAcknowledgeChannel.name]: learningAcknowledgeChannel,
 } as const;
 
+// Keep the declaration type in named parts: flattening the growing registry exceeds
+// TypeScript's declaration serialization limit while losing none of the channel types.
+export const invokeChannels: typeof coreInvokeChannels & typeof connectorOnboardingInvokeChannels =
+  {
+    ...coreInvokeChannels,
+    ...connectorOnboardingInvokeChannels,
+  };
+
 export const pushChannels = {
+  ...connectorOnboardingPushChannels,
   ...connectorPushChannels,
   [spaceExtensionsChangedChannel.name]: spaceExtensionsChangedChannel,
   [sessionPartnerExpertChangedChannel.name]: sessionPartnerExpertChangedChannel,

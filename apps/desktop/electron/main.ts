@@ -75,6 +75,7 @@ import { registerUpdaterChannels, initAutoUpdater } from './ipc/updater.js';
 import { registerMcpbChannels, installMcpbFromOsHandoff } from './ipc/mcpb.js';
 import { registerSpaceExtensionChannels } from './ipc/space-extensions.js';
 import { registerPartnerConnectorChannels } from './ipc/partner-connectors.js';
+import { disposePartnerConnectorTasks } from './partner-connectors/runtime.js';
 import {
   SPACE_EXTENSION_FRAME_CSP,
   isSpaceExtensionFrameUrl,
@@ -2717,6 +2718,7 @@ app.on('before-quit', (event) => {
   permissionBroker.cancelAll('shutdown');
   askUserBroker.cancelAll('shutdown');
   spaceControlRendererBroker.cancelAll('shutdown');
+  const connectorTasksDisposal = disposePartnerConnectorTasks();
   try {
     getPtyHost().disposeAll();
   } catch (err) {
@@ -2731,6 +2733,9 @@ app.on('before-quit', (event) => {
     // Startup must settle before any close() call: otherwise an early user quit
     // can race Runtime initialize() and leave a newly spawned resource behind.
     const disposals: Promise<unknown>[] = [
+      connectorTasksDisposal.catch(() =>
+        console.warn('[main] connector authorization cleanup did not complete'),
+      ),
       Promise.resolve()
         .then(() => stopQueueWatch?.())
         .catch((err) =>

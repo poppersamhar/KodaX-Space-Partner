@@ -27,6 +27,7 @@ export interface PartnerDetailTab {
   readonly expert?: PartnerExpertSnapshotT;
   readonly connector?: SpaceConnectorDefinitionT;
   readonly extensionId?: string;
+  readonly connectionId?: string;
 }
 
 export interface PartnerDetailWorkspaceState {
@@ -54,6 +55,7 @@ export type PartnerDetailOpenTarget =
       readonly kind: 'connector';
       readonly extensionId: string;
       readonly connector: SpaceConnectorDefinitionT;
+      readonly connectionId?: string;
     };
 
 export interface PartnerDetailWorkspaceContext {
@@ -95,7 +97,7 @@ export function createPartnerDetailTab(
   return {
     id:
       target.kind === 'connector'
-        ? `partner-detail-connector-${target.extensionId}-${target.connector.id}`
+        ? `partner-detail-connector-${target.extensionId}-${target.connector.id}${target.connectionId ? `-${target.connectionId}` : ''}`
         : target.kind === 'expert'
           ? `partner-detail-expert-${target.expert.extensionId}-${target.expert.expert.id}`
           : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
@@ -111,7 +113,11 @@ export function createPartnerDetailTab(
     ...(target.kind === 'file' ? { snapshot: target.snapshot } : {}),
     ...(target.kind === 'expert' ? { expert: target.expert } : {}),
     ...(target.kind === 'connector'
-      ? { connector: target.connector, extensionId: target.extensionId }
+      ? {
+          connector: target.connector,
+          extensionId: target.extensionId,
+          connectionId: target.connectionId,
+        }
       : {}),
   };
 }

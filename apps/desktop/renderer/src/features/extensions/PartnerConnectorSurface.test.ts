@@ -27,12 +27,14 @@ import {startNewConversation} from '../../store/newConversation.ts';
 const connector={id:'feishu-docs',adapter:'feishu-cli',name:'Feishu documents',description:''};
 const extension={id:'library',version:'0.4.0',name:'Library',description:'',enabled:true,installedAt:1,expertCount:0,connectorCount:1};
 const connection={id:'00000000-0000-4000-8000-000000000001',extensionId:'library',connectorId:'feishu-docs',revision:1,profile:'qa',accountLabel:'QA account',connected:true,permissions:{read:true,create:true,append:true}};
-let connected=false;let allowed=false;let selected=[];
+let connected=true;let allowed=false;let selected=[];
 const proposal={id:'00000000-0000-4000-8000-000000000002',sessionId:'test-session',projectRoot:'/project',extensionId:'library',connectorId:'feishu-docs',connectionId:connection.id,connectionRevision:1,operation:'append',targetUrl:'https://example.feishu.cn/docx/Doc1',title:'Append conclusion',content:'Only append this reviewed sentence.',rationale:'Requested summary',contentHash:'a'.repeat(64),scopeHash:'b'.repeat(64),baseRevision:8,status:'pending',createdAt:'2026-09-01T00:00:00Z',updatedAt:'2026-09-01T00:00:00Z'};
 window.calls=[];
 window.kodaxSpace={platform:'darwin',on:()=>()=>{},invoke:async(channel,input)=>{
 window.calls.push({channel,input});
 if(channel==='space.extensions.list')return {ok:true,data:{extensions:[extension]}};
+if(channel==='space.extensions.connectors.catalog')return {ok:true,data:{connectors:[connector]}};
+if(channel==='partner.connectors.accounts')return {ok:true,data:{connections:connected?[connection]:[]}};
 if(channel==='partner.connectors.inspect')return {ok:true,data:{installed:true,version:'1.0.92',profiles:[{name:'qa',label:'QA profile'}],connections:connected?[connection]:[]}};
 if(channel==='admin.policy.get')return {ok:true,data:{policy:{connectors:{writesAllowed:allowed}}}};
 if(channel==='admin.policy.set'){allowed=input.connectors.writesAllowed;return {ok:true,data:{policy:{connectors:{writesAllowed:allowed}},diagnostics:[]}};}
@@ -81,9 +83,7 @@ test(
     await page.goto('http://partner.test/');
     await page.addScriptTag({ content: output.outputFiles[0].text });
     try {
-      await page
-        .getByRole('button', { name: 'Verify and connect this profile', exact: true })
-        .waitFor();
+      await page.getByRole('button', { name: 'Manage connectors', exact: true }).waitFor();
     } catch (error) {
       t.diagnostic(
         JSON.stringify({
@@ -94,14 +94,11 @@ test(
       );
       throw error;
     }
-    assert.equal(await page.locator('[data-testid="partner-connector-chips"]').count(), 0);
-    await page
-      .getByRole('button', { name: 'Verify and connect this profile', exact: true })
-      .click();
+    assert.equal(await page.locator('[data-testid="partner-connector-chips"]').count(), 1);
     await page
       .getByText('Account connected; not selected for this conversation', { exact: true })
       .waitFor();
-    assert.equal(await page.locator('[data-testid="partner-connector-chips"]').count(), 0);
+    assert.equal(await page.getByTestId('partner-connector-chips').innerText(), '');
     await page.getByRole('button', { name: 'Add document', exact: true }).click();
     await page
       .getByRole('textbox', { name: 'Exact target 1', exact: true })
@@ -180,7 +177,9 @@ test(
       [{ connectors: { writesAllowed: true } }],
     );
     await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-    await page.getByTestId('partner-connector-chips').waitFor({ state: 'detached' });
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="partner-connector-chips"]')?.textContent === '',
+    );
     assert.equal(
       await page.getByRole('textbox', { name: 'Draft', exact: true }).inputValue(),
       'Keep this draft',
@@ -229,9 +228,7 @@ test(
     await page.getByRole('button', { name: 'Read selected document', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Read selected document', exact: true }).click();
     await page.getByRole('button', { name: 'Switch project', exact: true }).click();
-    await page
-      .getByRole('button', { name: 'Verify and connect this profile', exact: true })
-      .waitFor();
+    await page.getByRole('button', { name: 'Manage connectors', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Finish old read', exact: true }).click();
     assert.equal(
       await page.getByRole('button', { name: 'Refresh status', exact: true }).isEnabled(),

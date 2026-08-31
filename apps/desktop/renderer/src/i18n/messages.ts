@@ -2,6 +2,45 @@ import type { SupportedLocaleT } from '@kodax-space/space-ipc-schema';
 
 export const messages = {
   'en-US': {
+    'connectors.manage': 'Manage connectors',
+    'connectors.composer': 'Conversation connectors',
+    'connectors.connect': 'Connect',
+    'connectors.connected': 'Connected',
+    'connectors.notConnected': 'Not connected',
+    'connectors.dialogDescription':
+      'Connect Feishu to work with your documents. Your credentials stay in the trusted host, never in the plugin page.',
+    'connectors.connectedHint':
+      'Connection is ready. Enable it for this conversation, then choose the exact documents it may access. Writes still require review.',
+    'connectors.documentScope': 'Document scope',
+    'connectors.try': 'Try it',
+    'connectors.advanced': 'Advanced: use an existing CLI profile',
+    'connectors.installContinue': 'Install and continue',
+    'connectors.privateInstall':
+      'Install official @larksuite/cli 1.0.92 into Space’s private directory. This does not change your global CLI or Skills. Continue only if you agree to install it.',
+    'connectors.browserHint':
+      'Continue in the system browser. Space will update this dialog after authorization; no token needs to be pasted here.',
+    'connectors.reopen': 'Reopen authorization page',
+    'connectors.cancelConnection': 'Cancel connection',
+    'connectors.cancelling': 'Cancelling…',
+    'connectors.cancelAlreadyConnected':
+      'Authorization completed before cancellation. The account is connected; disconnect it here if needed.',
+    'connectors.cancelUnconfirmed':
+      'Could not confirm cancellation of the previous connection. Check the connector before trying again.',
+    'connectors.emptyCatalog':
+      'No connectors available. Install or enable a plugin library in Settings.',
+    'connectors.sessionSwitch': 'Enable {name} for this conversation',
+    'connectors.enabledCount': '{count} enabled',
+    'connectors.emptyScope': 'Choose documents in Document scope before reading.',
+    'connectors.phase.preparing': 'Preparing connection…',
+    'connectors.phase.needs_install': 'Feishu CLI is required',
+    'connectors.phase.installing': 'Installing the official CLI…',
+    'connectors.phase.waiting_app': 'Complete app setup in your browser',
+    'connectors.phase.waiting_authorization': 'Complete authorization in your browser',
+    'connectors.phase.verifying': 'Verifying connection…',
+    'connectors.phase.connected': 'Connected',
+    'connectors.phase.cancelled': 'Connection cancelled',
+    'connectors.phase.expired': 'Authorization expired. Connect again to retry.',
+    'connectors.phase.failed': 'Connection failed. Connect again to retry.',
     'connectors.title': 'Feishu documents',
     'connectors.unavailable': 'Unavailable',
     'connectors.remove': 'Remove this connector',
@@ -20,7 +59,7 @@ export const messages = {
     'connectors.selectAccount': 'Choose a connected account',
     'connectors.disconnect': 'Disconnect from Space',
     'connectors.disconnectConfirm':
-      'Disconnect this account from Space? Existing conversation bindings become unavailable; this does not log out the CLI.',
+      'Disconnect this account from Space? Existing conversation bindings become unavailable. This does not log out the CLI or revoke authorization in Feishu; revoke it in Feishu if needed.',
     'connectors.scope': 'Documents available to this conversation',
     'connectors.scopeHint':
       'Only exact docx links below are allowed. Read/append scope is not write approval; every write requires review.',
@@ -2764,6 +2803,42 @@ export const messages = {
     'partner.permissionMode.footer': 'Automatic actions remain protected by safety rules.',
   },
   'zh-CN': {
+    'connectors.manage': '管理连接器',
+    'connectors.composer': '本会话连接器',
+    'connectors.connect': '连接',
+    'connectors.connected': '已连接',
+    'connectors.notConnected': '未连接',
+    'connectors.dialogDescription':
+      '连接飞书，在 Partner 中处理你的文档。凭据由可信宿主管理，不会进入插件页面。',
+    'connectors.connectedHint':
+      '账号已连接。启用本会话后，请单独选择可访问的文档；每次写入仍需审核。',
+    'connectors.documentScope': '文档范围',
+    'connectors.try': '去试试',
+    'connectors.advanced': '高级：使用已有 CLI profile',
+    'connectors.installContinue': '安装并继续',
+    'connectors.privateInstall':
+      '将官方 @larksuite/cli 1.0.92 安装到 Space 私有目录，不修改全局 CLI 或 Skill。确认同意安装后再继续。',
+    'connectors.browserHint': '请在系统浏览器完成操作，授权结果会自动更新到这里，无需粘贴 token。',
+    'connectors.reopen': '重新打开授权页',
+    'connectors.cancelConnection': '取消连接',
+    'connectors.cancelling': '正在取消…',
+    'connectors.cancelAlreadyConnected':
+      '授权已先于取消完成，账号已经连接；如不再需要，请在这里断开。',
+    'connectors.cancelUnconfirmed': '尚未确认上一项连接已取消，请先检查连接器状态，再重试。',
+    'connectors.emptyCatalog': '暂无可用连接器，请在设置中安装或启用插件库。',
+    'connectors.sessionSwitch': '在本会话启用 {name}',
+    'connectors.enabledCount': '已启用 {count} 个',
+    'connectors.emptyScope': '读取前请通过「文档范围」选择资料。',
+    'connectors.phase.preparing': '正在准备连接…',
+    'connectors.phase.needs_install': '需要安装飞书 CLI',
+    'connectors.phase.installing': '正在安装官方 CLI…',
+    'connectors.phase.waiting_app': '请在浏览器完成应用配置',
+    'connectors.phase.waiting_authorization': '请在浏览器完成授权',
+    'connectors.phase.verifying': '正在验证连接…',
+    'connectors.phase.connected': '已连接',
+    'connectors.phase.cancelled': '连接已取消',
+    'connectors.phase.expired': '授权已过期，请重新连接。',
+    'connectors.phase.failed': '连接失败，请重新连接。',
     'connectors.title': '飞书文档',
     'connectors.unavailable': '不可用',
     'connectors.remove': '移除此连接器',
@@ -2780,7 +2855,7 @@ export const messages = {
     'connectors.selectAccount': '选择已连接账号',
     'connectors.disconnect': '从 Space 断开',
     'connectors.disconnectConfirm':
-      '从 Space 断开此账号？已有会话绑定将不可用；此操作不会退出 CLI 账号。',
+      '从 Space 断开此账号？已有会话绑定将不可用；不会退出 CLI 账号，也不会撤销飞书授权，如需撤销请前往飞书操作。',
     'connectors.scope': '本会话可使用的文档',
     'connectors.scopeHint':
       '仅允许下列确切的 docx 链接。读取/追加范围不是写入批准；每次写入仍需审核。',

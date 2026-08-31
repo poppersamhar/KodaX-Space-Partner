@@ -23,7 +23,7 @@ export interface PartnerExtensionActionsOptions {
   readonly onDetails: (expert: PartnerExpertSnapshotT) => void;
   readonly confirmDelete: (expert: PartnerExpertSnapshotT) => Promise<boolean>;
   readonly connectors?: {
-    catalog(): Promise<{ connectors: SpaceConnectorDefinitionT[] }>;
+    catalog(): Promise<{ connectors: SpaceConnectorDefinitionT[]; connectedIds?: string[] }>;
     onConfigure(connector: SpaceConnectorDefinitionT): void;
   };
 }
@@ -36,7 +36,11 @@ export function createPartnerExtensionActions(options: PartnerExtensionActionsOp
       if (!options.connectors) throw new Error('Connector configuration unavailable');
       const catalog = await options.connectors.catalog();
       if (!options.isActive()) throw new Error('Extension view is closed or changed');
-      if (request.method === 'connector.catalog') return catalog;
+      if (request.method === 'connector.catalog')
+        return {
+          connectors: catalog.connectors,
+          connectedIds: catalog.connectedIds ?? [],
+        };
       const connector = catalog.connectors.find((item) => item.id === request.connectorId);
       if (!connector) throw new Error('Connector unavailable');
       options.connectors.onConfigure(connector);
