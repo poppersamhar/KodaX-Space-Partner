@@ -1,13 +1,14 @@
 // Composer attachment and command menu. File selection is delegated to
 // BottomBar so picker, drag-drop, and paste share the same attachment pipeline.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   Paperclip,
   FolderPlus,
   Slash,
   Plug,
   Puzzle,
+  UserRound,
   ChevronLeft,
   type LucideIcon,
 } from 'lucide-react';
@@ -24,6 +25,9 @@ interface AttachMenuProps {
   onAddFiles: () => void;
   onAddFolder: () => void;
   onInsertText: (text: string) => void;
+  /** Partner injects its governed account picker instead of Coder's MCP discovery. */
+  partnerConnectorContent?: ReactNode;
+  onOpenPartnerExperts?: () => void;
   /** Opens directly into a low-frequency picker while preserving the shared discovery path. */
   initialSub?: 'root' | 'skills';
 }
@@ -43,6 +47,8 @@ export function AttachMenu({
   onAddFiles,
   onAddFolder,
   onInsertText,
+  partnerConnectorContent,
+  onOpenPartnerExperts,
   initialSub = 'root',
 }: AttachMenuProps): JSX.Element | null {
   const { t } = useI18n();
@@ -181,6 +187,12 @@ export function AttachMenu({
   }
 
   if (sub === 'connectors') {
+    if (partnerConnectorContent)
+      return (
+        <SubMenuFrame title={t('attach.connectors')} onBack={() => setSub('root')}>
+          {partnerConnectorContent}
+        </SubMenuFrame>
+      );
     return (
       <SubMenuFrame title={t('attach.connectorsMcp')} onBack={() => setSub('root')}>
         {discoverErr && <div className="px-3 py-1 text-[11px] text-warn">{discoverErr}</div>}
@@ -255,7 +267,7 @@ export function AttachMenu({
       <AttachRow
         Icon={Plug}
         label={t('attach.connectors')}
-        onClick={() => void loadConnectors()}
+        onClick={() => (partnerConnectorContent ? setSub('connectors') : void loadConnectors())}
         chevron
       />
       <AttachRow
@@ -264,6 +276,17 @@ export function AttachMenu({
         onClick={() => void loadSkills()}
         chevron
       />
+      {onOpenPartnerExperts && (
+        <AttachRow
+          Icon={UserRound}
+          label={t('attach.experts')}
+          onClick={() => {
+            onOpenPartnerExperts();
+            onClose();
+          }}
+          chevron
+        />
+      )}
     </div>
   );
 }

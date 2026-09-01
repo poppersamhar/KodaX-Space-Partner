@@ -2,7 +2,7 @@
 // Composer footer: chips, textarea, attachments, mode controls, and send/stop.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUp, FileText, Folder, Plus, Puzzle, X } from 'lucide-react';
+import { ArrowUp, FileText, Folder, Plus, X } from 'lucide-react';
 import {
   MAX_SOURCE_IMAGE_BYTES,
   type ChannelInput,
@@ -89,11 +89,14 @@ import {
   clearPartnerPendingSources,
   readPartnerPendingSources,
 } from '../features/partner/partnerWorkbench.js';
-import { usePartnerExpert } from '../features/extensions/PartnerExpertProvider.js';
+import {
+  requestPartnerExpertManagement,
+  usePartnerExpert,
+} from '../features/extensions/PartnerExpertProvider.js';
 import { PartnerExpertChip } from '../features/extensions/PartnerExpertChip.js';
 import type { PartnerExpertDraftCapture } from '../features/extensions/partnerExpertBinding.js';
 import { usePartnerConnectors } from '../features/extensions/PartnerConnectorProvider.js';
-import { PartnerConnectorChips } from '../features/extensions/PartnerConnectorChips.js';
+import { PartnerConnectorMenuContent } from '../features/extensions/PartnerConnectorChips.js';
 import type { PartnerConnectorDraftCapture } from '../features/extensions/partnerConnectorBinding.js';
 import { acceptPartnerCreatedDraft } from '../features/extensions/partnerDraftCreation.js';
 import { startNewConversation } from '../store/newConversation.js';
@@ -555,7 +558,6 @@ export function BottomBar(): JSX.Element {
   const [isAttaching, setIsAttaching] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [partnerSkillOpen, setPartnerSkillOpen] = useState(false);
   // Images already persisted to main-process temp storage and awaiting send.
   const [pendingImages, setPendingImages, pendingImagesRef] = useTrackedState<PendingImage[]>([]);
   const [pendingFileRefs, setPendingFileRefs, pendingFileRefsRef] = useTrackedState<
@@ -2791,59 +2793,42 @@ export function BottomBar(): JSX.Element {
                     startAttachmentOperation(() => attachLocalFiles(files, 'file-picker'));
                   }}
                 />
-                {currentSurface !== 'partner' && (
-                  <button
-                    type="button"
-                    onClick={() => setAttachOpen((v) => !v)}
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary"
-                    title={t('bottom.attachCommands')}
-                    aria-label={t('bottom.openAttachMenu')}
-                  >
-                    <Plus className="h-4 w-4" />
-                  </button>
-                )}
-                {currentSurface !== 'partner' && (
-                  <AttachMenu
-                    open={attachOpen}
-                    onClose={() => setAttachOpen(false)}
-                    onAddFiles={() => {
-                      const input = fileInputRef.current;
-                      if (!input) return;
-                      input.value = '';
-                      input.click();
-                    }}
-                    onAddFolder={() => startAttachmentOperation(attachFolder)}
-                    onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
-                  />
-                )}
+                <button
+                  type="button"
+                  data-testid="composer-attach-menu-trigger"
+                  onClick={() => setAttachOpen((v) => !v)}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-hover-bg hover:text-fg-primary"
+                  title={t('bottom.attachCommands')}
+                  aria-label={t('bottom.openAttachMenu')}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+                <AttachMenu
+                  open={attachOpen}
+                  onClose={() => setAttachOpen(false)}
+                  onAddFiles={() => {
+                    const input = fileInputRef.current;
+                    if (!input) return;
+                    input.value = '';
+                    input.click();
+                  }}
+                  onAddFolder={() => startAttachmentOperation(attachFolder)}
+                  onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
+                  partnerConnectorContent={
+                    currentSurface === 'partner' ? (
+                      <PartnerConnectorMenuContent
+                        onClose={() => setAttachOpen(false)}
+                        showHeading={false}
+                      />
+                    ) : undefined
+                  }
+                  onOpenPartnerExperts={
+                    currentSurface === 'partner' && partnerExpert
+                      ? () => requestPartnerExpertManagement(partnerExpert.snapshot.context)
+                      : undefined
+                  }
+                />
               </div>
-              {currentSurface === 'partner' && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    data-testid="partner-skill-picker"
-                    onClick={() => setPartnerSkillOpen((open) => !open)}
-                    className="h-7 w-7 rounded-md border border-border-default text-fg-muted hover:bg-hover-bg hover:text-fg-primary flex items-center justify-center"
-                    title={t('attach.skills')}
-                    aria-label={t('attach.skills')}
-                    aria-haspopup="menu"
-                    aria-expanded={partnerSkillOpen}
-                  >
-                    <Puzzle className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
-                  </button>
-                  <AttachMenu
-                    open={partnerSkillOpen}
-                    initialSub="skills"
-                    onClose={() => setPartnerSkillOpen(false)}
-                    onAddFiles={() => undefined}
-                    onAddFolder={() => undefined}
-                    onInsertText={(text) =>
-                      setPrompt((draft) => (draft ? `${draft} ${text}` : text))
-                    }
-                  />
-                </div>
-              )}
-              {currentSurface === 'partner' && <PartnerConnectorChips />}
               {currentSurface !== 'partner' && <AgentPicker insertAtCaret={insertAtCaret} />}
               <ModeSelector />
               {currentSurface === 'partner' && (

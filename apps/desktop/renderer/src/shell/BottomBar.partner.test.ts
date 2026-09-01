@@ -4,7 +4,7 @@ import { register } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-test('Partner composer omits preset shortcuts while keeping delivery format and the existing Skill entry', async () => {
+test('Partner composer uses the shared plus menu instead of separate Skill and connector buttons', async () => {
   // Node has no Vite asset loader; image imports keep their public URL in this render test.
   register(
     `data:text/javascript,${encodeURIComponent(`
@@ -42,7 +42,9 @@ test('Partner composer omits preset shortcuts while keeping delivery format and 
     const { I18nProvider } = await import('../i18n/I18nProvider.js');
     const html = renderToStaticMarkup(createElement(I18nProvider, null, createElement(BottomBar)));
     assert.doesNotMatch(html, /data-testid="partner-scene-shortcuts"/);
-    assert.match(html, /data-testid="partner-skill-picker"/);
+    assert.match(html, /data-testid="composer-attach-menu-trigger"/);
+    assert.doesNotMatch(html, /data-testid="partner-skill-picker"/);
+    assert.doesNotMatch(html, /data-testid="partner-connector-chips"/);
     assert.match(html, /value="docx"/);
     assert.match(html, /value="pdf"/);
     assert.match(html, /value="pptx"/);

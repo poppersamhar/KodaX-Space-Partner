@@ -25,6 +25,7 @@ const PartnerExpertContext = createContext<{
   readonly snapshot: PartnerExpertBindingSnapshot;
 } | null>(null);
 export const PARTNER_EXPERT_DETAIL_EVENT = 'kodax-space.partner-expert-detail';
+export const PARTNER_EXPERT_MANAGE_EVENT = 'kodax-space.partner-expert-manage';
 export interface PartnerExpertDetailRequest {
   readonly context: ExtensionViewContext;
   readonly expert: PartnerExpertSnapshotT;
@@ -39,6 +40,10 @@ export function requestPartnerExpertDetail(
       detail: { expert, context },
     }),
   );
+}
+
+export function requestPartnerExpertManagement(context: ExtensionViewContext): void {
+  window.dispatchEvent(new CustomEvent(PARTNER_EXPERT_MANAGE_EVENT, { detail: { context } }));
 }
 
 export function PartnerExpertProvider({ children }: { readonly children: ReactNode }): JSX.Element {

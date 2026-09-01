@@ -92,6 +92,7 @@ import {
 import {
   PartnerExpertProvider,
   PARTNER_EXPERT_DETAIL_EVENT,
+  PARTNER_EXPERT_MANAGE_EVENT,
   type PartnerExpertDetailRequest,
 } from '../features/extensions/PartnerExpertProvider.js';
 import { NEW_CONVERSATION_EVENT, startNewConversation } from '../store/newConversation.js';
@@ -798,13 +799,30 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
       setExtensionNavigationRevision((value) => value + 1);
       setExtensionSelection(createExtensionViewSelection(extension, request.context));
     };
+    const manageExperts = (event: Event): void => {
+      const request = (event as CustomEvent<{ context: ExtensionViewContext }>).detail;
+      if (!request || !matches(request.context)) return;
+      const extension = extensionCatalog.extensions.find(
+        (item) => item.enabled && item.expertCount > 0,
+      );
+      if (!extension) {
+        setSettingsInitialTab('extensions');
+        setSettingsOpen(true);
+        return;
+      }
+      setExtensionTab('experts');
+      setExtensionNavigationRevision((value) => value + 1);
+      setExtensionSelection(createExtensionViewSelection(extension, request.context));
+    };
     const close = (): void => setConnectorDialog(null);
     window.addEventListener(PARTNER_CONNECTOR_DIALOG_EVENT, openDialog);
     window.addEventListener(PARTNER_CONNECTOR_MANAGE_EVENT, manage);
+    window.addEventListener(PARTNER_EXPERT_MANAGE_EVENT, manageExperts);
     window.addEventListener(NEW_CONVERSATION_EVENT, close);
     return () => {
       window.removeEventListener(PARTNER_CONNECTOR_DIALOG_EVENT, openDialog);
       window.removeEventListener(PARTNER_CONNECTOR_MANAGE_EVENT, manage);
+      window.removeEventListener(PARTNER_EXPERT_MANAGE_EVENT, manageExperts);
       window.removeEventListener(NEW_CONVERSATION_EVENT, close);
     };
   }, [
