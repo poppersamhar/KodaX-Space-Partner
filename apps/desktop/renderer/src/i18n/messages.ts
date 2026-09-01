@@ -64,6 +64,8 @@ export const messages = {
       'Could not confirm cancellation of the previous connection. Check the connector before trying again.',
     'connectors.emptyCatalog':
       'No connectors available. Install or enable a plugin library in Settings.',
+    'connectors.noConnectedAccounts':
+      'No connected accounts. Open Manage connectors to connect one.',
     'connectors.sessionSwitch': 'Enable {name} for this conversation',
     'connectors.enabledCount': '{count} enabled',
     'connectors.emptyScope': 'Choose documents in Document scope before reading.',
@@ -2894,6 +2896,7 @@ export const messages = {
       '授权已先于取消完成，账号已经连接；如不再需要，请在这里断开。',
     'connectors.cancelUnconfirmed': '尚未确认上一项连接已取消，请先检查连接器状态，再重试。',
     'connectors.emptyCatalog': '暂无可用连接器，请在设置中安装或启用插件库。',
+    'connectors.noConnectedAccounts': '暂无已连接账号，请打开“管理连接器”进行连接。',
     'connectors.sessionSwitch': '在本会话启用 {name}',
     'connectors.enabledCount': '已启用 {count} 个',
     'connectors.emptyScope': '读取前请通过「文档范围」选择资料。',

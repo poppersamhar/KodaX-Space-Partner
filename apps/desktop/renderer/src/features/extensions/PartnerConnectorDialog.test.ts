@@ -152,7 +152,7 @@ test(
 );
 
 test(
-  'conversation connector rows show the Feishu brand before and after connection without replacing the aggregate icon',
+  'conversation connector rows stay hidden until connected and then show the Feishu brand',
   { skip: !browserPath },
   async (t) => {
     const { page, errors } = await openFixture(t);
@@ -164,7 +164,15 @@ test(
     assert.equal(await chips.locator('svg').count(), 1);
     await chips.getByRole('button', { name: 'Conversation connectors', exact: true }).click();
     const popover = page.getByRole('dialog', { name: 'Conversation connectors', exact: true });
-    await popover.getByRole('button', { name: 'Connect', exact: true }).waitFor();
+    await popover.getByRole('button', { name: 'Manage connectors', exact: true }).waitFor();
+    await popover
+      .getByText('No connected accounts. Open Manage connectors to connect one.', { exact: true })
+      .waitFor();
+    assert.equal(await popover.getByRole('button', { name: 'Connect', exact: true }).count(), 0);
+    assert.equal(await popover.getByText('Feishu documents', { exact: true }).count(), 0);
+    assert.equal(await popover.locator('img[data-testid="partner-connector-icon"]').count(), 0);
+    await page.evaluate(() => Reflect.get(window, 'finishConnection')());
+    await popover.getByText('Test account', { exact: true }).waitFor();
     const logo = popover.locator('img[data-testid="partner-connector-icon"]');
     await logo.waitFor();
     assert.deepEqual(
@@ -180,8 +188,6 @@ test(
       }),
       [700, 700, '', 'true'],
     );
-    await page.evaluate(() => Reflect.get(window, 'finishConnection')());
-    await popover.getByText('Test account', { exact: true }).waitFor();
     assert.equal(await popover.getByText('Feishu documents', { exact: true }).count(), 1);
     assert.equal(await logo.count(), 1);
     assert.equal(await logo.evaluate((element) => (element as HTMLImageElement).naturalWidth), 700);
@@ -535,8 +541,12 @@ test(
     const trigger = page.getByRole('button', { name: 'Conversation connectors', exact: true });
     await trigger.click();
     const popover = page.getByTestId('partner-connector-popover');
-    await popover.getByRole('button', { name: 'Connect', exact: true }).waitFor();
     await popover.getByRole('button', { name: 'Manage connectors', exact: true }).waitFor();
+    await popover
+      .getByText('No connected accounts. Open Manage connectors to connect one.', { exact: true })
+      .waitFor();
+    assert.equal(await popover.getByRole('button', { name: 'Connect', exact: true }).count(), 0);
+    assert.equal(await popover.getByText('Feishu documents', { exact: true }).count(), 0);
     await page.evaluate(() => Reflect.get(window, 'finishConnection')());
     const toggle = popover.getByRole('switch', {
       name: 'Enable Test account for this conversation',
@@ -551,6 +561,8 @@ test(
     await page.waitForFunction(
       () => document.querySelector('[role="switch"]')?.getAttribute('aria-checked') === 'false',
     );
+    assert.equal(await popover.getByText('Test account', { exact: true }).count(), 1);
+    assert.equal(await popover.getByRole('switch').count(), 1);
     const calls = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
       channel: string;
       input: unknown;

@@ -7,7 +7,6 @@ import type {
 import {
   usePartnerConnectors,
   requestPartnerConnectorDetail,
-  requestPartnerConnectorDialog,
   requestPartnerConnectorManagement,
 } from './PartnerConnectorProvider.js';
 import { useI18n } from '../../i18n/I18nProvider.js';
@@ -236,41 +235,15 @@ export function PartnerConnectorChips(): JSX.Element | null {
                 </div>
               );
             })}
-            {connectorCatalog.entries
-              .filter((entry) => !entry.connections.some((connection) => connection.connected))
-              .map((entry) => (
-                <div
-                  key={`${entry.extensionId}:${entry.connector.id}`}
-                  className="flex items-center gap-3 py-3"
-                >
-                  <PartnerConnectorIcon
-                    adapter={entry.connector.adapter}
-                    className="h-5 w-5 shrink-0 text-accent-ink"
-                  />
-                  <span className="flex-1 text-sm">{entry.connector.name}</span>
-                  <button
-                    type="button"
-                    className="rounded-md border border-border-default px-2 py-1 text-xs hover:bg-hover-bg"
-                    onClick={() => {
-                      setAnchor(null);
-                      requestPartnerConnectorDialog({
-                        context: snapshot.context,
-                        extensionId: entry.extensionId,
-                        connector: entry.connector,
-                      });
-                    }}
-                  >
-                    {t('connectors.connect')}
-                  </button>
-                </div>
-              ))}
             {connectorCatalog.loading && (
               <p role="status" className="py-2 text-xs text-fg-muted">
                 {t('common.loading')}
               </p>
             )}
-            {!connectorCatalog.loading && !connectorCatalog.entries.length && !rows.length && (
-              <p className="py-2 text-xs leading-5 text-fg-muted">{t('connectors.emptyCatalog')}</p>
+            {!connectorCatalog.loading && !connectorCatalog.error && !rows.length && (
+              <p className="py-2 text-xs leading-5 text-fg-muted">
+                {t('connectors.noConnectedAccounts')}
+              </p>
             )}
             {(error || snapshot.error || connectorCatalog.error) && (
               <p role="alert" className="py-2 text-xs text-danger">
