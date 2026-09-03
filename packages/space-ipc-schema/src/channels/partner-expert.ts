@@ -7,8 +7,62 @@ const identity = z
   .max(96)
   .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/);
 
+export const spaceExpertTypeSchema = z.enum(['role', 'task', 'platform']);
+export const spaceExpertListingTypeSchema = z.enum(['expert', 'team']);
+export const spaceExpertCategorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .refine((category) => !['全部', '专家团', 'all', 'team'].includes(category), {
+    message: 'Category conflicts with a reserved expert filter',
+  });
+
+const uniqueIds = (items: ReadonlyArray<{ id: string }>): boolean =>
+  new Set(items.map((item) => item.id)).size === items.length;
+
+export const spaceExpertCapabilityActionSchema = z
+  .object({
+    id: identity,
+    label: z.string().trim().min(1).max(40),
+    description: z.string().trim().min(1).max(160).optional(),
+    requiredConnectorIds: z
+      .array(identity)
+      .min(1)
+      .max(4)
+      .refine((ids) => new Set(ids).size === ids.length, 'Connector references must be unique'),
+    promptTemplate: z.string().trim().min(1).max(1_024),
+  })
+  .strict();
+export type SpaceExpertCapabilityActionT = z.infer<typeof spaceExpertCapabilityActionSchema>;
+
+export const spaceExpertCapabilityGroupSchema = z
+  .object({
+    id: identity,
+    label: z.string().trim().min(1).max(40),
+    description: z.string().trim().min(1).max(160).optional(),
+    actions: z
+      .array(spaceExpertCapabilityActionSchema)
+      .min(1)
+      .max(12)
+      .refine(uniqueIds, 'Capability action IDs must be unique within a group'),
+  })
+  .strict();
+export type SpaceExpertCapabilityGroupT = z.infer<typeof spaceExpertCapabilityGroupSchema>;
+
+export const spaceExpertCapabilityGuideSchema = z
+  .object({
+    groups: z
+      .array(spaceExpertCapabilityGroupSchema)
+      .min(1)
+      .max(12)
+      .refine(uniqueIds, 'Capability group IDs must be unique'),
+  })
+  .strict();
+export type SpaceExpertCapabilityGuideT = z.infer<typeof spaceExpertCapabilityGuideSchema>;
+
 /** Skill is an optional explicit existing name, never an installation or discovery rule. */
-export const spaceExpertDefinitionSchema = z
+const spaceExpertDefinitionFieldsSchema = z
   .object({
     id: identity,
     revision: z.number().int().min(1).max(1_000_000),
@@ -17,15 +71,31 @@ export const spaceExpertDefinitionSchema = z
     prompt: z.string().trim().min(1).max(8_000),
     starterTasks: z.array(z.string().min(1).max(512)).max(4).default([]),
     skillRef: skillMetaSchema.shape.name.optional(),
+    /** Display-only catalog taxonomy; these fields do not grant tools or enable orchestration. */
+    expertType: spaceExpertTypeSchema.optional(),
+    category: spaceExpertCategorySchema.optional(),
+    listingType: spaceExpertListingTypeSchema.optional(),
+    /** Display-only task drafting metadata; connector authorization remains host-owned. */
+    capabilityGuide: spaceExpertCapabilityGuideSchema.optional(),
   })
   .strict();
+export const spaceExpertDefinitionSchema = spaceExpertDefinitionFieldsSchema.superRefine(
+  (definition, context) => {
+    if (definition.capabilityGuide !== undefined && definition.expertType !== 'platform') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Capability guides are only supported by platform experts',
+        path: ['capabilityGuide'],
+      });
+    }
+  },
+);
 export type SpaceExpertDefinitionT = z.infer<typeof spaceExpertDefinitionSchema>;
 
 /** The host assigns stable identity and revision; an editor submits content only. */
-export const spaceExpertDraftSchema = spaceExpertDefinitionSchema.omit({
-  id: true,
-  revision: true,
-});
+export const spaceExpertDraftSchema = spaceExpertDefinitionFieldsSchema
+  .omit({ id: true, revision: true, capabilityGuide: true })
+  .extend({ category: spaceExpertCategorySchema.nullable().optional() });
 export type SpaceExpertDraftT = z.infer<typeof spaceExpertDraftSchema>;
 
 export const spaceExpertSaveInputSchema = z

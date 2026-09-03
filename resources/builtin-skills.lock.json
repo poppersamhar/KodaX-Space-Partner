@@ -1,7 +1,20 @@
 {
   "schemaVersion": 1,
-  "sourcesSha256": "fe7db53477e811ca1e2a221ef7e771b398335e5a505a61c314d7cf1acd10a241",
+  "sourcesSha256": "9131a4ebc6978973056559ea7434b8619e4f86cbdde7c6344975964f46636cec",
   "skills": [
+    {
+      "name": "feishu-office-suite",
+      "sourcePath": "first-party-skills/feishu-office-suite",
+      "revision": "first-party:cbcd8adfd3444903b2c348e0cb63c01e56b28da4ae16d10810fd3eb48e99ad88",
+      "patches": [],
+      "files": [
+        {
+          "path": "SKILL.md",
+          "bytes": 3576,
+          "sha256": "11170c9b63fd81b565d7cabf51bf5785ccd3ae23e86c74a75a416d55abccc469"
+        }
+      ]
+    },
     {
       "name": "frontend-slides",
       "repository": "https://github.com/zarazhangrui/frontend-slides.git",

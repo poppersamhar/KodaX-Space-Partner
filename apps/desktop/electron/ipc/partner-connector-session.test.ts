@@ -168,6 +168,7 @@ test('removing an unavailable connection retains the other unavailable snapshot 
       documents: [{ url: 'https://example.feishu.cn/docx/Other', access: 'read' as const }],
     },
     { ...remaining, createFolderUrl: 'https://example.feishu.cn/drive/folder/New' },
+    { ...remaining, createBaseFolderUrl: 'https://example.feishu.cn/drive/folder/NewBase' },
   ]) {
     await assert.rejects(
       () =>
@@ -178,7 +179,7 @@ test('removing an unavailable connection retains the other unavailable snapshot 
       /Extension disabled/,
     );
   }
-  assert.equal(resolutions, 7);
+  assert.equal(resolutions, 8);
   assert.deepEqual(kodaxHost.get(session.sessionId)?.partnerConnectors, [binding, other]);
 });
 

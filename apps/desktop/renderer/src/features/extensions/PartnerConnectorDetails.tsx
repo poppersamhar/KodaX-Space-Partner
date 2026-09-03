@@ -13,7 +13,10 @@ import { requestPartnerConnectorDialog, usePartnerConnectors } from './PartnerCo
 import { expertContextMatches } from './partnerExpertBinding.js';
 import { PartnerRemoteComposer } from './PartnerRemoteComposer.js';
 import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
-import { connectorPresentation } from './partnerConnectorPresentation.js';
+import {
+  connectorPresentation,
+  isConfigurationRequiredConnector,
+} from './partnerConnectorPresentation.js';
 
 export const connectorButtonClass =
   'rounded-md border border-border-default px-2.5 py-1.5 text-xs hover:bg-hover-bg disabled:opacity-40';
@@ -65,6 +68,7 @@ function ConnectorDetailsContent({
 }): JSX.Element {
   const { t } = useI18n();
   const readOnly = connector.adapter !== 'feishu-cli';
+  const configurationRequired = isConfigurationRequiredConnector(connector.adapter);
   const presentation = connectorPresentation[connector.adapter];
   const context = usePartnerConnectors();
   const { catalog, snapshot: extensions } = useSpaceExtensions();
@@ -72,6 +76,7 @@ function ConnectorDetailsContent({
   const [connectionId, setConnectionId] = useState(initialConnectionId ?? '');
   const [documents, setDocuments] = useState<{ url: string; access: 'read' | 'append' }[]>([]);
   const [folder, setFolder] = useState('');
+  const [baseFolder, setBaseFolder] = useState('');
   const [writesAllowed, setWritesAllowed] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,15 +117,17 @@ function ConnectorDetailsContent({
       setConnections(next.connections);
       setWritesAllowed(policy?.policy.connectors.writesAllowed ?? null);
       setConnectionId((current) =>
-        next.connections.some((item) => item.id === current)
-          ? current
-          : (next.connections.find((item) => item.connected)?.id ?? ''),
+        configurationRequired
+          ? ''
+          : next.connections.some((item) => item.id === current)
+            ? current
+            : (next.connections.find((item) => item.connected)?.id ?? ''),
       );
     } catch (reason) {
       if (isActive() && revision === loadRevision.current)
         setError(reason instanceof Error ? reason.message : String(reason));
     }
-  }, [extensionId, connector.id, isActive, readOnly]);
+  }, [configurationRequired, extensionId, connector.id, isActive, readOnly]);
   useEffect(() => {
     mounted.current = true;
     void load();
@@ -135,15 +142,18 @@ function ConnectorDetailsContent({
   const savedScope = JSON.stringify({
     documents: savedBinding?.documents ?? [],
     folder: savedBinding?.createFolderUrl ?? '',
+    baseFolder: savedBinding?.createBaseFolderUrl ?? '',
   });
   useEffect(() => {
     // Availability and record refreshes must not replace unsaved scope edits.
     const saved = JSON.parse(savedScope) as {
       documents: { url: string; access: 'read' | 'append' }[];
       folder: string;
+      baseFolder: string;
     };
     setDocuments(saved.documents);
     setFolder(saved.folder);
+    setBaseFolder(saved.baseFolder);
   }, [connectionId, savedScope]);
   const perform = async (action: () => Promise<void>): Promise<void> => {
     if (busy || !isActive()) return;
@@ -162,6 +172,12 @@ function ConnectorDetailsContent({
   const selected =
     context?.snapshot.state.connectors.some((item) => item.binding.connectionId === connectionId) ??
     false;
+  const staleBindings = configurationRequired
+    ? (context?.snapshot.state.connectors.filter(
+        (item) =>
+          item.binding.extensionId === extensionId && item.binding.connectorId === connector.id,
+      ) ?? [])
+    : [];
   const save = async (): Promise<void> => {
     if (!connection || !context) return;
     const parsed = partnerConnectorSelectionSchema.safeParse({
@@ -172,6 +188,7 @@ function ConnectorDetailsContent({
       ...(readOnly ? { adapter: connector.adapter } : {}),
       documents: documents.map((item) => ({ ...item, url: item.url.trim() })),
       ...(folder.trim() ? { createFolderUrl: folder.trim() } : {}),
+      ...(baseFolder.trim() ? { createBaseFolderUrl: baseFolder.trim() } : {}),
     });
     if (!parsed.success)
       throw new Error(t(readOnly ? 'connectors.invalidResourceScope' : 'connectors.invalidScope'));
@@ -189,6 +206,28 @@ function ConnectorDetailsContent({
       connectors: { writesAllowed: !writesAllowed },
     });
     if (isActive()) setWritesAllowed(result.policy.connectors.writesAllowed);
+  };
+  const removeStoredAccount = async (account: PartnerConnectorConnectionT): Promise<void> => {
+    if (
+      !(await requestConfirm({
+        message: t('connectors.providerDisconnect'),
+        danger: true,
+      })) ||
+      !isActive()
+    )
+      return;
+    try {
+      await invokeExtensionHost('partner.connectors.forget', {
+        extensionId,
+        connectorId: connector.id,
+        connectionId: account.id,
+        connectionRevision: account.revision,
+      });
+    } finally {
+      if (isActive()) await load();
+    }
+    if (!isActive()) return;
+    await context?.refreshCatalog();
   };
   return (
     <div className="h-full space-y-5 overflow-y-auto p-4" data-testid="partner-connector-details">
@@ -236,33 +275,63 @@ function ConnectorDetailsContent({
       >
         {t('connectors.manage')}
       </button>
-      <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
-        <label className="block">
-          {t('connectors.account')}
-          <select
-            className={`${connectorInputClass} mt-2`}
-            value={connectionId}
-            onChange={(event) => setConnectionId(event.target.value)}
-            disabled={busy}
-          >
-            <option value="">{t('connectors.selectAccount')}</option>
-            {connections.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.accountLabel}
-                {!item.connected ? ` · ${t('connectors.unavailable')}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-        {connection && (
-          <>
+      {configurationRequired ? (
+        <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
+          <p className="text-fg-muted">{t('connectors.productAppRequiredHint')}</p>
+          {staleBindings.map((item) => (
+            <button
+              key={item.binding.connectionId}
+              type="button"
+              className={connectorButtonClass}
+              disabled={busy}
+              onClick={() =>
+                void perform(async () => {
+                  await context?.binding.remove(item.binding.connectionId);
+                })
+              }
+            >
+              {t('connectors.removeUnavailable', { name: item.binding.name })}
+            </button>
+          ))}
+          {connections.map((account) => (
+            <button
+              key={account.id}
+              type="button"
+              className={connectorButtonClass}
+              disabled={busy}
+              onClick={() => void perform(() => removeStoredAccount(account))}
+            >
+              {t('connectors.removeLocalAccount', { name: account.accountLabel })}
+            </button>
+          ))}
+        </section>
+      ) : (
+        <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
+          <label className="block">
+            {t('connectors.account')}
+            <select
+              className={`${connectorInputClass} mt-2`}
+              value={connectionId}
+              onChange={(event) => setConnectionId(event.target.value)}
+              disabled={busy}
+            >
+              <option value="">{t('connectors.selectAccount')}</option>
+              {connections.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.accountLabel}
+                  {!item.connected ? ` · ${t('connectors.unavailable')}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {connection && (
             <p className="text-fg-muted">
               {t(selected ? 'connectors.selected' : 'connectors.notSelected')}
             </p>
-          </>
-        )}
-      </section>
-      {connection && (
+          )}
+        </section>
+      )}
+      {!configurationRequired && connection && (
         <section className="space-y-3 rounded-lg border border-border-default p-3 text-xs">
           <h3 className="font-medium">
             {t(readOnly ? 'connectors.resourceScope' : 'connectors.scope')}
@@ -330,16 +399,31 @@ function ConnectorDetailsContent({
             {t(readOnly ? 'connectors.addResource' : 'connectors.addDocument')}
           </button>
           {!readOnly && (
-            <label className="block">
-              {t('connectors.folder')}
-              <input
-                className={`${connectorInputClass} mt-2`}
-                value={folder}
-                disabled={busy || !connection.permissions.create}
-                placeholder="https://example.feishu.cn/drive/folder/…"
-                onChange={(event) => setFolder(event.target.value)}
-              />
-            </label>
+            <>
+              <label className="block">
+                {t('connectors.folder')}
+                <input
+                  className={`${connectorInputClass} mt-2`}
+                  value={folder}
+                  disabled={busy || !connection.permissions.create}
+                  placeholder="https://example.feishu.cn/drive/folder/…"
+                  onChange={(event) => setFolder(event.target.value)}
+                />
+              </label>
+              <label className="block">
+                {t('connectors.baseFolder')}
+                <input
+                  className={`${connectorInputClass} mt-2`}
+                  value={baseFolder}
+                  disabled={busy || !connection.permissions.createBase}
+                  placeholder="https://example.feishu.cn/drive/folder/…"
+                  onChange={(event) => setBaseFolder(event.target.value)}
+                />
+              </label>
+              {!connection.permissions.createBase ? (
+                <p className="text-fg-muted">{t('connectors.basePermissionRequired')}</p>
+              ) : null}
+            </>
           )}
           <button
             type="button"

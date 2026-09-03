@@ -89,6 +89,7 @@ import {
   PARTNER_CONNECTOR_MANAGE_EVENT,
   type PartnerConnectorDetailRequest,
 } from '../features/extensions/PartnerConnectorProvider.js';
+import { PartnerRemoteRecordsProvider } from '../features/extensions/usePartnerRemoteRecords.js';
 import {
   PartnerExpertProvider,
   PARTNER_EXPERT_DETAIL_EVENT,
@@ -131,6 +132,7 @@ import {
 import type { RightSidebarWidthMode } from './RightSidebarFrame.js';
 import { resolveRightSidebarToggleAction } from './sidebarToggle.js';
 import { SidebarToggleButton } from './SidebarToggleButton.js';
+import { PARTNER_MIN_CENTER_PX, resolvePartnerShellLayout } from './partnerShellLayout.js';
 import {
   activateSessionHistoryPaging,
   deactivateSessionHistoryPaging,
@@ -155,7 +157,7 @@ const SHELL_PANEL_HORIZONTAL_PADDING_PX = 20;
 const SHELL_PANEL_GAP_PX = 10;
 const RESIZE_HANDLE_WIDTH_PX = 4;
 const CODER_MIN_CENTER_PX = 520;
-const PARTNER_MIN_CENTER_PX = 420;
+const PARTNER_RIGHT_SIDEBAR_MAX_RATIO = 0.75;
 const PARTNER_RIGHT_SIDEBAR_OPEN_KEY = 'kodax-space.partnerDetailOpen.v1';
 type LeftSidebarMode = 'navigation' | 'files';
 
@@ -205,6 +207,36 @@ function rightSidebarOpenWidth(
   const pairedWidth =
     viewportWidth - SHELL_PANEL_HORIZONTAL_PADDING_PX - leftSideChrome - rightSideChrome;
   return clampSidebarWidthPx(Math.round(pairedWidth / 2));
+}
+
+function surfaceRightSidebarCustomMaxWidth(
+  surface: 'code' | 'partner',
+  leftSidebarVisible: boolean,
+  leftWidth: number,
+  viewportWidth = getViewportWidth(),
+): number {
+  const balancedWidth = rightSidebarOpenWidth(leftSidebarVisible, leftWidth, viewportWidth);
+  if (surface === 'code') return balancedWidth;
+  return Math.max(
+    RIGHT_SIDEBAR_MIN_WIDTH,
+    Math.round(balancedWidth * 2 * PARTNER_RIGHT_SIDEBAR_MAX_RATIO),
+  );
+}
+
+function clampSurfaceRightSidebarWidth(
+  surface: 'code' | 'partner',
+  px: number,
+  leftSidebarVisible: boolean,
+  leftWidth: number,
+  viewportWidth = getViewportWidth(),
+): number {
+  const finite = Number.isFinite(px) ? px : RIGHT_SIDEBAR_DEFAULT_MIN_WIDTH;
+  return Math.round(
+    Math.min(
+      surfaceRightSidebarCustomMaxWidth(surface, leftSidebarVisible, leftWidth, viewportWidth),
+      Math.max(RIGHT_SIDEBAR_MIN_WIDTH, finite),
+    ),
+  );
 }
 
 function rightSidebarDefaultWidth(
@@ -277,7 +309,9 @@ export function Shell(props: ShellProps): JSX.Element {
     <SpaceExtensionsProvider>
       <PartnerExpertProvider>
         <PartnerConnectorProvider>
-          <ShellContent {...props} />
+          <PartnerRemoteRecordsProvider>
+            <ShellContent {...props} />
+          </PartnerRemoteRecordsProvider>
         </PartnerConnectorProvider>
       </PartnerExpertProvider>
     </SpaceExtensionsProvider>
@@ -619,7 +653,13 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
   );
   const preliminaryRightWidth =
     rightWidthDraft !== null
-      ? Math.min(clampSidebarWidthPx(rightWidthDraft), preliminaryRightSidebarHalfWidth)
+      ? clampSurfaceRightSidebarWidth(
+          currentSurface,
+          rightWidthDraft,
+          preferredLeftSidebarVisible,
+          leftWidth,
+          viewportWidth,
+        )
       : rightSidebarWidthMode === 'max'
         ? rightSidebarMaxWidth(preferredLeftSidebarVisible, leftWidth, viewportWidth)
         : rightSidebarWidthMode === 'half'
@@ -631,7 +671,13 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
                 leftWidth,
                 viewportWidth,
               )
-            : Math.min(clampSidebarWidthPx(storedRightWidth), preliminaryRightSidebarHalfWidth);
+            : clampSurfaceRightSidebarWidth(
+                currentSurface,
+                storedRightWidth,
+                preferredLeftSidebarVisible,
+                leftWidth,
+                viewportWidth,
+              );
   const rightSidebarDefaultWidthFits =
     coderCenterWidthPx(
       preferredLeftSidebarVisible,
@@ -645,7 +691,19 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
       ),
       viewportWidth,
     ) >= surfaceMinCenterWidth;
+  const partnerPreliminaryLayout =
+    currentSurface === 'partner'
+      ? resolvePartnerShellLayout({
+          viewportWidth,
+          preferredLeftSidebarVisible,
+          leftWidth,
+          rightSidebarVisible: preferredRightSidebarVisible,
+          requestedRightWidth: preliminaryRightWidth,
+          widthMode: rightSidebarWidthMode === 'max' ? 'custom' : rightSidebarWidthMode,
+        })
+      : null;
   const responsiveHideRightSidebar =
+    currentSurface !== 'partner' &&
     preferredRightSidebarVisible &&
     rightSidebarWidthMode !== 'half' &&
     rightSidebarWidthMode !== 'max' &&
@@ -658,15 +716,17 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
     ) < surfaceMinCenterWidth;
   const rightSidebarVisibleBeforeLeft = preferredRightSidebarVisible && !responsiveHideRightSidebar;
   const responsiveHideLeftSidebar =
-    preferredLeftSidebarVisible &&
-    rightSidebarWidthMode !== 'max' &&
-    coderCenterWidthPx(
-      true,
-      leftWidth,
-      rightSidebarVisibleBeforeLeft,
-      preliminaryRightWidth,
-      viewportWidth,
-    ) < surfaceMinCenterWidth;
+    currentSurface === 'partner'
+      ? preferredLeftSidebarVisible && !partnerPreliminaryLayout?.leftSidebarVisible
+      : preferredLeftSidebarVisible &&
+        rightSidebarWidthMode !== 'max' &&
+        coderCenterWidthPx(
+          true,
+          leftWidth,
+          rightSidebarVisibleBeforeLeft,
+          preliminaryRightWidth,
+          viewportWidth,
+        ) < surfaceMinCenterWidth;
   const leftSidebarVisible = preferredLeftSidebarVisible && !responsiveHideLeftSidebar;
 
   const openRightSidebarAtBalancedWidth = useCallback((): void => {
@@ -1035,13 +1095,13 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
     const onFocusArtifact = (event: Event): void => {
       if (currentSurface === 'partner') {
         const detail = (event as CustomEvent<FocusArtifactEventDetail>).detail;
+        const artifactId = detail?.id ?? detail?.snapshot?.id;
+        if (!artifactId) return;
         openPartnerDetail({
-          kind: 'results',
-          selection: { destination: 'results', view: 'artifacts' },
-          focusArtifact: {
-            id: detail?.id,
-            snapshot: detail?.snapshot,
-          },
+          kind: 'artifact',
+          artifactId,
+          title: detail?.snapshot?.title,
+          snapshot: detail?.snapshot,
         });
         return;
       }
@@ -1233,25 +1293,42 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
     setRequestedPopout(null); // 消费完清回 null,允许下次 slash command 再次触发
   }, [requestedPopout, setRequestedPopout, setActivePopout, currentSurface]);
   const rightSidebarHalfWidth = rightSidebarOpenWidth(leftSidebarVisible, leftWidth, viewportWidth);
+  const rightSidebarCustomMaxWidth = surfaceRightSidebarCustomMaxWidth(
+    currentSurface,
+    leftSidebarVisible,
+    leftWidth,
+    viewportWidth,
+  );
   const rightSidebarMaxAvailableWidth = rightSidebarMaxWidth(
     leftSidebarVisible,
     leftWidth,
     viewportWidth,
   );
   const clampRightSidebarNonMaxWidth = useCallback(
-    (px: number): number => Math.min(clampSidebarWidthPx(px), rightSidebarHalfWidth),
-    [rightSidebarHalfWidth],
+    (px: number): number =>
+      Math.round(
+        Math.min(
+          rightSidebarCustomMaxWidth,
+          Math.max(
+            RIGHT_SIDEBAR_MIN_WIDTH,
+            Number.isFinite(px) ? px : RIGHT_SIDEBAR_DEFAULT_MIN_WIDTH,
+          ),
+        ),
+      ),
+    [rightSidebarCustomMaxWidth],
   );
   const clampRightSidebarWidth = useCallback(
     (px: number): number => {
       const finite = Number.isFinite(px) ? px : RIGHT_SIDEBAR_DEFAULT_MIN_WIDTH;
       const max =
-        rightSidebarWidthMode === 'max' ? rightSidebarMaxAvailableWidth : rightSidebarHalfWidth;
+        rightSidebarWidthMode === 'max'
+          ? rightSidebarMaxAvailableWidth
+          : rightSidebarCustomMaxWidth;
       return Math.round(Math.min(max, Math.max(RIGHT_SIDEBAR_MIN_WIDTH, finite)));
     },
-    [rightSidebarHalfWidth, rightSidebarMaxAvailableWidth, rightSidebarWidthMode],
+    [rightSidebarCustomMaxWidth, rightSidebarMaxAvailableWidth, rightSidebarWidthMode],
   );
-  const rightWidth =
+  const requestedRightWidth =
     rightWidthDraft !== null
       ? clampRightSidebarWidth(rightWidthDraft)
       : rightSidebarWidthMode === 'max'
@@ -1266,12 +1343,26 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
                 viewportWidth,
               )
             : clampRightSidebarNonMaxWidth(storedRightWidth);
+  const partnerLayout =
+    currentSurface === 'partner' && rightSidebarVisibleBeforeLeft
+      ? resolvePartnerShellLayout({
+          viewportWidth,
+          preferredLeftSidebarVisible: leftSidebarVisible,
+          leftWidth,
+          rightSidebarVisible: true,
+          requestedRightWidth,
+          widthMode: rightSidebarWidthMode === 'max' ? 'custom' : rightSidebarWidthMode,
+        })
+      : null;
+  const rightWidth = partnerLayout?.rightSidebarWidth ?? requestedRightWidth;
   const rightSidebarVisible =
-    rightSidebarVisibleBeforeLeft &&
-    (rightSidebarWidthMode === 'half' ||
-      rightSidebarWidthMode === 'max' ||
-      coderCenterWidthPx(leftSidebarVisible, leftWidth, true, rightWidth, viewportWidth) >=
-        surfaceMinCenterWidth);
+    currentSurface === 'partner'
+      ? rightSidebarVisibleBeforeLeft
+      : rightSidebarVisibleBeforeLeft &&
+        (rightSidebarWidthMode === 'half' ||
+          rightSidebarWidthMode === 'max' ||
+          coderCenterWidthPx(leftSidebarVisible, leftWidth, true, rightWidth, viewportWidth) >=
+            surfaceMinCenterWidth);
   const toggleRightSidebar = useCallback((): void => {
     if (fullscreenRead) setFullscreenRead(false);
     const action = resolveRightSidebarToggleAction(

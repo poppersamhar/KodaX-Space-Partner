@@ -1,22 +1,59 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { AlertCircle, ChevronRight, FileCheck2, FileOutput, FolderOpen, Plus } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type {
+  ArtifactRefT,
+  PartnerDeliveryRefT,
+  PartnerProjectSourceT,
+  PartnerRemoteRecordsT,
+} from '@kodax-space/space-ipc-schema';
+import { AlertCircle, Bot, ChevronRight, FileOutput, FolderOpen, Plus } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
+import { openPartnerDeliveryInViewer, previewFileInViewer } from '../../lib/openPath.js';
+import {
+  mergeTransientArtifactSnapshots,
+  type TransientArtifactSnapshot,
+} from '../artifact/transientArtifact.js';
 import {
   EMPTY_PARTNER_CONTEXT_SUMMARY,
   projectPartnerContextSummary,
-  type PartnerContextDetailTarget,
   type PartnerContextSummary,
 } from './partnerContextSummary.js';
-import { PARTNER_SOURCES_CHANGED_EVENT, readPartnerPendingSources } from './partnerWorkbench.js';
+import {
+  partnerDetailTargetForDelivery,
+  type PartnerDetailOpenTarget,
+} from './partnerDetailWorkspace.js';
+import {
+  PARTNER_SOURCES_CHANGED_EVENT,
+  readPartnerPendingSources,
+  type PartnerWorkbenchPendingSourceRef,
+} from './partnerWorkbench.js';
+import { usePartnerTaskCollaboration } from './usePartnerTaskCollaboration.js';
+import {
+  collectPartnerRemoteResultEntries,
+  partnerDetailTargetForRemoteResult,
+} from '../extensions/partnerRemoteResults.js';
 
 interface PartnerContextRailProps {
-  readonly onOpenDetail: (target: PartnerContextDetailTarget) => void;
+  readonly onOpenDetail: (target: PartnerDetailOpenTarget) => void;
   readonly onAddMaterial: () => void;
 }
 
-interface ContextLoadResult {
+type TaskCardItemAction =
+  | { readonly kind: 'detail'; readonly target: PartnerDetailOpenTarget }
+  | { readonly kind: 'preview-file'; readonly path: string }
+  | { readonly kind: 'delivery'; readonly delivery: PartnerDeliveryRefT };
+
+interface TaskCardItem {
+  readonly id: string;
+  readonly label: string;
+  readonly action: TaskCardItemAction;
+}
+
+export interface ContextLoadResult {
+  readonly scopeKey: string;
   readonly summary: PartnerContextSummary;
+  readonly materials: readonly TaskCardItem[];
+  readonly artifacts: readonly TaskCardItem[];
   readonly failed: boolean;
 }
 
@@ -24,11 +61,19 @@ interface ContextLoadInput {
   readonly bridge: KodaXSpaceBridge;
   readonly projectRoot: string;
   readonly sessionId: string | null;
-  readonly transientArtifactLabels: readonly string[];
-  readonly pendingSourcePaths: readonly string[];
+  readonly transientArtifacts: readonly TransientArtifactSnapshot[];
+  readonly pendingSources: readonly PartnerWorkbenchPendingSourceRef[];
 }
 
-async function loadPartnerContext(input: ContextLoadInput): Promise<ContextLoadResult> {
+function detailItem(id: string, label: string, target: PartnerDetailOpenTarget): TaskCardItem {
+  return { id, label, action: { kind: 'detail', target } };
+}
+
+function partnerContextScopeKey(projectRoot: string | null, sessionId: string | null): string {
+  return JSON.stringify([projectRoot, sessionId]);
+}
+
+export async function loadPartnerContext(input: ContextLoadInput): Promise<ContextLoadResult> {
   const sourceRequest = input.bridge.invoke(
     'partner.sources.catalog',
     input.sessionId
@@ -44,125 +89,274 @@ async function loadPartnerContext(input: ContextLoadInput): Promise<ContextLoadR
         projectRoot: input.projectRoot,
       })
     : Promise.resolve(null);
-  const proposalRequest = input.sessionId
-    ? input.bridge.invoke('partner.fileProposals.list', {
-        sessionId: input.sessionId,
-        projectRoot: input.projectRoot,
-        status: 'pending',
-      })
-    : Promise.resolve(null);
   const remoteRequest = input.sessionId
     ? input.bridge.invoke('partner.connectors.records', {
         sessionId: input.sessionId,
         projectRoot: input.projectRoot,
       })
     : Promise.resolve(null);
-  const [sources, artifacts, deliveries, proposals, remote] = await Promise.allSettled([
+  const [sources, artifacts, deliveries, remote] = await Promise.allSettled([
     sourceRequest,
     artifactRequest,
     deliveryRequest,
-    proposalRequest,
     remoteRequest,
   ]);
-  const sourceLabels =
+  const sourceRecords =
     sources.status === 'fulfilled' && sources.value.ok
-      ? sources.value.data.sources.filter((source) => source.selected).map((source) => source.label)
+      ? sources.value.data.sources.filter((source) => source.selected)
       : [];
-  const artifactLabels =
-    artifacts.status === 'fulfilled' && artifacts.value?.ok
-      ? artifacts.value.data.artifacts.map((artifact) => artifact.title)
-      : [];
-  const deliveryPaths =
+  const artifactRecords =
+    artifacts.status === 'fulfilled' && artifacts.value?.ok ? artifacts.value.data.artifacts : [];
+  const deliveryRecords =
     deliveries.status === 'fulfilled' && deliveries.value?.ok
-      ? deliveries.value.data.deliveries.map((delivery) => delivery.relativePath)
+      ? deliveries.value.data.deliveries
       : [];
-  const pendingReviewPaths =
-    proposals.status === 'fulfilled' && proposals.value?.ok
-      ? proposals.value.data.proposals.map((proposal) => proposal.targetPath)
-      : [];
-  const failed =
-    sources.status === 'rejected' ||
-    (sources.status === 'fulfilled' && !sources.value.ok) ||
-    (input.sessionId !== null &&
-      [artifacts, deliveries, proposals, remote].some(
-        (request) => request.status === 'rejected' || !request.value?.ok,
-      ));
+  const remoteRecords =
+    remote.status === 'fulfilled' && remote.value?.ok ? remote.value.data : null;
+  const materials = materialItems(
+    sourceRecords,
+    input.pendingSources,
+    remoteRecords?.sources ?? [],
+  );
+  const localArtifacts = localArtifactItems(artifactRecords, input.transientArtifacts);
+  const artifactsList = artifactItems(localArtifacts, deliveryRecords, remoteRecords);
+  const remoteArtifactLabels = artifactsList
+    .filter(
+      (item) =>
+        item.id.startsWith('remote-') ||
+        item.id.startsWith('base-task:') ||
+        item.id.startsWith('document-task:'),
+    )
+    .map((item) => item.label);
   return {
+    scopeKey: partnerContextScopeKey(input.projectRoot, input.sessionId),
     summary: projectPartnerContextSummary({
-      sourceLabels,
-      pendingSourcePaths: input.pendingSourcePaths,
-      artifactLabels,
-      transientArtifactLabels: input.transientArtifactLabels,
-      deliveryPaths,
-      pendingReviewPaths,
-      ...(remote.status === 'fulfilled' && remote.value?.ok
-        ? {
-            remoteSourceLabels: remote.value.data.sources.map((item) => item.title),
-            remoteReviewLabels: remote.value.data.proposals
-              .filter((item) => !['succeeded', 'rejected'].includes(item.status))
-              .map((item) => item.title),
-            remoteReceiptLabels: remote.value.data.receipts.map((item) => item.title),
-          }
-        : {}),
+      sourceLabels: sourceRecords.map((source) => source.label),
+      pendingSourcePaths: input.pendingSources.map((source) => source.label ?? source.path),
+      artifactLabels: localArtifacts.map((artifact) => artifact.label),
+      transientArtifactLabels: [],
+      deliveryPaths: deliveryRecords.map((delivery) => delivery.title),
+      remoteSourceLabels: remoteRecords?.sources.map((item) => item.title) ?? [],
+      remoteReceiptLabels: remoteArtifactLabels,
+      expertLabels: [],
+      skillLabels: [],
     }),
-    failed,
+    materials,
+    artifacts: artifactsList,
+    failed: contextLoadFailed(input.sessionId, sources, artifacts, deliveries, remote),
   };
 }
 
-function ContextEntry({
+function materialItems(
+  sources: readonly PartnerProjectSourceT[],
+  pending: readonly PartnerWorkbenchPendingSourceRef[],
+  remote: PartnerRemoteRecordsT['sources'],
+): readonly TaskCardItem[] {
+  return [
+    ...sources.map((source) =>
+      source.targetKind === 'file'
+        ? {
+            id: `source:${source.id}`,
+            label: source.label,
+            action: { kind: 'preview-file' as const, path: source.path },
+          }
+        : detailItem(`source:${source.id}`, source.label, { kind: 'materials' }),
+    ),
+    ...pending.map((source, index) =>
+      source.targetKind !== 'dir'
+        ? {
+            id: `pending-source:${index}:${source.path}`,
+            label: source.label ?? source.path,
+            action: { kind: 'preview-file' as const, path: source.path },
+          }
+        : detailItem(`pending-source:${index}:${source.path}`, source.label ?? source.path, {
+            kind: 'materials',
+          }),
+    ),
+    ...remote.map((source) =>
+      detailItem(`remote-source:${source.id}`, source.title, {
+        kind: 'browser',
+        initialUrl: source.url,
+        resourceKey: `remote-source-${source.id}`,
+        title: source.title,
+      }),
+    ),
+  ];
+}
+
+function localArtifactItems(
+  artifacts: readonly ArtifactRefT[],
+  transient: readonly TransientArtifactSnapshot[],
+): readonly TaskCardItem[] {
+  const transientById = new Map<string, TransientArtifactSnapshot>();
+  for (const snapshot of transient) {
+    const existing = transientById.get(snapshot.id);
+    transientById.set(
+      snapshot.id,
+      existing ? mergeTransientArtifactSnapshots(existing, snapshot) : snapshot,
+    );
+  }
+  const persisted = artifacts.map((artifact) => {
+    const snapshot = transientById.get(artifact.id);
+    transientById.delete(artifact.id);
+    return detailItem(`artifact:${artifact.id}`, artifact.title, {
+      kind: 'artifact',
+      artifactId: artifact.id,
+      title: artifact.title,
+      ...(snapshot ? { snapshot } : {}),
+    });
+  });
+  return [
+    ...persisted,
+    ...[...transientById.values()].map((snapshot) =>
+      detailItem(`transient-artifact:${snapshot.id}`, snapshot.title, {
+        kind: 'artifact',
+        artifactId: snapshot.id,
+        title: snapshot.title,
+        snapshot,
+      }),
+    ),
+  ];
+}
+
+function artifactItems(
+  localArtifacts: readonly TaskCardItem[],
+  deliveries: readonly PartnerDeliveryRefT[],
+  remoteRecords: PartnerRemoteRecordsT | null,
+): readonly TaskCardItem[] {
+  return [
+    ...localArtifacts,
+    ...deliveries.map((delivery) => {
+      const target = partnerDetailTargetForDelivery(delivery);
+      return target
+        ? detailItem(`delivery:${delivery.id}`, delivery.title, target)
+        : {
+            id: `delivery:${delivery.id}`,
+            label: delivery.title,
+            action: { kind: 'delivery' as const, delivery },
+          };
+    }),
+    ...(remoteRecords
+      ? collectPartnerRemoteResultEntries(remoteRecords).map((entry) =>
+          detailItem(
+            `remote-result:${entry.kind}:${entry.id}`,
+            entry.title,
+            partnerDetailTargetForRemoteResult(entry),
+          ),
+        )
+      : []),
+    ...(remoteRecords?.baseTasks.flatMap((task) =>
+      task.status === 'succeeded'
+        ? [detailItem(`base-task:${task.id}`, task.baseName, { kind: 'baseTask', task })]
+        : [],
+    ) ?? []),
+  ];
+}
+
+function contextLoadFailed(
+  sessionId: string | null,
+  sources: PromiseSettledResult<{ readonly ok: boolean }>,
+  ...sessionRequests: readonly PromiseSettledResult<unknown>[]
+): boolean {
+  const sourceFailed =
+    sources.status === 'rejected' || (sources.status === 'fulfilled' && !sources.value.ok);
+  if (sourceFailed || sessionId === null) return sourceFailed;
+  return sessionRequests.some(
+    (request) =>
+      request.status === 'rejected' ||
+      (request.status === 'fulfilled' &&
+        (!request.value ||
+          typeof request.value !== 'object' ||
+          !('ok' in request.value) ||
+          request.value.ok !== true)),
+  );
+}
+
+function TaskCard({
   testId,
   title,
   emptyLabel,
-  summary,
+  count,
+  items,
   icon,
-  onClick,
+  onOpen,
+  onOpenItem,
+  footer,
 }: {
   readonly testId: string;
   readonly title: string;
   readonly emptyLabel: string;
-  readonly summary: PartnerContextSummary['sources'];
+  readonly count: number;
+  readonly items: readonly TaskCardItem[];
   readonly icon: ReactNode;
-  readonly onClick: () => void;
+  readonly onOpen: () => void;
+  readonly onOpenItem: (item: TaskCardItem) => void;
+  readonly footer?: ReactNode;
 }): JSX.Element {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group w-full px-3 py-3 text-left transition-colors hover:bg-hover-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-border"
-      aria-label={`${title}: ${summary.count}`}
-      data-testid={testId}
+    <section
+      className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
+      data-testid={`${testId}-card`}
     >
-      <span className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="group flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-border"
+        aria-label={`${title}: ${count}`}
+        data-testid={testId}
+      >
         <span className="text-fg-muted group-hover:text-fg-primary" aria-hidden>
           {icon}
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-primary">{title}</span>
-        <span
-          className="min-w-5 rounded-full bg-surface-3 px-1.5 py-0.5 text-center text-[10px] tabular-nums text-fg-muted"
-          aria-hidden
-        >
-          {summary.count}
+        <span className="min-w-5 rounded-full bg-surface-3 px-1.5 py-0.5 text-center text-[10px] tabular-nums text-fg-muted">
+          {count}
         </span>
-        <ChevronRight
-          className="h-3.5 w-3.5 text-fg-muted transition-transform group-hover:translate-x-0.5"
-          strokeWidth={1.75}
-          aria-hidden
-        />
-      </span>
-      <span className="mt-2 block min-h-8 pl-6 text-[11px] leading-4 text-fg-muted">
-        {summary.labels.length > 0
-          ? summary.labels.map((label) => (
-              <span key={label} className="block truncate">
-                {label}
-              </span>
-            ))
-          : emptyLabel}
-      </span>
-    </button>
+        <ChevronRight className="h-3.5 w-3.5 text-fg-muted" strokeWidth={1.75} aria-hidden />
+      </button>
+      <div className="border-t border-border-default/70 px-2 py-2">
+        {items.length > 0 ? (
+          <div className="space-y-0.5">
+            {items.slice(0, 3).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onOpenItem(item)}
+                className="flex min-h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] text-fg-muted hover:bg-hover-bg hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
+                title={item.label}
+              >
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                <ChevronRight className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="px-2 py-1 text-[11px] leading-4 text-fg-muted">{emptyLabel}</p>
+        )}
+        {footer}
+      </div>
+    </section>
   );
 }
 
-const EMPTY_TRANSIENT_ARTIFACTS: readonly { readonly title: string }[] = [];
+const EMPTY_TRANSIENT_ARTIFACTS: readonly TransientArtifactSnapshot[] = [];
+const EMPTY_LOAD_RESULT: ContextLoadResult = {
+  scopeKey: partnerContextScopeKey(null, null),
+  summary: EMPTY_PARTNER_CONTEXT_SUMMARY,
+  materials: [],
+  artifacts: [],
+  failed: false,
+};
+
+export function partnerContextResultForScope(
+  result: ContextLoadResult,
+  projectRoot: string | null,
+  sessionId: string | null,
+): ContextLoadResult {
+  return result.scopeKey === partnerContextScopeKey(projectRoot, sessionId)
+    ? result
+    : EMPTY_LOAD_RESULT;
+}
 
 export function PartnerContextRail({
   onOpenDetail,
@@ -176,9 +370,10 @@ export function PartnerContextRail({
       ? (state.transientArtifactsBySession[currentSessionId] ?? EMPTY_TRANSIENT_ARTIFACTS)
       : EMPTY_TRANSIENT_ARTIFACTS,
   );
-  const [summary, setSummary] = useState(EMPTY_PARTNER_CONTEXT_SUMMARY);
+  const collaboration = usePartnerTaskCollaboration();
+  const [loaded, setLoaded] = useState<ContextLoadResult>(EMPTY_LOAD_RESULT);
+  const scopedLoaded = partnerContextResultForScope(loaded, currentProjectPath, currentSessionId);
   const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
   const requestRevisionRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -186,9 +381,8 @@ export function PartnerContextRail({
     const bridge = window.kodaxSpace;
     const revision = ++requestRevisionRef.current;
     if (!bridge || !currentProjectPath) {
-      setSummary(EMPTY_PARTNER_CONTEXT_SUMMARY);
+      setLoaded(EMPTY_LOAD_RESULT);
       setLoading(false);
-      setFailed(false);
       return;
     }
     setLoading(true);
@@ -197,16 +391,13 @@ export function PartnerContextRail({
         bridge,
         projectRoot: currentProjectPath,
         sessionId: currentSessionId,
-        transientArtifactLabels: transientArtifacts.map((artifact) => artifact.title),
-        pendingSourcePaths: readPartnerPendingSources(currentProjectPath).map(
-          (source) => source.label ?? source.path,
-        ),
+        transientArtifacts,
+        pendingSources: readPartnerPendingSources(currentProjectPath),
       });
-      if (!mountedRef.current || revision !== requestRevisionRef.current) return;
-      setSummary(result.summary);
-      setFailed(result.failed);
+      if (mountedRef.current && revision === requestRevisionRef.current) setLoaded(result);
     } catch {
-      if (mountedRef.current && revision === requestRevisionRef.current) setFailed(true);
+      if (mountedRef.current && revision === requestRevisionRef.current)
+        setLoaded((current) => ({ ...current, failed: true }));
     } finally {
       if (mountedRef.current && revision === requestRevisionRef.current) setLoading(false);
     }
@@ -218,67 +409,72 @@ export function PartnerContextRail({
       mountedRef.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
+  useEffect(() => void refresh(), [refresh]);
   useEffect(() => {
     const onSourcesChanged = (): void => void refresh();
     window.addEventListener(PARTNER_SOURCES_CHANGED_EVENT, onSourcesChanged);
     return () => window.removeEventListener(PARTNER_SOURCES_CHANGED_EVENT, onSourcesChanged);
   }, [refresh]);
+  useEffect(
+    () => subscribeToContextChanges(currentProjectPath, currentSessionId, refresh),
+    [currentProjectPath, currentSessionId, refresh],
+  );
 
-  useEffect(() => {
-    const bridge = window.kodaxSpace;
-    if (!bridge || !currentSessionId || !currentProjectPath) return;
-    const offArtifacts = bridge.on('artifact.changed', (payload) => {
-      if (!payload.sessionId || payload.sessionId === currentSessionId) void refresh();
-    });
-    const offDeliveries = bridge.on('partner.deliveries.changed', (payload) => {
-      if (payload.sessionId === currentSessionId) void refresh();
-    });
-    const offProposals = bridge.on('partner.fileProposals.changed', (payload) => {
-      if (payload.sessionId === currentSessionId && payload.projectRoot === currentProjectPath) {
-        void refresh();
-      }
-    });
-    const offRemote = bridge.on('partner.connectors.changed', (payload) => {
-      if (
-        (!payload.sessionId || payload.sessionId === currentSessionId) &&
-        (!payload.projectRoot || payload.projectRoot === currentProjectPath)
-      )
-        void refresh();
-    });
-    return () => {
-      offArtifacts();
-      offDeliveries();
-      offProposals();
-      offRemote();
-    };
-  }, [currentProjectPath, currentSessionId, refresh]);
+  const collaborationItems = useMemo<readonly TaskCardItem[]>(
+    () => [
+      ...(collaboration.expert
+        ? [
+            detailItem(
+              `expert:${collaboration.expert.extensionId}:${collaboration.expert.expert.id}`,
+              collaboration.expert.expert.name,
+              { kind: 'expert', expert: collaboration.expert },
+            ),
+          ]
+        : []),
+      ...collaboration.skills.map((skill) =>
+        detailItem(`skill:${skill.name}`, skill.name, { kind: 'skill', skill }),
+      ),
+    ],
+    [collaboration.expert, collaboration.skills],
+  );
+  const summary: PartnerContextSummary = {
+    ...scopedLoaded.summary,
+    collaboration: {
+      count: collaborationItems.length,
+      labels: collaborationItems.slice(0, 2).map((item) => item.label),
+    },
+  };
+  const openItem = (item: TaskCardItem): void => {
+    if (item.action.kind === 'detail') return onOpenDetail(item.action.target);
+    if (item.action.kind === 'delivery') {
+      void openPartnerDeliveryInViewer(item.action.delivery);
+      return;
+    }
+    if (currentProjectPath)
+      void previewFileInViewer(item.action.path, {
+        projectRoot: currentProjectPath,
+        notifyOnError: true,
+      });
+  };
 
   return (
     <aside
       className="flex h-full min-h-0 w-[300px] flex-shrink-0 flex-col bg-surface px-4 py-3"
-      aria-label={`${t('partner.sources.title')}, ${t('partner.results.tab.results')}, ${t('partner.results.tab.pendingReview')}`}
-      aria-busy={loading}
+      aria-label={t('partner.taskCards.label')}
+      aria-busy={loading || collaboration.loading}
       data-testid="partner-context-rail"
     >
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-        <div
-          className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
-          data-testid="partner-context-sources-card"
-        >
-          <ContextEntry
-            testId="partner-context-sources"
-            title={t('partner.sources.title')}
-            emptyLabel={t('partner.sources.none')}
-            summary={summary.sources}
-            icon={<FolderOpen className="h-4 w-4" strokeWidth={1.75} />}
-            onClick={() => onOpenDetail('sources')}
-          />
-          <div className="border-t border-border-default px-3 pb-2">
+        <TaskCard
+          testId="partner-task-materials"
+          title={t('partner.taskCards.materials')}
+          emptyLabel={t('partner.taskCards.materialsEmpty')}
+          count={summary.materials.count}
+          items={scopedLoaded.materials}
+          icon={<FolderOpen className="h-4 w-4" strokeWidth={1.75} />}
+          onOpen={() => onOpenDetail({ kind: 'materials' })}
+          onOpenItem={openItem}
+          footer={
             <button
               type="button"
               onClick={onAddMaterial}
@@ -288,39 +484,30 @@ export function PartnerContextRail({
               <Plus className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />
               {t('partner.sources.add')}
             </button>
-          </div>
-        </div>
-
-        <div
-          className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
-          data-testid="partner-context-pending-review-card"
-        >
-          <ContextEntry
-            testId="partner-context-pending-review"
-            title={t('partner.results.tab.pendingReview')}
-            emptyLabel={t('partner.fileProposals.emptyPending')}
-            summary={summary.pendingReview}
-            icon={<FileCheck2 className="h-4 w-4" strokeWidth={1.75} />}
-            onClick={() => onOpenDetail('pendingReview')}
-          />
-        </div>
-
-        <div
-          className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
-          data-testid="partner-context-results-card"
-        >
-          <ContextEntry
-            testId="partner-context-results"
-            title={t('partner.results.tab.results')}
-            emptyLabel={t('artifact.emptyTitle')}
-            summary={summary.results}
-            icon={<FileOutput className="h-4 w-4" strokeWidth={1.75} />}
-            onClick={() => onOpenDetail('results')}
-          />
-        </div>
+          }
+        />
+        <TaskCard
+          testId="partner-task-collaboration"
+          title={t('partner.taskCards.collaboration')}
+          emptyLabel={t('partner.taskCards.collaborationEmpty')}
+          count={summary.collaboration.count}
+          items={collaborationItems}
+          icon={<Bot className="h-4 w-4" strokeWidth={1.75} />}
+          onOpen={() => onOpenDetail({ kind: 'collaboration' })}
+          onOpenItem={openItem}
+        />
+        <TaskCard
+          testId="partner-task-artifacts"
+          title={t('partner.taskCards.artifacts')}
+          emptyLabel={t('partner.taskCards.artifactsEmpty')}
+          count={summary.artifacts.count}
+          items={scopedLoaded.artifacts}
+          icon={<FileOutput className="h-4 w-4" strokeWidth={1.75} />}
+          onOpen={() => onOpenDetail({ kind: 'outputs' })}
+          onOpenItem={openItem}
+        />
       </div>
-
-      {failed && (
+      {scopedLoaded.failed && (
         <div className="mt-2 flex items-center gap-1.5 px-1 text-[11px] text-danger" role="status">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden />
           {t('common.unknownError')}
@@ -328,4 +515,32 @@ export function PartnerContextRail({
       )}
     </aside>
   );
+}
+
+function subscribeToContextChanges(
+  projectRoot: string | null,
+  sessionId: string | null,
+  refresh: () => Promise<void>,
+): (() => void) | void {
+  const bridge = window.kodaxSpace;
+  if (!bridge || !sessionId || !projectRoot) return;
+  const sameSession = (candidate?: string): void => {
+    if (!candidate || candidate === sessionId) void refresh();
+  };
+  const offArtifacts = bridge.on('artifact.changed', (payload) => sameSession(payload.sessionId));
+  const offDeliveries = bridge.on('partner.deliveries.changed', (payload) =>
+    sameSession(payload.sessionId),
+  );
+  const offRemote = bridge.on('partner.connectors.changed', (payload) => {
+    if (
+      (!payload.sessionId || payload.sessionId === sessionId) &&
+      (!payload.projectRoot || payload.projectRoot === projectRoot)
+    )
+      void refresh();
+  });
+  return () => {
+    offArtifacts();
+    offDeliveries();
+    offRemote();
+  };
 }

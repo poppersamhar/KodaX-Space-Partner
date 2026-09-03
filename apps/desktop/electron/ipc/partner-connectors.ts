@@ -82,6 +82,11 @@ export function registerPartnerConnectorChannels(
     await getPartnerConnectorService().disconnect(input);
     return { ok: true };
   });
+  register('partner.connectors.forget', async (input, event) => {
+    assertSpaceExtensionSender(event);
+    await getPartnerConnectorService().forget(input);
+    return { ok: true };
+  });
   register('partner.connectors.resolve', async (input, event) => {
     assertSpaceExtensionSender(event);
     await projectStore.assertAllowed(input.projectRoot);

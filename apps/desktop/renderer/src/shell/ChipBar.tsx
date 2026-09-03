@@ -41,7 +41,7 @@ export function ChipBar(): JSX.Element | null {
   );
 }
 
-/** Partner shows project scope as context, without duplicating the sidebar project switcher. */
+/** Read-only fallback for surfaces without a project switcher. */
 function ProjectContext({
   projectName,
   projectPath,

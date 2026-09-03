@@ -18,6 +18,7 @@
 // Shift-Tab / Ctrl+M 循环 3 档；数字键 1/2/3 直接切。
 
 import { useEffect, useRef, useState } from 'react';
+import { ShieldCheck } from 'lucide-react';
 import type { AutoModeEngine, PermissionMode } from '@kodax-space/space-ipc-schema';
 import { useAppStore } from '../store/appStore.js';
 import { useSurfaceStore } from '../store/surface.js';
@@ -339,14 +340,31 @@ export function ModeSelector(): JSX.Element {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-xs px-2 py-0.5 rounded bg-surface-2 border border-border-default text-fg-secondary hover:bg-hover-bg flex items-center gap-1"
+        className={[
+          'text-xs px-2 py-0.5 rounded bg-surface-2 border border-border-default text-fg-secondary hover:bg-hover-bg flex items-center gap-1',
+          currentSurface === 'partner' ? 'partner-permission-selector' : '',
+        ].join(' ')}
         title={
           currentSurface === 'partner'
             ? t('partner.permissionMode.buttonTitle', { mode: partnerModeLabel })
             : t('mode.buttonTitle', { status: statusLabel })
         }
       >
-        <span>{statusLabel}</span>
+        {currentSurface === 'partner' && (
+          <ShieldCheck
+            className="partner-permission-selector__icon hidden h-3.5 w-3.5 shrink-0"
+            strokeWidth={1.8}
+            aria-hidden
+          />
+        )}
+        <span
+          className={currentSurface === 'partner' ? 'partner-permission-selector__full' : undefined}
+        >
+          {statusLabel}
+        </span>
+        {currentSurface === 'partner' && (
+          <span className="partner-permission-selector__compact hidden">{partnerModeLabel}</span>
+        )}
         {currentSurface !== 'partner' && (
           <span className="text-fg-muted" aria-hidden>
             +

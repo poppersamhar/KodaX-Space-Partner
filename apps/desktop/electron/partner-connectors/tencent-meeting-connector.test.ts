@@ -67,14 +67,14 @@ test('Tencent Meeting verifies the pinned binary and online account identity in 
 
 test('Tencent Meeting reads only the selected meeting, preserving guards and omitting secrets and recordings', async () => {
   const order: string[] = [];
-  const reference = 'tmeet://meeting/7567173273889276131';
+  const reference = 'tmeet://meeting-code/806146667';
   const connector = fixture(async (request) => {
     order.push('dispatch');
     assert.deepEqual(request.args, [
       'meeting',
       'get',
-      '--meeting-id',
-      '7567173273889276131',
+      '--meeting-code',
+      '806146667',
       '--format',
       'json',
     ]);
@@ -119,15 +119,15 @@ test('Tencent Meeting reads only the selected meeting, preserving guards and omi
     },
   });
   assert.deepEqual(order.slice(0, 3), ['before', 'assert', 'dispatch']);
-  assert.equal(result.documentId, '7567173273889276131');
+  assert.equal(result.documentId, '806146667');
   assert.equal(result.url, reference);
   assert.equal(result.revision, 0);
   assert.equal(result.title, '项目周会');
   assert.match(result.content, /806146667/u);
-  assert.match(result.content, /未读取录制内容或纪要/u);
+  assert.match(result.content, /未向模型展示或导出录制、纪要或参会人/u);
   assert.doesNotMatch(
     result.content,
-    /never-return|unrequested-person|private-record|private-trace/u,
+    /7567173273889276131|never-return|unrequested-person|private-record|private-trace/u,
   );
 });
 
@@ -270,7 +270,7 @@ test('Tencent Meeting checks session revocation after asynchronous process prepa
     connector.read({
       profile,
       expected: identity,
-      documentUrl: 'tmeet://meeting/123',
+      documentUrl: 'tmeet://meeting-code/123456',
       beforeRead: async () => {},
       assertRead: () => {
         if (revoked) throw new ReadConnectorError('cancelled');
@@ -302,7 +302,7 @@ test('Tencent Meeting rechecks the expected online identity after the asynchrono
     connector.read({
       profile,
       expected: identity,
-      documentUrl: 'tmeet://meeting/123',
+      documentUrl: 'tmeet://meeting-code/123456',
       beforeRead: async () => {
         status = authenticated.replace('tmeet_user_1', 'another_user');
       },
@@ -405,7 +405,7 @@ test('Tencent Meeting rejects cached-only, malformed, duplicated, and expired st
       connector.read({
         profile,
         expected: identity,
-        documentUrl: 'tmeet://meeting/123',
+        documentUrl: 'tmeet://meeting-code/123456',
         beforeRead: async () => {
           assert.fail('unverified host gate');
         },
@@ -427,7 +427,7 @@ test('Tencent Meeting rejects other accounts and authority namespaces before a h
       }).read({
         profile,
         expected,
-        documentUrl: 'tmeet://meeting/123',
+        documentUrl: 'tmeet://meeting-code/123456',
         beforeRead: async () => {
           assert.fail('identity mismatch gate');
         },
@@ -438,22 +438,24 @@ test('Tencent Meeting rejects other accounts and authority namespaces before a h
   }
 });
 
-test('Tencent Meeting accepts only canonical internal meeting references, never links or CLI arguments', async () => {
+test('Tencent Meeting accepts only canonical 6-15 digit meeting-code references, never links or CLI arguments', async () => {
   const connector = fixture(async () => {
     assert.fail('invalid resource business');
   });
   for (const reference of [
     '',
     'https://meeting.tencent.com/dm/123',
-    'tmeet://meeting/123?code=456',
-    'tmeet://meeting/123#fragment',
-    'tmeet://meeting/%31',
-    'tmeet://meeting/../123',
-    'tmeet://meeting/123/',
-    'tmeet://meeting/--debug',
-    'tmeet://meeting/1\n',
-    'TMEET://meeting/123',
-    `tmeet://meeting/${'1'.repeat(33)}`,
+    'tmeet://meeting/123456',
+    'tmeet://meeting-code/12345',
+    'tmeet://meeting-code/1234567890123456',
+    'tmeet://meeting-code/123456?code=456',
+    'tmeet://meeting-code/123456#fragment',
+    'tmeet://meeting-code/%31%32%33%34%35%36',
+    'tmeet://meeting-code/../123456',
+    'tmeet://meeting-code/123456/',
+    'tmeet://meeting-code/--debug',
+    'tmeet://meeting-code/123456\n',
+    'TMEET://meeting-code/123456',
   ]) {
     assert.equal(connector.acceptsResource(reference), false);
     await assert.rejects(
@@ -467,11 +469,11 @@ test('Tencent Meeting accepts only canonical internal meeting references, never 
       { code: 'invalid_resource' },
     );
   }
-  assert.equal(connector.acceptsResource('tmeet://meeting/7567173273889276131'), true);
+  assert.equal(connector.acceptsResource('tmeet://meeting-code/806146667'), true);
 });
 
 test('Tencent Meeting rejects unbounded, mismatched and malformed business data', async () => {
-  const meeting = { meeting_id: '123', subject: '会议' };
+  const meeting = { meeting_id: 'internal-secret-id', meeting_code: '123456', subject: '会议' };
   const outputs = [
     'not-json',
     'null',
@@ -484,8 +486,9 @@ test('Tencent Meeting rejects unbounded, mismatched and malformed business data'
     JSON.stringify({ error: {}, data: { meeting_info_list: [meeting] } }),
     ...[
       null,
-      { ...meeting, meeting_id: 'other' },
-      { ...meeting, meeting_id: 123 },
+      { ...meeting, meeting_code: '654321' },
+      { ...meeting, meeting_code: 123456 },
+      { ...meeting, meeting_code: undefined },
       { ...meeting, subject: '' },
       { ...meeting, subject: 'x'.repeat(301) },
       { ...meeting, subject: 'line\nbreak' },
@@ -499,7 +502,7 @@ test('Tencent Meeting rejects unbounded, mismatched and malformed business data'
       fixture(async () => ({ stdout, stderr: 'private-stderr', exitCode: 0 })).read({
         profile,
         expected: identity,
-        documentUrl: 'tmeet://meeting/123',
+        documentUrl: 'tmeet://meeting-code/123456',
         beforeRead: async () => {},
         assertRead: () => {},
       }),
@@ -519,7 +522,7 @@ test('Tencent Meeting returns only fixed errors for failed business processes', 
       fixture(business).read({
         profile,
         expected: identity,
-        documentUrl: 'tmeet://meeting/123',
+        documentUrl: 'tmeet://meeting-code/123456',
         beforeRead: async () => {},
         assertRead: () => {},
       }),

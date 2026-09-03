@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os';
 import { createSafeFeishuEnvironment } from './feishu-cli-runner.js';
 
 const MESSAGES = {
-  needs_install: '请先安装 Space 专用的飞书 CLI 1.0.92。',
+  needs_install: '飞书连接组件不可用，请更新或重新安装 KodaX Space。',
   cancelled: '已取消连接；在飞书网页完成的授权不会因此撤销。',
   expired: '本次飞书连接已超时，请重新发起。',
   missing_permissions: '飞书授权未包含所需文档权限，请检查授权结果。',
-  unsupported_platform: '当前系统暂不支持自动安装飞书 CLI。',
+  unsupported_platform: '当前系统暂不支持飞书连接，请更新 KodaX Space 后重试。',
+  component_unavailable: '飞书连接组件不可用，请更新或重新安装 KodaX Space。',
   installation_failed: '飞书连接组件安装或校验失败，尚未进入网页授权。请重新连接。',
   download_failed: '飞书连接组件下载失败，尚未进入网页授权。请检查网络后重新连接。',
   download_timeout: '飞书连接组件下载超时，尚未进入网页授权。请检查网络后重新连接。',

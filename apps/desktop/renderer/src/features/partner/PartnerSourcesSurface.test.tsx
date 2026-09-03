@@ -3,12 +3,17 @@ import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
+import { PartnerRemoteRecordsProvider } from '../extensions/usePartnerRemoteRecords.js';
 import { KnowledgeBasePanel } from './KnowledgeBasePanel.js';
 import { handleSourcePickerOpenRequest, SourcesPanel } from './SourcesPanel.js';
 import { readPartnerPendingSources, stagePartnerPendingSource } from './partnerWorkbench.js';
 
 function renderWithI18n(element: JSX.Element): string {
-  return renderToStaticMarkup(<I18nProvider>{element}</I18nProvider>);
+  return renderToStaticMarkup(
+    <I18nProvider>
+      <PartnerRemoteRecordsProvider>{element}</PartnerRemoteRecordsProvider>
+    </I18nProvider>,
+  );
 }
 
 test('Partner sources keeps low-frequency surfaces out of the default task rail', () => {

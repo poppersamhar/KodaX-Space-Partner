@@ -2,22 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { projectPartnerContextSummary } from './partnerContextSummary.js';
 
-test('remote records join the three cards without treating titles or URLs as filesystem paths', () => {
+test('remote records join task materials and artifacts without a review destination', () => {
   const summary = projectPartnerContextSummary({
     sourceLabels: [],
     pendingSourcePaths: [],
     artifactLabels: [],
     transientArtifactLabels: [],
     deliveryPaths: [],
-    pendingReviewPaths: [],
     remoteSourceLabels: ['Feishu / quarterly report'],
-    remoteReviewLabels: ['Append conclusion'],
     remoteReceiptLabels: ['Created report'],
+    expertLabels: ['Research expert'],
+    skillLabels: ['deep-research'],
   });
   assert.deepEqual(summary, {
-    sources: { count: 1, labels: ['Feishu / quarterly report'] },
-    pendingReview: { count: 1, labels: ['Append conclusion'] },
-    results: { count: 1, labels: ['Created report'] },
+    materials: { count: 1, labels: ['Feishu / quarterly report'] },
+    collaboration: { count: 2, labels: ['Research expert', 'deep-research'] },
+    artifacts: { count: 1, labels: ['Created report'] },
   });
 });
 
@@ -28,21 +28,22 @@ test('projects real Partner records into compact context-card summaries', () => 
     artifactLabels: ['Market report', 'Market report'],
     transientArtifactLabels: ['Chart preview'],
     deliveryPaths: ['partner-output/report.docx'],
-    pendingReviewPaths: ['drafts/summary.md', 'drafts/appendix.md', 'drafts/notes.md'],
+    expertLabels: [],
+    skillLabels: [],
   });
 
   assert.deepEqual(summary, {
-    sources: {
+    materials: {
       count: 4,
       labels: ['Brief.pdf', 'Research'],
     },
-    results: {
+    collaboration: {
+      count: 0,
+      labels: [],
+    },
+    artifacts: {
       count: 4,
       labels: ['Market report', 'Chart preview'],
-    },
-    pendingReview: {
-      count: 3,
-      labels: ['summary.md', 'appendix.md'],
     },
   });
 });
@@ -54,10 +55,10 @@ test('uses filenames for paths and omits blank labels', () => {
     artifactLabels: [],
     transientArtifactLabels: [],
     deliveryPaths: ['/tmp/output.xlsx'],
-    pendingReviewPaths: [],
+    expertLabels: [],
+    skillLabels: [],
   });
 
-  assert.deepEqual(summary.sources.labels, ['Specs', 'brief.docx']);
-  assert.deepEqual(summary.results.labels, ['output.xlsx']);
-  assert.deepEqual(summary.pendingReview.labels, []);
+  assert.deepEqual(summary.materials.labels, ['Specs', 'brief.docx']);
+  assert.deepEqual(summary.artifacts.labels, ['output.xlsx']);
 });

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getSpaceDataDir } from '../kodax/data-paths.js';
 import { adminPolicyAuditStore } from '../kodax/admin-policy-audit-store.js';
 import { getSpaceExtensionStore } from '../space-extensions/runtime.js';
@@ -7,16 +8,51 @@ import { FeishuCli } from './feishu-cli.js';
 import { PartnerConnectorService } from './service.js';
 import { PartnerConnectorTasks } from './connection-tasks.js';
 import { createFeishuOnboardingCli } from './feishu-onboarding-cli.js';
+import { resolveBundledFeishuCliArchivePath } from './feishu-cli-bundle.js';
 import { createWecomConnector } from './wecom-cli.js';
 import { createDingtalkConnector } from './dingtalk-connector.js';
 import { createTencentMeetingConnector } from './tencent-meeting-connector.js';
+import { createOfficialRemoteConnectorBundle } from './official-remote-runtime.js';
 
 let service: PartnerConnectorService | undefined;
 let tasks: PartnerConnectorTasks | undefined;
 let onboardingCli: ReturnType<typeof createFeishuOnboardingCli> | undefined;
+
+function currentModuleDirectory(): string {
+  if (typeof __dirname === 'string') return __dirname;
+  return path.dirname(fileURLToPath(import.meta.url));
+}
+
+interface PartnerConnectorRuntimeEnvironment {
+  readonly isPackaged: boolean;
+  readonly mainDirectory: string;
+  readonly resourcesPath: string;
+}
+
+// Keep Electron process state at the composition root. Importing this module from the
+// Node test runner must not eagerly load Electron's main-process-only named exports.
+const sourceModuleDirectory = currentModuleDirectory();
+let runtimeEnvironment: PartnerConnectorRuntimeEnvironment = {
+  isPackaged: false,
+  mainDirectory: sourceModuleDirectory,
+  resourcesPath: path.resolve(sourceModuleDirectory, '..'),
+};
+
+export function configurePartnerConnectorRuntimeEnvironment(
+  environment: PartnerConnectorRuntimeEnvironment,
+): void {
+  if (onboardingCli) {
+    throw new Error('Partner connector runtime environment is already in use');
+  }
+  runtimeEnvironment = { ...environment };
+}
+
 const cli = () =>
   (onboardingCli ??= createFeishuOnboardingCli({
     root: path.join(getSpaceDataDir(), 'partner-connectors'),
+    bundledArchive: resolveBundledFeishuCliArchivePath({
+      ...runtimeEnvironment,
+    }),
   }));
 let policyRevision = 0;
 export function invalidateConnectorPolicy(): void {
@@ -28,6 +64,9 @@ export function getPartnerConnectorService(): PartnerConnectorService {
     {
       cli: new FeishuCli((request) => cli().runner(request)),
       readConnectors: {
+        ...createOfficialRemoteConnectorBundle({
+          root: path.join(getSpaceDataDir(), 'partner-connectors'),
+        }),
         'wecom-cli': createWecomConnector({
           root: path.join(getSpaceDataDir(), 'partner-connectors'),
         }),
@@ -43,6 +82,8 @@ export function getPartnerConnectorService(): PartnerConnectorService {
       getPolicyRevision: () => policyRevision,
       catalog: async (extensionId) =>
         (await getSpaceExtensionStore().getManifest(extensionId)).connectors,
+      extensionCapabilities: async (extensionId) =>
+        (await getSpaceExtensionStore().getManifest(extensionId)).requiredHostCapabilities,
       checkPolicy: async (connectorId, write) => {
         const { policy } = await adminPolicyAuditStore.getPolicy();
         if (

@@ -1,48 +1,40 @@
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import yauzl from 'yauzl';
 import { createFeishuCliRunner } from './feishu-cli-runner.js';
+import {
+  FEISHU_CLI_RELEASE,
+  FEISHU_CLI_VERSION,
+  isCompatibleFeishuCliVersion,
+} from './feishu-cli-release.js';
 import { FeishuOnboardingError } from './feishu-auth-process.js';
 
-const VERSION = '1.0.92';
+export { FEISHU_CLI_VERSION } from './feishu-cli-release.js';
 const MAX_ARCHIVE = 64 * 1024 * 1024;
 const MAX_BINARY = 128 * 1024 * 1024;
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const DOWNLOAD_IDLE_MS = 2 * 60 * 1000;
 const METADATA = new Set(['README.md', 'LICENSE', 'CHANGELOG.md']);
-// Official v1.0.92 release assets, cross-checked against the npm package checksums.txt.
-const ASSETS: Readonly<Record<string, { name: string; digest: string }>> = {
-  'darwin-arm64': {
-    name: 'darwin-arm64.tar.gz',
-    digest: 'abb1b96eee5ad32da4e12f434e44d48a9e01ebb0e81772419ac0347f91c34265',
-  },
-  'darwin-x64': {
-    name: 'darwin-amd64.tar.gz',
-    digest: '421b36f95966028fb047231cb6351c4224a0fdcb076d2bc434d4aed1bb6d1891',
-  },
-  'linux-arm64': {
-    name: 'linux-arm64.tar.gz',
-    digest: '683546b6754c780e0f828e87cb00ccf7c0710798a9f1ddb8c6b956afbfb570ae',
-  },
-  'linux-x64': {
-    name: 'linux-amd64.tar.gz',
-    digest: 'ef0e19799c1edd94eb52d3bb5d587e00d0a2898e0a4b407a1b8dc66d56181ef1',
-  },
-  'linux-riscv64': {
-    name: 'linux-riscv64.tar.gz',
-    digest: 'f15f320326bea6eceaad075fc3c897b18c97de172d35371bfd1d70c4b014d8ae',
-  },
-  'win32-arm64': {
-    name: 'windows-arm64.zip',
-    digest: 'cef96c61c388f7e1100394edcfa1f5ca8322e9bed73a951e119a7e7b6e0f4c6a',
-  },
-  'win32-x64': {
-    name: 'windows-amd64.zip',
-    digest: 'dfcf920d8e31bcef99960c584fda8bac49a8dca0b6634b1f05bde0de382080b3',
-  },
-};
+// The checked-in lock is the single release source for runtime and packaging.
+const ASSETS: Readonly<Record<string, { name: string; digest: string; bytes: number }>> =
+  Object.fromEntries(
+    Object.entries(FEISHU_CLI_RELEASE.assets).map(([target, asset]) => [
+      target,
+      { name: asset.name, digest: asset.sha256, bytes: asset.bytes },
+    ]),
+  );
 
 export function managedFeishuCliPath(
   root: string,
@@ -52,9 +44,23 @@ export function managedFeishuCliPath(
   return path.join(
     root,
     'feishu-cli',
-    VERSION,
+    FEISHU_CLI_VERSION,
     `${platform}-${arch}`,
     platform === 'win32' ? 'lark-cli.exe' : 'lark-cli',
+  );
+}
+
+export function bundledFeishuCliArchivePath(
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string {
+  return path.join(
+    root,
+    'feishu-cli',
+    FEISHU_CLI_VERSION,
+    `${platform}-${arch}`,
+    platform === 'win32' ? 'lark-cli.zip' : 'lark-cli.tar.gz',
   );
 }
 
@@ -65,6 +71,7 @@ export interface FeishuCliInstallerOptions {
   /** Trusted test/network seams, never renderer input. */
   fetch?: typeof globalThis.fetch;
   expectedDigest?: string;
+  expectedBytes?: number;
   verifyBinary?: (file: string, signal: AbortSignal) => Promise<boolean>;
 }
 
@@ -269,7 +276,7 @@ async function verifyNative(file: string, signal: AbortSignal): Promise<boolean>
     args: ['--version'],
     signal,
   });
-  return result.exitCode === 0 && /^lark-cli version 1\.0\.92\s*$/u.test(result.stdout);
+  return result.exitCode === 0 && isCompatibleFeishuCliVersion(result.stdout);
 }
 
 async function existingBinary(file: string): Promise<boolean> {
@@ -286,9 +293,23 @@ async function existingBinary(file: string): Promise<boolean> {
   }
 }
 
+async function resetManagedPlatformDirectory(file: string): Promise<void> {
+  const directory = path.dirname(file);
+  try {
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe platform directory');
+    const entries = await readdir(directory);
+    if (entries.some((entry) => entry !== path.basename(file)))
+      throw new Error('foreign managed component file');
+    await rm(directory, { recursive: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+}
+
 async function privateParent(root: string): Promise<string> {
   let directory = root;
-  for (const part of ['', 'feishu-cli', VERSION]) {
+  for (const part of ['', 'feishu-cli', FEISHU_CLI_VERSION]) {
     directory = path.join(directory, part);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const stat = await lstat(directory);
@@ -305,60 +326,195 @@ async function cleanupStaging(directory: string): Promise<void> {
   }
 }
 
+async function bundledArchive(file: string, signal: AbortSignal): Promise<Buffer> {
+  active(signal);
+  const stat = await lstat(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > MAX_ARCHIVE)
+    throw new Error('unsafe bundled archive');
+  const data = await readFile(file);
+  active(signal);
+  return data;
+}
+
+async function verifiedArchiveBinary(input: {
+  data: Buffer;
+  digest: string;
+  bytes?: number;
+  platform: NodeJS.Platform;
+  signal: AbortSignal;
+}): Promise<Buffer> {
+  if (input.bytes !== undefined && input.data.byteLength !== input.bytes)
+    throw new Error('archive size mismatch');
+  if (createHash('sha256').update(input.data).digest('hex') !== input.digest)
+    throw new Error('checksum mismatch');
+  active(input.signal);
+  return input.platform === 'win32'
+    ? await extractZip(input.data, input.signal)
+    : extractTar(input.data);
+}
+
+async function publishBinary(input: {
+  binary: Buffer;
+  executable: string;
+  parent: string;
+  signal: AbortSignal;
+  verify: (file: string, signal: AbortSignal) => Promise<boolean>;
+}): Promise<string> {
+  active(input.signal);
+  let staging: string | undefined = await mkdtemp(path.join(input.parent, '.install-'));
+  try {
+    const candidate = path.join(staging, path.basename(input.executable));
+    await writeFile(candidate, input.binary, { mode: 0o700, flag: 'wx' });
+    await chmod(candidate, 0o700);
+    active(input.signal);
+    if (!(await input.verify(candidate, input.signal))) throw new Error('version mismatch');
+    active(input.signal);
+    await rename(staging, path.dirname(input.executable));
+    staging = undefined;
+    return input.executable;
+  } finally {
+    if (staging) await cleanupStaging(staging);
+  }
+}
+
+async function publishArchive(input: {
+  data: Buffer;
+  digest: string;
+  bytes?: number;
+  executable: string;
+  parent: string;
+  platform: NodeJS.Platform;
+  signal: AbortSignal;
+  verify: (file: string, signal: AbortSignal) => Promise<boolean>;
+}): Promise<string> {
+  const binary = await verifiedArchiveBinary(input);
+  return publishBinary({
+    binary,
+    executable: input.executable,
+    parent: input.parent,
+    signal: input.signal,
+    verify: input.verify,
+  });
+}
+
+async function existingMatchesBinary(file: string, binary: Buffer): Promise<boolean> {
+  if (!(await existingBinary(file))) return false;
+  const stat = await lstat(file);
+  if (stat.size !== binary.byteLength) return false;
+  return (await readFile(file)).equals(binary);
+}
+
+async function bundledBinary(input: {
+  archive: string;
+  digest: string;
+  bytes?: number;
+  platform: NodeJS.Platform;
+  signal: AbortSignal;
+}): Promise<Buffer> {
+  const data = await bundledArchive(input.archive, input.signal);
+  return verifiedArchiveBinary({
+    data,
+    digest: input.digest,
+    bytes: input.bytes,
+    platform: input.platform,
+    signal: input.signal,
+  });
+}
+
 export function createFeishuCliInstaller(options: FeishuCliInstallerOptions): {
   executable: string;
   install: (signal: AbortSignal) => Promise<string>;
+  installBundled: (archive: string, signal: AbortSignal) => Promise<string>;
 } {
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
   const executable = managedFeishuCliPath(options.root, platform, arch);
   const asset = ASSETS[`${platform}-${arch}`];
+  const prepareParent = async (): Promise<string> => {
+    if (!asset) throw new FeishuOnboardingError('unsupported_platform');
+    if (!path.isAbsolute(options.root) || options.root === path.parse(options.root).root)
+      throw new Error('invalid root');
+    return privateParent(options.root);
+  };
+  const prepare = async (signal: AbortSignal): Promise<string | undefined> => {
+    const parent = await prepareParent();
+    if (await existingBinary(executable)) {
+      if (await (options.verifyBinary ?? verifyNative)(executable, signal)) {
+        active(signal);
+        return undefined;
+      }
+    }
+    await resetManagedPlatformDirectory(executable);
+    return parent;
+  };
+  const publish = (data: Buffer, parent: string, signal: AbortSignal) =>
+    publishArchive({
+      data,
+      digest: options.expectedDigest ?? asset!.digest,
+      bytes:
+        options.expectedBytes ?? (options.expectedDigest === undefined ? asset!.bytes : undefined),
+      executable,
+      parent,
+      platform,
+      signal,
+      verify: options.verifyBinary ?? verifyNative,
+    });
   return {
     executable,
     install: async (signal) => {
       active(signal);
-      if (!asset) throw new FeishuOnboardingError('unsupported_platform');
-      let staging: string | undefined;
       const timeout = AbortSignal.timeout(INSTALL_TIMEOUT_MS);
       const bounded = AbortSignal.any([signal, timeout]);
       try {
-        if (!path.isAbsolute(options.root) || options.root === path.parse(options.root).root)
-          throw new Error('invalid root');
-        const parent = await privateParent(options.root);
-        if (await existingBinary(executable)) {
-          if (!(await (options.verifyBinary ?? verifyNative)(executable, bounded)))
-            throw new Error('existing version');
-          active(bounded);
-          return executable;
-        }
-        staging = await mkdtemp(path.join(parent, '.install-'));
+        const parent = await prepare(bounded);
+        if (!parent) return executable;
         const data = await download(
-          `https://github.com/larksuite/cli/releases/download/v${VERSION}/lark-cli-${VERSION}-${asset.name}`,
+          `https://github.com/larksuite/cli/releases/download/v${FEISHU_CLI_VERSION}/lark-cli-${FEISHU_CLI_VERSION}-${asset.name}`,
           bounded,
           options.fetch ?? fetch,
         );
-        const digest = createHash('sha256').update(data).digest('hex');
-        if (digest !== (options.expectedDigest ?? asset.digest))
-          throw new Error('checksum mismatch');
-        active(bounded);
-        const binary = platform === 'win32' ? await extractZip(data, bounded) : extractTar(data);
-        const candidate = path.join(staging, path.basename(executable));
-        await writeFile(candidate, binary, { mode: 0o700, flag: 'wx' });
-        await chmod(candidate, 0o700);
-        active(bounded);
-        if (!(await (options.verifyBinary ?? verifyNative)(candidate, bounded)))
-          throw new Error('version mismatch');
-        active(bounded);
-        await rename(staging, path.dirname(executable));
-        staging = undefined;
-        return executable;
+        return await publish(data, parent, bounded);
       } catch (error) {
         if (signal.aborted) throw new FeishuOnboardingError('cancelled');
         if (timeout.aborted) throw new FeishuOnboardingError('download_timeout');
         if (error instanceof FeishuOnboardingError) throw error;
         throw new FeishuOnboardingError('installation_failed');
-      } finally {
-        if (staging) await cleanupStaging(staging);
+      }
+    },
+    installBundled: async (archive, signal) => {
+      active(signal);
+      try {
+        if (!asset) throw new FeishuOnboardingError('unsupported_platform');
+        const binary = await bundledBinary({
+          archive,
+          digest: options.expectedDigest ?? asset.digest,
+          bytes:
+            options.expectedBytes ??
+            (options.expectedDigest === undefined ? asset.bytes : undefined),
+          platform,
+          signal,
+        });
+        const parent = await prepareParent();
+        if (
+          (await existingMatchesBinary(executable, binary)) &&
+          (await (options.verifyBinary ?? verifyNative)(executable, signal))
+        ) {
+          active(signal);
+          return executable;
+        }
+        await resetManagedPlatformDirectory(executable);
+        return await publishBinary({
+          binary,
+          executable,
+          parent,
+          signal,
+          verify: options.verifyBinary ?? verifyNative,
+        });
+      } catch (error) {
+        if (signal.aborted) throw new FeishuOnboardingError('cancelled');
+        if (error instanceof FeishuOnboardingError && error.code === 'unsupported_platform')
+          throw error;
+        throw new FeishuOnboardingError('component_unavailable');
       }
     },
   };

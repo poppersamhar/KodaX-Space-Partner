@@ -1,328 +1,178 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { ArchiveRestore, FileCheck2, FileOutput, FileSearch } from 'lucide-react';
-import { ArtifactsView } from '../artifact/ArtifactsView';
-import {
-  FOCUS_ARTIFACT_EVENT,
-  OPEN_FILE_VIEWER_EVENT,
-  getLastOpenedFileViewerSnapshot,
-  isFileViewerSnapshot,
-  type FocusArtifactEventDetail,
-  type OpenFileViewerEventDetail,
-  type TransientArtifactSnapshot,
-} from '../artifact/transientArtifact.js';
-import { FileViewer } from '../preview/FileViewer.js';
-import { useI18n } from '../../i18n/I18nProvider.js';
-import { useAppStore } from '../../store/appStore.js';
-import { FileProposalsPanel } from './FileProposalsPanel.js';
-import { DeliveriesPanel } from './DeliveriesPanel.js';
+import { useEffect, useState } from 'react';
+import { ChevronRight, FileOutput } from 'lucide-react';
+import type { PartnerDeliveryRefT } from '@kodax-space/space-ipc-schema';
+import type { TransientArtifactSnapshot } from '../artifact/transientArtifact.js';
+import { ArtifactsView } from '../artifact/ArtifactsView.js';
 import { PartnerRemoteRecords } from '../extensions/PartnerRemoteRecords.js';
-import type { PartnerResultSelectionRequest } from './partnerResultRail.js';
-import { handleTablistKeyDown } from './tablistKeyboard.js';
+import { useAppStore } from '../../store/appStore.js';
+import { useI18n } from '../../i18n/I18nProvider.js';
+import { openPartnerDeliveryInViewer } from '../../lib/openPath.js';
 import {
-  resolveArtifactPanelDestination,
-  shouldUseLegacyArtifactFileViewer,
-  type ArtifactPanelDestination,
-} from './artifactPanelState.js';
-
-type ResultView = 'artifacts' | 'fileViewer' | 'files';
+  partnerDetailTargetForDelivery,
+  type PartnerDetailOpenTarget,
+} from './partnerDetailWorkspace.js';
 
 interface ArtifactPanelProps {
-  readonly selectionRequest?: PartnerResultSelectionRequest | null;
-  readonly destination?: ArtifactPanelDestination;
-  readonly hideDestinationTabs?: boolean;
-  readonly focusRequest?: {
-    readonly revision: number;
-    readonly id?: string;
+  readonly focusedArtifact?: {
+    readonly id: string;
     readonly snapshot?: TransientArtifactSnapshot;
-  } | null;
+  };
+  readonly includeRemoteOutputs?: boolean;
+  readonly onOpenDetail?: (target: PartnerDetailOpenTarget) => void;
 }
 
-export function ArtifactPanel({
-  selectionRequest = null,
-  destination,
-  hideDestinationTabs = false,
-  focusRequest = null,
-}: ArtifactPanelProps): JSX.Element {
-  const { t } = useI18n();
-  const currentProjectPath = useAppStore((state) => state.currentProjectPath);
-  const currentSessionId = useAppStore((state) => state.currentSessionId);
-  const [internalDestination, setInternalDestination] =
-    useState<ArtifactPanelDestination>('results');
-  const [activeResultView, setActiveResultView] = useState<ResultView>('artifacts');
-  const [fileViewerSnapshot, setFileViewerSnapshot] = useState<TransientArtifactSnapshot | null>(
-    null,
-  );
-  const [focusedArtifactId, setFocusedArtifactId] = useState<string | null>(null);
-  const [focusedArtifactSnapshot, setFocusedArtifactSnapshot] =
-    useState<TransientArtifactSnapshot | null>(null);
-  const useLegacyFileViewer = shouldUseLegacyArtifactFileViewer(hideDestinationTabs);
+interface PartnerOutputDeliveryState {
+  readonly scopeKey: string;
+  readonly deliveries: readonly PartnerDeliveryRefT[];
+  readonly error: string | null;
+}
+
+function outputScopeKey(projectRoot: string | null, sessionId: string | null): string {
+  return JSON.stringify([projectRoot, sessionId]);
+}
+
+function usePartnerOutputDeliveries(): PartnerOutputDeliveryState {
+  const projectRoot = useAppStore((state) => state.currentProjectPath);
+  const sessionId = useAppStore((state) => state.currentSessionId);
+  const scopeKey = outputScopeKey(projectRoot, sessionId);
+  const [state, setState] = useState<PartnerOutputDeliveryState>({
+    scopeKey: outputScopeKey(null, null),
+    deliveries: [],
+    error: null,
+  });
 
   useEffect(() => {
-    const showFocusedArtifact = (event: Event): void => {
-      const detail = (event as CustomEvent<FocusArtifactEventDetail>).detail;
-      setInternalDestination('results');
-      if (isFileViewerSnapshot(detail?.snapshot)) {
-        setFileViewerSnapshot(detail.snapshot ?? null);
-        setActiveResultView('fileViewer');
-        return;
-      }
-      setFocusedArtifactId(detail?.id ?? detail?.snapshot?.id ?? null);
-      setFocusedArtifactSnapshot(detail?.snapshot ?? null);
-      setActiveResultView('artifacts');
-    };
-    window.addEventListener(FOCUS_ARTIFACT_EVENT, showFocusedArtifact);
-    return () => window.removeEventListener(FOCUS_ARTIFACT_EVENT, showFocusedArtifact);
-  }, []);
-
-  useEffect(() => {
-    if (!useLegacyFileViewer) return;
-    const showFileViewer = (event: Event): void => {
-      const detail = (event as CustomEvent<OpenFileViewerEventDetail>).detail;
-      if (!isFileViewerSnapshot(detail?.snapshot)) return;
-      setFileViewerSnapshot(detail.snapshot);
-      setInternalDestination('results');
-      setActiveResultView('fileViewer');
-    };
-    window.addEventListener(OPEN_FILE_VIEWER_EVENT, showFileViewer);
-    return () => window.removeEventListener(OPEN_FILE_VIEWER_EVENT, showFileViewer);
-  }, [useLegacyFileViewer]);
-
-  useEffect(() => {
-    const selection = selectionRequest?.selection;
-    if (!selection) return;
-    setInternalDestination(selection.destination);
-    if (selection.destination === 'results') setActiveResultView(selection.view);
-  }, [selectionRequest]);
-
-  useEffect(() => {
-    if (!focusRequest) return;
-    setInternalDestination('results');
-    setFocusedArtifactId(focusRequest.id ?? focusRequest.snapshot?.id ?? null);
-    setFocusedArtifactSnapshot(focusRequest.snapshot ?? null);
-    setActiveResultView('artifacts');
-  }, [focusRequest]);
-
-  useEffect(() => {
-    setFileViewerSnapshot(null);
-    setFocusedArtifactId(null);
-    setFocusedArtifactSnapshot(null);
-    setActiveResultView((current) => (current === 'fileViewer' ? 'artifacts' : current));
-  }, [currentProjectPath]);
-
-  useEffect(() => {
-    setFocusedArtifactId(null);
-    setFocusedArtifactSnapshot(null);
-  }, [currentSessionId]);
-
-  useEffect(() => {
-    if (
-      fileViewerSnapshot?.source !== 'session-attachment-preview' ||
-      fileViewerSnapshot.sessionId === currentSessionId
-    ) {
+    const bridge = window.kodaxSpace;
+    if (!bridge || !projectRoot || !sessionId) {
+      setState({ scopeKey, deliveries: [], error: null });
       return;
     }
-    setFileViewerSnapshot(null);
-    setActiveResultView((current) => (current === 'fileViewer' ? 'artifacts' : current));
-  }, [currentSessionId, fileViewerSnapshot]);
+    let active = true;
+    let revision = 0;
+    const load = async (): Promise<void> => {
+      const currentRevision = ++revision;
+      try {
+        const result = await bridge.invoke('partner.deliveries.list', { projectRoot, sessionId });
+        if (!active || currentRevision !== revision) return;
+        setState(
+          result.ok
+            ? { scopeKey, deliveries: result.data.deliveries, error: null }
+            : { scopeKey, deliveries: [], error: result.error.message },
+        );
+      } catch (reason) {
+        if (!active || currentRevision !== revision) return;
+        setState({
+          scopeKey,
+          deliveries: [],
+          error: reason instanceof Error ? reason.message : String(reason),
+        });
+      }
+    };
+    setState({ scopeKey, deliveries: [], error: null });
+    void load();
+    const unsubscribe = bridge.on('partner.deliveries.changed', (event) => {
+      if (event.sessionId === sessionId) void load();
+    });
+    return () => {
+      active = false;
+      revision += 1;
+      unsubscribe();
+    };
+  }, [projectRoot, scopeKey, sessionId]);
 
-  useEffect(() => {
-    if (!useLegacyFileViewer || selectionRequest) return;
-    const snapshot = getLastOpenedFileViewerSnapshot(currentProjectPath, currentSessionId);
-    if (!snapshot) return;
-    setFileViewerSnapshot(snapshot);
-    setInternalDestination('results');
-    setActiveResultView('fileViewer');
-  }, [currentProjectPath, currentSessionId, selectionRequest, useLegacyFileViewer]);
+  return state.scopeKey === scopeKey ? state : { scopeKey, deliveries: [], error: null };
+}
 
-  const activeDestination = resolveArtifactPanelDestination(destination, internalDestination);
+export function openPartnerOutputDelivery(
+  delivery: PartnerDeliveryRefT,
+  onOpenDetail?: (target: PartnerDetailOpenTarget) => void,
+): void {
+  const target = partnerDetailTargetForDelivery(delivery);
+  if (target && onOpenDetail) {
+    onOpenDetail(target);
+    return;
+  }
+  void openPartnerDeliveryInViewer(delivery);
+}
 
+export function PartnerOutputDeliveryList({
+  deliveries,
+  onOpenDetail,
+}: {
+  readonly deliveries: readonly PartnerDeliveryRefT[];
+  readonly onOpenDetail?: (target: PartnerDetailOpenTarget) => void;
+}): JSX.Element | null {
+  const { t } = useI18n();
+  if (deliveries.length === 0) return null;
+  return (
+    <section
+      className="border-b border-border-default p-3 text-xs"
+      data-testid="partner-output-deliveries"
+    >
+      <h3 className="mb-2 font-medium">{t('partner.deliveries.tab.deliveries')}</h3>
+      <div className="space-y-1">
+        {deliveries.map((delivery) => (
+          <button
+            key={delivery.id}
+            type="button"
+            onClick={() => openPartnerOutputDelivery(delivery, onOpenDetail)}
+            className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-fg-muted hover:bg-hover-bg hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border"
+            title={delivery.relativePath}
+            data-testid="partner-output-delivery"
+          >
+            <FileOutput className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden />
+            <span className="min-w-0 flex-1 truncate">{delivery.title}</span>
+            <ChevronRight className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PartnerOutputIndex({
+  onOpenDetail,
+}: {
+  readonly onOpenDetail?: (target: PartnerDetailOpenTarget) => void;
+}): JSX.Element {
+  const { deliveries, error } = usePartnerOutputDeliveries();
+  return (
+    <div className="max-h-[45%] shrink-0 overflow-y-auto">
+      <PartnerRemoteRecords kind="results" onOpenDetail={onOpenDetail} />
+      <PartnerOutputDeliveryList deliveries={deliveries} onOpenDetail={onOpenDetail} />
+      {error && (
+        <p className="border-b border-border-default p-3 text-xs text-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Partner output surface has one job: render created resources.
+ *
+ * Review proposals and delivery history keep their host contracts, but they are
+ * no longer permanent destinations inside the office-facing detail workspace.
+ * Individual files and artifacts open as their own typed detail tabs.
+ */
+export function ArtifactPanel({
+  focusedArtifact,
+  includeRemoteOutputs = true,
+  onOpenDetail,
+}: ArtifactPanelProps): JSX.Element {
   return (
     <aside
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface"
       data-testid="partner-artifact-panel"
     >
-      {!hideDestinationTabs && (
-        <div className="h-9 flex-shrink-0 border-b border-border-default px-3 flex items-center">
-          <div
-            className="flex min-w-0 items-center gap-1 rounded bg-surface-2 p-0.5"
-            role="tablist"
-            aria-label={t('partner.results.destinations')}
-            onKeyDown={handleTablistKeyDown}
-            data-testid="partner-result-destinations"
-          >
-            <RailTab
-              id="partner-results-tab"
-              controls="partner-results-panel"
-              active={activeDestination === 'results'}
-              onClick={() => setInternalDestination('results')}
-              icon={<FileOutput className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
-              testId="partner-results-tab"
-            >
-              {t('partner.results.tab.results')}
-            </RailTab>
-            <RailTab
-              id="partner-pending-review-tab"
-              controls="partner-pending-review-panel"
-              active={activeDestination === 'pendingReview'}
-              onClick={() => setInternalDestination('pendingReview')}
-              icon={<FileCheck2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
-              testId="partner-pending-review-tab"
-            >
-              {t('partner.results.tab.pendingReview')}
-            </RailTab>
-          </div>
-        </div>
-      )}
-
-      {activeDestination === 'results' ? (
-        <div
-          id="partner-results-panel"
-          role="tabpanel"
-          aria-labelledby={hideDestinationTabs ? undefined : 'partner-results-tab'}
-          aria-label={hideDestinationTabs ? t('partner.results.tab.results') : undefined}
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          <div className="max-h-[60%] shrink-0 overflow-y-auto">
-            <PartnerRemoteRecords kind="results" />
-          </div>
-          <div className="h-8 flex-shrink-0 border-b border-border-default px-3 flex items-center">
-            <div
-              className="flex min-w-0 items-center gap-1"
-              role="tablist"
-              aria-label={t('partner.results.views')}
-              onKeyDown={handleTablistKeyDown}
-            >
-              <RailTab
-                id="partner-results-artifacts-tab"
-                controls="partner-results-artifacts-panel"
-                active={activeResultView === 'artifacts'}
-                onClick={() => setActiveResultView('artifacts')}
-                testId="partner-results-artifacts-tab"
-              >
-                {t('partner.results.view.artifacts')}
-              </RailTab>
-              <RailTab
-                id="partner-results-files-tab"
-                controls="partner-results-files-panel"
-                active={activeResultView === 'files'}
-                onClick={() => setActiveResultView('files')}
-                icon={<ArchiveRestore className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
-                testId="partner-results-files-tab"
-              >
-                {t('partner.results.view.files')}
-              </RailTab>
-              {fileViewerSnapshot && (
-                <RailTab
-                  id="partner-file-viewer-tab"
-                  controls="partner-file-viewer-panel"
-                  active={activeResultView === 'fileViewer'}
-                  onClick={() => setActiveResultView('fileViewer')}
-                  icon={<FileSearch className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden />}
-                  testId="partner-file-viewer-tab"
-                >
-                  {t('partner.fileViewer.tab')}
-                </RailTab>
-              )}
-            </div>
-          </div>
-
-          {activeResultView === 'fileViewer' && fileViewerSnapshot ? (
-            <div
-              id="partner-file-viewer-panel"
-              role="tabpanel"
-              aria-labelledby="partner-file-viewer-tab"
-              className="min-h-0 flex-1"
-            >
-              <FileViewer snapshot={fileViewerSnapshot} onSnapshotChange={setFileViewerSnapshot} />
-            </div>
-          ) : activeResultView === 'artifacts' ? (
-            <div
-              id="partner-results-artifacts-panel"
-              role="tabpanel"
-              aria-labelledby="partner-results-artifacts-tab"
-              className="min-h-0 flex-1"
-            >
-              <ArtifactsView
-                focusedId={focusedArtifactId}
-                focusedSnapshot={focusedArtifactSnapshot}
-              />
-            </div>
-          ) : (
-            <div
-              id="partner-results-files-panel"
-              role="tabpanel"
-              aria-labelledby="partner-results-files-tab"
-              className="min-h-0 flex-1"
-            >
-              <DeliveriesPanel
-                selectionRequest={
-                  selectionRequest?.selection.destination === 'results' &&
-                  selectionRequest.selection.view === 'files'
-                    ? {
-                        revision: selectionRequest.revision,
-                        tab: selectionRequest.selection.filesView,
-                      }
-                    : null
-                }
-              />
-            </div>
-          )}
-        </div>
-      ) : (
-        <div
-          id="partner-pending-review-panel"
-          role="tabpanel"
-          aria-labelledby={hideDestinationTabs ? undefined : 'partner-pending-review-tab'}
-          aria-label={hideDestinationTabs ? t('partner.results.tab.pendingReview') : undefined}
-          className="flex min-h-0 flex-1 flex-col"
-        >
-          <div className="max-h-[70%] shrink-0 overflow-y-auto">
-            <PartnerRemoteRecords kind="pendingReview" />
-          </div>
-          <div className="min-h-0 flex-1">
-            <FileProposalsPanel />
-          </div>
-        </div>
-      )}
+      {includeRemoteOutputs && <PartnerOutputIndex onOpenDetail={onOpenDetail} />}
+      <div className="min-h-0 flex-1">
+        <ArtifactsView
+          focusedId={focusedArtifact?.id ?? null}
+          focusedSnapshot={focusedArtifact?.snapshot ?? null}
+        />
+      </div>
     </aside>
-  );
-}
-
-function RailTab({
-  id,
-  controls,
-  active,
-  onClick,
-  icon,
-  testId,
-  children,
-}: {
-  readonly id: string;
-  readonly controls: string;
-  readonly active: boolean;
-  readonly onClick: () => void;
-  readonly icon?: ReactNode;
-  readonly testId?: string;
-  readonly children: ReactNode;
-}): JSX.Element {
-  return (
-    <button
-      id={id}
-      type="button"
-      role="tab"
-      aria-controls={controls}
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      onClick={onClick}
-      className={`h-6 inline-flex items-center gap-1 rounded px-1.5 text-[11px] ${
-        active
-          ? 'bg-surface-raised text-fg-primary'
-          : 'text-fg-muted hover:bg-hover-bg hover:text-fg-primary'
-      }`}
-      data-testid={testId}
-    >
-      {icon}
-      <span>{children}</span>
-    </button>
   );
 }

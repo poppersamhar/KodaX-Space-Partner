@@ -14,7 +14,7 @@ const fixture = `
 import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {I18nProvider} from '../i18n/I18nProvider.tsx';
-import {AttachMenu} from './AttachMenu.tsx';
+import {PartnerAttachMenu} from './PartnerAttachMenu.tsx';
 import {useAppStore} from '../store/appStore.ts';
 window.calls=[];
 window.kodaxSpace={platform:'darwin',on:()=>()=>{},invoke:async(channel)=>{
@@ -25,12 +25,12 @@ if(channel==='mcp.discover')return {ok:true,data:{servers:[],errors:[]}};
 return {ok:false,error:{message:'Unexpected channel '+channel}};
 }};
 useAppStore.getState().setCurrentProject('/project');
-function App(){const [open,setOpen]=useState(true);const [result,setResult]=useState('');return <><button onClick={()=>setOpen(true)}>Open menu</button><output>{result}</output><div style={{position:'relative'}}><AttachMenu open={open} onClose={()=>setOpen(false)} onAddFiles={()=>setResult('files')} onAddFolder={()=>setResult('folder')} onInsertText={setResult} partnerConnectorContent={<button type="button">Connected Feishu</button>} onOpenPartnerExperts={()=>setResult('experts')}/></div></>}
+function App(){const [open,setOpen]=useState(true);const [result,setResult]=useState('');return <><button onClick={()=>setOpen(true)}>Open menu</button><output>{result}</output><div style={{position:'relative'}}><PartnerAttachMenu open={open} onClose={()=>setOpen(false)} onAddFiles={()=>setResult('files')} onAddFolder={()=>setResult('folder')} onInsertText={setResult} partnerConnectorContent={<button type="button">Connected Feishu</button>} partnerExpertContent={<button type="button" onClick={()=>setResult('writing-mentor')}>Writing mentor</button>}/></div></>}
 createRoot(document.getElementById('root')).render(<I18nProvider><App/></I18nProvider>);
 `;
 
 test(
-  'Partner plus menu reuses attachments and Slash/Skill discovery while routing Partner connectors and experts',
+  'Partner plus menu keeps the root visible while hover opens Connector, Slash and Skill flyouts',
   { skip: !browserPath },
   async (t) => {
     const output = await build({
@@ -60,17 +60,50 @@ test(
     for (const label of ['添加文件或照片', '添加文件夹', '斜杠命令', '连接器', '技能', '专家'])
       await page.getByRole('button', { name: label, exact: true }).waitFor();
 
-    await page.getByRole('button', { name: '连接器', exact: true }).click();
+    await page.getByRole('button', { name: '连接器', exact: true }).hover();
     await page.getByRole('button', { name: 'Connected Feishu', exact: true }).waitFor();
+    const connectorFlyout = page.getByTestId('partner-connectors-flyout');
+    assert.equal(await connectorFlyout.locator('header').count(), 0);
+    assert.match((await connectorFlyout.getAttribute('class')) ?? '', /w-60/);
+    await page.getByRole('button', { name: '添加文件或照片', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Connected Feishu', exact: true }).hover();
+    await page.getByRole('button', { name: '添加文件或照片', exact: true }).waitFor();
     assert.equal(
       ((await page.evaluate(() => Reflect.get(window, 'calls'))) as string[]).includes(
         'mcp.discover',
       ),
       false,
     );
-    await page.getByRole('button', { name: '返回', exact: true }).click();
-    await page.getByRole('button', { name: '专家', exact: true }).click();
-    await page.getByText('experts', { exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(
+      await page.getByRole('button', { name: 'Connected Feishu', exact: true }).count(),
+      0,
+    );
+    const connectorButton = page.getByRole('button', { name: '连接器', exact: true });
+    await connectorButton.focus();
+    assert.equal(await connectorButton.getAttribute('aria-expanded'), 'true');
+    await page.getByRole('button', { name: 'Connected Feishu', exact: true }).waitFor();
+    await connectorButton.press('ArrowRight');
+    await page.waitForFunction(
+      () => document.activeElement?.getAttribute('data-testid') === 'partner-connectors-flyout',
+    );
+    assert.equal(
+      await page
+        .getByTestId('partner-connectors-flyout')
+        .evaluate((element) => element === document.activeElement),
+      true,
+    );
+    await page.keyboard.press('Tab');
+    assert.equal(
+      await page
+        .getByRole('button', { name: 'Connected Feishu', exact: true })
+        .evaluate((element) => element === document.activeElement),
+      true,
+    );
+    await page.getByRole('button', { name: '专家', exact: true }).hover();
+    await page.getByTestId('partner-experts-flyout').waitFor();
+    await page.getByRole('button', { name: 'Writing mentor', exact: true }).click();
+    await page.getByText('writing-mentor', { exact: true }).waitFor();
 
     await page.getByRole('button', { name: 'Open menu', exact: true }).click();
     await page.getByRole('button', { name: '添加文件或照片', exact: true }).click();
@@ -80,12 +113,14 @@ test(
     await page.getByText('folder', { exact: true }).waitFor();
 
     await page.getByRole('button', { name: 'Open menu', exact: true }).click();
-    await page.getByRole('button', { name: '斜杠命令', exact: true }).click();
+    await page.getByRole('button', { name: '斜杠命令', exact: true }).hover();
+    await page.getByRole('button', { name: '添加文件或照片', exact: true }).waitFor();
     await page.getByRole('button', { name: /\/help/ }).click();
     assert.equal(await page.locator('output').textContent(), '/help ');
 
     await page.getByRole('button', { name: 'Open menu', exact: true }).click();
-    await page.getByRole('button', { name: '技能', exact: true }).click();
+    await page.getByRole('button', { name: '技能', exact: true }).hover();
+    await page.getByRole('button', { name: '添加文件或照片', exact: true }).waitFor();
     await page.getByRole('button', { name: /document-processing/ }).click();
     assert.equal(await page.locator('output').textContent(), '/document-processing ');
   },

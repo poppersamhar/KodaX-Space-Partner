@@ -16,7 +16,7 @@
 
 - 模型只能生成本地提案；写入由可信宿主详情页展示完整目标和正文后，用户确认 `proposalId + expectedContentHash`。模型与插件 frame 没有 apply 权限。
 - 支持新建纯文本文档和向已有文档追加纯文本。宿主将文本转义成仅 title / p / br 的 XML，正文经 stdin 传入，不执行任意 Markdown / XML 的文件上传指令。
-- 复用现有管理员 `connectors.allow/deny/writesAllowed`，默认不自动开启全局写入；计划模式不能提出或执行写入。可信界面可在明确确认后修改既有全局禁写开关，逐提案审批仍必需。
+- 复用现有管理员 `connectors.allow/deny/writesAllowed`；新安装默认开启对话内的连接器写入，已有用户显式保存的策略继续保留。计划模式不能提出或执行写入，逐提案审批仍必需；可信界面仍可修改全局写入开关。
 - 提案固定账号版本、会话、包、目标、正文 hash、范围 hash；追加记录读取时的版本和正文 hash，提交前重读比较，并传入 CLI `--revision-id`。官方未承诺 CAS，首版不提供全文覆盖和原子冲突锁保证。
 - 持久化 `pending → submitting → succeeded / partial / unknown / failed`；拒绝为 rejected，基础文档变化为 conflict。提交前落盘 submitting；仅完整可验证回执产生“成果”。重复 apply 不重复执行。
 - 超时、进程中断、无法解析回执或部分成功均不可自动重试。重启发现已退出写入进程的 submitting 记录改为 unknown，提示用户去飞书核对。

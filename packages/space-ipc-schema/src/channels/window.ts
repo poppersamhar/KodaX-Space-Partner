@@ -5,6 +5,7 @@ export const windowControlActionSchema = z.enum(['minimize', 'toggleMaximize', '
 
 export const PARTNER_BROWSER_FRAME_NAME_PREFIX = 'kodax-partner-browser-';
 export const PARTNER_BROWSER_MAX_URL_LENGTH = 2_048;
+export const PARTNER_BROWSER_PARTITION = 'persist:kodax-partner-browser-v1';
 
 const partnerBrowserFrameNameSchema = z
   .string()

@@ -186,7 +186,10 @@ export class PartnerConnectorTasks {
       this.assertLive(task);
       const input: FeishuOnboardingInput = {
         profile: task.profile,
-        installCli,
+        // Shared onboarding IPC keeps explicit install consent for the other
+        // read-only providers. Feishu is host-managed and must never accept an
+        // installation decision from renderer input.
+        installCli: task.adapter ? installCli : false,
         signal: task.controller.signal,
         onProgress: (event) => this.progress(task, event),
       };

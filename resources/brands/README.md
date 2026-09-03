@@ -21,8 +21,22 @@ These official PNG files are unmodified and used only to identify their respecti
 services. All trademarks belong to their owners; no endorsement is implied.
 Both the renderer and the independent offline HTML use identical asset bytes.
 
-| Local file | Size | Official source |
-| --- | --- | --- |
-| `wecom.png` | 48 × 48 | [Enterprise WeChat homepage favicon](https://wwcdn.weixin.qq.com/node/wwnl/wwnl/style/images/independent/favicon/favicon_48h$c976bd14.png), referenced by [work.weixin.qq.com](https://work.weixin.qq.com/) |
-| `dingtalk.png` | 200 × 200 | Official DingTalk homepage asset; exact URL and SHA-256 in [provider evidence](../../docs/features/f146-dingtalk-evidence.md) |
-| `tencent-meeting.png` | 128 × 128 | [Tencent Meeting homepage logo](https://cdn.meeting.tencent.com/assets/next-website/logo128.png), referenced by [meeting.tencent.com](https://meeting.tencent.com/) |
+| Local file            | Size      | Official source                                                                                                                                                                                             |
+| --------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wecom.png`           | 48 × 48   | [Enterprise WeChat homepage favicon](https://wwcdn.weixin.qq.com/node/wwnl/wwnl/style/images/independent/favicon/favicon_48h$c976bd14.png), referenced by [work.weixin.qq.com](https://work.weixin.qq.com/) |
+| `dingtalk.png`        | 200 × 200 | Official DingTalk homepage asset; exact URL and SHA-256 in [provider evidence](../../docs/features/f146-dingtalk-evidence.md)                                                                               |
+| `tencent-meeting.png` | 128 × 128 | [Tencent Meeting homepage logo](https://cdn.meeting.tencent.com/assets/next-website/logo128.png), referenced by [meeting.tencent.com](https://meeting.tencent.com/)                                         |
+
+## Hosted MCP and app-registration connectors (2026-09-02)
+
+`notion.svg`, `atlassian.svg`, `airtable.svg`, and `zoom.svg` are verbatim files
+from [Simple Icons 16.21.0](https://github.com/simple-icons/simple-icons/tree/16.21.0/icons),
+whose repository is distributed under CC0-1.0. They are used only to identify
+their respective connectors; the service names and marks remain the property of
+their owners and no endorsement is implied.
+
+Slack intentionally uses the generic connector glyph in this release. Slack's
+[official Media Kit](https://slack.com/media-kit) provides marks under its brand
+terms, but no individual distributable logo file was added to this repository.
+This avoids recreating or republishing an unofficial Slack logo while the
+product-level Slack app registration is not yet available.

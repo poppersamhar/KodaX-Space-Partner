@@ -2,6 +2,7 @@
 
 > 2026-08-31：用户确认直接开发，不制作 Figma；参考 WorkBuddy 的连接交互，保留 Space 整体风格。
 > 本文补充 P4/P5，不替换其文档范围与远端审核规则。宿主 0.1.45 / SDK 0.7.95 不变；独立库升级到 0.5.0。
+> 2026-09-01：用户以宿主内置连接组件的新决策替代原“缺少 CLI 时显式下载 / 安装”方案。下文第 5–6 节保留原方案的历史实施证据，但不再代表当前产品路径或验收标准。
 
 ## 1. 需求与产品边界
 
@@ -10,9 +11,12 @@
 
 - 连接器卡片只保留图标、名称、简要用途与操作，已连接使用文字和状态点共同表示。
 - 点卡片进入可信宿主居中弹窗：未连接为“连接”；完成后为“解绑 / 去试试”。
-- 未安装正确版本时，先解释安装官方 CLI 到 Space 自有目录，用户点击“安装并继续”才下载。不安装 Skill，不修改全局 CLI。
+- Space 安装包随目标平台携带固定版本、固定摘要且在发布时校验的官方 CLI 归档；连接按钮是一次操作，宿主只在本机静默校验 / 解包，不在正常连接流程中要求用户下载或安装 CLI。
 - 应用创建、扫码登录和授权使用飞书官方网页；不仿制登录页、二维码或自行收集飞书密码。
-- 准备、安装、等待创建应用、等待用户授权、校验、完成、取消、过期和失败均有实际状态；可重开有效授权页、取消和重试。
+- 准备完成后立即进入 CLI 生成的飞书官方网页；等待创建应用、等待用户授权、校验、完成、取消、过期和失败均有实际状态，可重开有效授权页、取消和重试。
+- CLI 随 KodaX Space 更新。未来若增加独立后台更新，只允许校验后暂存，并从下一项任务开始启用；正在授权或执行的任务固定使用启动时选定的版本，禁止中途热切换。
+- Space 私有托管副本缺失、损坏或版本不匹配但有效内置归档仍在时，宿主从本地静默修复；只有安装包内置归档缺失、损坏或与宿主不兼容时，才提示用户更新或重新安装 KodaX Space。两种情况都不把组件修复转嫁成 CLI 安装步骤。飞书桌面客户端与该连接器相互独立，电脑是否安装飞书客户端不影响此流程。
+- CLI 可执行文件属于可信宿主资源，不进入可独立安装的 Partner 插件包；插件仍只声明目录、专家、Skill 引用和连接器能力。
 - “去试试”回到原 Partner 对话，启用连接器且保留草稿，不自动发送消息。用户已切换会话/项目时不能把迟到结果绑定到新会话。
 - 输入框为聚合连接器入口：逐账号的本会话开关、文档范围入口、管理连接器。全部关闭时入口仍可发现。
 - 会话开关关闭只移除本会话绑定，不解绑账号；重新开启可以先绑定空文档范围。空范围不允许读取/写入任何文档，后续从原右侧详情明确授权。
@@ -23,18 +27,18 @@
 
 沿用原计划五组接缝：扩展 UI 消息桥、账号连接服务、会话绑定、受控 CLI、文档审核。本轮在账号连接接缝增加可取消的短任务：
 
-| 接口                                    | 请求                                               | 返回                                     |
-| --------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
-| `partner.connectors.accounts`           | extensionId、connectorId                           | 本地公开 connections，不触发反复登录检测 |
-| `partner.connectors.onboarding.start`   | extensionId、connectorId、installCli（默认 false） | job                                      |
-| `partner.connectors.onboarding.get`     | extensionId、connectorId、id                       | job                                      |
-| `partner.connectors.onboarding.cancel`  | extensionId、connectorId、id                       | job，取消完成后不会迟到绑定              |
-| `partner.connectors.onboarding.reopen`  | extensionId、connectorId、id                       | ok；不接受 URL                           |
-| `partner.connectors.onboarding.changed` | 宿主推送                                           | job                                      |
+| 接口                                    | 请求                                         | 返回                                     |
+| --------------------------------------- | -------------------------------------------- | ---------------------------------------- |
+| `partner.connectors.accounts`           | extensionId、connectorId                     | 本地公开 connections，不触发反复登录检测 |
+| `partner.connectors.onboarding.start`   | extensionId、connectorId；飞书只发起一次连接 | job                                      |
+| `partner.connectors.onboarding.get`     | extensionId、connectorId、id                 | job                                      |
+| `partner.connectors.onboarding.cancel`  | extensionId、connectorId、id                 | job，取消完成后不会迟到绑定              |
+| `partner.connectors.onboarding.reopen`  | extensionId、connectorId、id                 | ok；不接受 URL                           |
+| `partner.connectors.onboarding.changed` | 宿主推送                                     | job                                      |
 
 `PartnerConnectorOnboardingT` 仅含 id、extensionId、connectorId、phase、canReopen、可选 expiresAt / 固定安全 error / 公开 connection。
 授权链接、device code、appSecret、token、原始 stdout/stderr 均不进入 IPC、扩展 frame、模型或普通日志。
-phase 为 preparing / needs_install / installing / waiting_app / waiting_authorization / verifying / connected / cancelled / expired / failed。
+共享任务 schema 仍兼容 preparing / needs_install / installing / waiting_app / waiting_authorization / verifying / connected / cancelled / expired / failed；共享 start envelope 为其他连接器保留 `installCli`，但可信宿主对飞书强制归一为 false。飞书的当前正常路径不把 needs_install 作为可见阶段；内部 installing 仅映射为本地准备文案，不展示 CLI 安装 / 下载或安装决策。
 
 全部新 IPC 仅接受主 renderer 的 primary main frame。扩展 frame 仍只请求连接器目录与打开可信宿主配置；卡片最多得到 connectedIds 汇总，不得到账号凭据、profile、文档范围或审批能力。
 
@@ -42,34 +46,38 @@ phase 为 preparing / needs_install / installing / waiting_app / waiting_authori
 
 采用已固定的官方 [CLI 1.0.92](https://github.com/larksuite/cli/releases/tag/v1.0.92)：
 
-1. 检查已有 CLI 或 Space 私有二进制。安装需显式确认，使用固定官方 release 资产与 SHA-256，限制重定向、包体积、解包路径与普通文件类型；成功验证版本后原子放入私有目录。失败只清理本次 staging。
+1. 发布流程按目标 OS / 架构取得固定官方 release 归档并校验 SHA-256；KodaX Space 安装包只携带当前目标的归档和许可证。首次连接由可信宿主从本地归档静默、原子地解包并验证版本，不访问 CLI 下载网络，也不修改全局 CLI、PATH 或共享 Skill。
 2. 宿主生成唯一 `space-<UUID>` profile，执行 `config init --new --brand feishu --name <profile>`，保留已有配置条目和默认选择。同名碰撞拒绝，不把 renderer 输入当 profile。凭据仍由官方 CLI 管理；如果用户在网页主动选择已有应用，官方按应用/用户保存 token，不承诺与其他 profile 的凭据完全隔离。
-3. 配置完成后执行该 profile 的 `auth login --json --scope`，只请求当前文档读取、新建、追加所需三项权限；不使用全域 recommend。CLI 自身需要的 offline_access 保留。
+3. 配置完成后执行该 profile 的 `auth login --json --scope`，只请求当前文档读取 / 新建 / 追加与多维表格新建 / 表读写所需的精确权限；不使用全域 recommend。CLI 自身需要的 offline_access 保留。
 4. 等待 CLI 结束后重新验证 `auth status --json --verify`、用户身份与实际 granted scopes；浏览器关闭、URL 已打开或出现二维码不等于连接成功。
 5. 服务端账号提交沿用原 revision / 身份校验，并增加从任务开始起有效的许可，取消、停用、解绑后不得由迟到结果重新连接。
+6. 当前版本通过 KodaX Space 应用更新同步替换内置 CLI。若未来支持独立后台组件更新，必须使用宿主预置的可信版本 / 摘要清单完成有界下载、校验和原子暂存，当前任务继续使用原可用版本，新版本仅在下一任务启用；不得运行 `latest` 或在授权中热替换进程。
 
 依据：[配置初始化](https://github.com/larksuite/cli/blob/v1.0.92/cmd/config/init.go)、[登录与流式 JSON](https://github.com/larksuite/cli/blob/v1.0.92/cmd/auth/login.go)、[权限结果](https://github.com/larksuite/cli/blob/v1.0.92/cmd/auth/login_result.go)。WorkBuddy 的内部实现未知，仅参考用户截图中可观察的交互。
 
 - 普通读写 runner 保留 60 秒上限；授权使用单独有截止时间、限输出且可杀进程组的 runner，不阻塞一个长 IPC。
 - 创建应用只打开官方 `https://open.feishu.cn/page/cli`，用户授权只接受精确 `https://accounts.feishu.cn` origin 返回链接；拒绝 userinfo、非标准端口、控制字符与伪造后缀域名。不重构授权 query。
-- 每个连接器任务去重、有界保存、过期清理；退出取消进程；重启不恢复/重放授权链接或安装任务。
+- 每个连接器任务去重、有界保存、过期清理；退出取消进程；重启不恢复/重放授权链接或本地组件准备任务。
+- 没有可用内置组件时不得打开无一次性授权信息的通用网页冒充已进入授权；固定错误只说明需要更新或重装 Space。飞书客户端登录态、是否安装飞书桌面客户端均不是 CLI 可用性或连接成功的依据。
 - 取消只停止 Space 的等待/进程，不能撤销网页已经创建的应用或授予的权限。解绑仅使 Space 本地连接失效，不自动 logout 用户 CLI 或删除第三方文档。
 - 提交和取消须有明确顺序：取消成功返回后不允许新增连接；若提交已先完成，取消返回实际 connected，不伪装成 cancelled。
-- 验证已有 profile 作为高级入口保留，仅验证绑定，不对它执行 config init 或替换用户凭据。
+- 连接器主界面不再展示 CLI/profile 高级入口。已有本地连接记录与底层 profile 继续兼容；每次 Space 进程首次使用固定版本时校验 / 修复托管组件，运行中若组件无法启动则从内置归档重试一次。它不对已有 profile 执行 config init 或替换用户凭据，也不承诺防御拥有同一用户写权限的进程在校验成功后进行的隐蔽原地替换。
 
 ## 4. 实现票与验证
 
-| 票  | 交付                         | 公共边界测试                                                                |
-| --- | ---------------------------- | --------------------------------------------------------------------------- |
-| O1  | 安全 typed IPC 与短任务控制  | 未确认不安装；不接受命令/任意链接/凭据；所有操作按任务归属校验              |
-| O2  | 官方安装与授权适配           | 固定版本/校验和、越界/失败清理、流式 UTF-8、有效链接、取消/过期、scope 验证 |
-| O3  | 账号提交与生命周期接线       | start 去重；取消/解绑/停用/落盘竞态；退出清理；无迟到会话修改               |
-| O4  | 独立库卡片、弹窗和输入框开关 | 无自动授权、连接与开关分离、去试试保留草稿、零启用可管理、键盘/窄屏/明暗    |
-| O5  | 回归、评审与桌面验证         | 全量单测、typecheck、lint、build、独立包、双轴评审、Electron 截图与交互     |
+| 票  | 交付                         | 公共边界测试                                                             |
+| --- | ---------------------------- | ------------------------------------------------------------------------ |
+| O1  | 安全 typed IPC 与短任务控制  | 单次连接；不接受安装决策、命令、任意链接或凭据；所有操作按任务归属校验   |
+| O2  | 内置组件与官方授权适配       | 固定归档/校验和、本地原子解包、包外隔离、有效链接、取消/过期、scope 验证 |
+| O3  | 账号提交与生命周期接线       | start 去重；取消/解绑/停用/落盘竞态；退出清理；无迟到会话修改            |
+| O4  | 独立库卡片、弹窗和输入框开关 | 无自动授权、连接与开关分离、去试试保留草稿、零启用可管理、键盘/窄屏/明暗 |
+| O5  | 回归、评审与桌面验证         | 全量单测、typecheck、lint、build、独立包、双轴评审、Electron 截图与交互  |
 
-自动化使用受控网络、CLI 与账号夹具，不能冒充真实飞书连接。真实安装下载、用户扫码、远端权限和指定测试文档读写分别记录；未经用户实际授权的环节标为未执行。
+自动化使用受控归档、CLI 与账号夹具，不能冒充真实飞书连接。打包资源、静默解包、用户扫码、远端权限和指定测试文档读写分别记录；未经用户实际授权的环节标为未执行。
 
 ## 5. 实施证据
+
+> 历史说明：本节及第 6 节记录 2026-08-31 原“连接时显式下载 / 安装 CLI”方案的真实实现与验证，保留用于追溯慢下载、校验和授权边界；该交互已被 2026-09-01 的宿主内置方案取代，不能继续作为当前正常流程的验收依据。
 
 ### 代码与自动检查（2026-08-31）
 
@@ -97,6 +105,8 @@ phase 为 preparing / needs_install / installing / waiting_app / waiting_authori
 - 剩余：完整在线自动下载（含慢网络）、真实飞书应用创建 / 扫码 / 权限授权、指定测试文档读写、Windows / Linux 实机安装、完整桌面视觉验收。必须由用户完成账号授权，不复制 WorkBuddy 的二维码、应用身份或凭据。
 
 ## 6. 首次下载失败修复与复测（2026-08-31）
+
+> 本节是已被取代方案的历史修复记录。当前产品不得因为这次历史下载成功而恢复“安装并继续”或在飞书连接按钮后重新下载 CLI。
 
 用户反馈点击连接仍停在“CLI 安装或校验失败”，同时弹窗错误提示去浏览器操作。本轮在现有安装 / 任务 / 弹窗接缝修复，不另建授权引擎。
 
@@ -145,3 +155,13 @@ phase 为 preparing / needs_install / installing / waiting_app / waiting_authori
 ### Spec
 
 逐项核对长条卡片、官方飞书图标、名称“飞书”、Space 风格和独立包：均覆盖。原 ID、专家配置、共享 Skill、账号连接和文档范围逻辑未改，开放发现 0。整体 F146 / P6 保持 InProgress。
+
+## 8. 宿主内置飞书组件决策（2026-09-01）
+
+本节替代第 1–4 节中曾经存在的用户确认下载方案，并约束后续实现与验收：
+
+- 正式安装包必须包含本平台固定且校验过的飞书 CLI 归档与许可证；Partner 插件归档必须继续拒绝可执行文件。
+- 点击“连接”只启动一个任务。本地校验 / 解包是宿主准备动作，不出现“需要安装 CLI”“安装并继续”或下载进度；准备完成后由 CLI 生成并自动打开飞书官方一次性页面。
+- 当前支持版本随 Space 发版更新。未来后台更新只能下载并暂存已审核版本，在当前授权任务结束后供下一任务选择；同一任务的配置、登录、验证和业务操作不能跨版本。
+- 缺失、损坏、摘要或版本不匹配均不回退到全局 PATH、插件 executable 或运行时 `latest`，统一提示更新或重新安装 Space，且不得显示已连接。
+- 人工验收需分别在没有全局 CLI、没有飞书桌面客户端、存在不兼容全局 CLI、内置归档损坏和正常打包资源五种环境检查。安装飞书桌面客户端不是前置条件，也不能替代官方网页授权。

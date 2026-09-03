@@ -75,7 +75,10 @@ import { registerUpdaterChannels, initAutoUpdater } from './ipc/updater.js';
 import { registerMcpbChannels, installMcpbFromOsHandoff } from './ipc/mcpb.js';
 import { registerSpaceExtensionChannels } from './ipc/space-extensions.js';
 import { registerPartnerConnectorChannels } from './ipc/partner-connectors.js';
-import { disposePartnerConnectorTasks } from './partner-connectors/runtime.js';
+import {
+  configurePartnerConnectorRuntimeEnvironment,
+  disposePartnerConnectorTasks,
+} from './partner-connectors/runtime.js';
 import {
   SPACE_EXTENSION_FRAME_CSP,
   isSpaceExtensionFrameUrl,
@@ -275,6 +278,11 @@ if (scopedUserDataDir !== null) {
 }
 
 const SPACE_VERSION = process.env.npm_package_version ?? app.getVersion();
+configurePartnerConnectorRuntimeEnvironment({
+  isPackaged: app.isPackaged,
+  mainDirectory: __dirname,
+  resourcesPath: process.resourcesPath,
+});
 const diagnosticsLogger = initializeDiagnostics({
   userDataDir: app.getPath('userData'),
   spaceVersion: SPACE_VERSION,
@@ -377,6 +385,11 @@ import {
   THEME_BOOTSTRAP_INLINE_HASH,
   shouldPreserveRemoteFrameHeaders,
 } from './csp-config.js';
+import {
+  PARTNER_BROWSER_PARTITION,
+  isSafePartnerWebviewUrl,
+  preparePartnerWebviewAttachment,
+} from './window/partner-webview-policy.js';
 
 let mainWindow: BrowserWindow | null = null;
 let mainPartnerBrowserFrames: PartnerBrowserFrameRegistry | null = null;
@@ -652,6 +665,7 @@ function createMainWindow(): BrowserWindow {
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
+      webviewTag: true,
       // React paints underneath the independent boot overlay. Keep it running
       // even while Chromium considers the covered contents occluded; normal
       // throttling is restored only after the Shell-ready signal removes it.
@@ -667,6 +681,27 @@ function createMainWindow(): BrowserWindow {
   installWindowActivityPublisher(win);
   appBadgeController.refresh();
   const uninstallTopmostGuard = installTopmostGuard(win, { label: 'main window' });
+  win.webContents.on('will-attach-webview', (event, preferences, params) => {
+    if (!preparePartnerWebviewAttachment(preferences as unknown as Record<string, unknown>, params))
+      event.preventDefault();
+  });
+  win.webContents.on('did-attach-webview', (_event, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (isSafePartnerWebviewUrl(url)) void guest.loadURL(url);
+      return { action: 'deny' };
+    });
+    const guardNavigation = (event: Electron.Event, url: string): void => {
+      if (!isSafePartnerWebviewUrl(url)) event.preventDefault();
+    };
+    guest.on('will-navigate', guardNavigation);
+    guest.on('will-redirect', guardNavigation);
+  });
+  const partnerBrowserSession = session.fromPartition(PARTNER_BROWSER_PARTITION);
+  partnerBrowserSession.setPermissionCheckHandler(() => false);
+  partnerBrowserSession.setPermissionRequestHandler((_contents, _permission, callback) => {
+    callback(false);
+  });
+  partnerBrowserSession.on('will-download', (event) => event.preventDefault());
   const invalidateMainWindow = (): void => {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.invalidate();
   };

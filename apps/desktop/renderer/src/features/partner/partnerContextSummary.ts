@@ -1,14 +1,12 @@
-export type PartnerContextDetailTarget = 'sources' | 'results' | 'pendingReview';
-
 export interface PartnerContextSummaryGroup {
   readonly count: number;
   readonly labels: readonly string[];
 }
 
 export interface PartnerContextSummary {
-  readonly sources: PartnerContextSummaryGroup;
-  readonly results: PartnerContextSummaryGroup;
-  readonly pendingReview: PartnerContextSummaryGroup;
+  readonly materials: PartnerContextSummaryGroup;
+  readonly collaboration: PartnerContextSummaryGroup;
+  readonly artifacts: PartnerContextSummaryGroup;
 }
 
 export interface PartnerContextSummaryInput {
@@ -17,16 +15,16 @@ export interface PartnerContextSummaryInput {
   readonly artifactLabels: readonly string[];
   readonly transientArtifactLabels: readonly string[];
   readonly deliveryPaths: readonly string[];
-  readonly pendingReviewPaths: readonly string[];
   readonly remoteSourceLabels?: readonly string[];
-  readonly remoteReviewLabels?: readonly string[];
   readonly remoteReceiptLabels?: readonly string[];
+  readonly expertLabels: readonly string[];
+  readonly skillLabels: readonly string[];
 }
 
 export const EMPTY_PARTNER_CONTEXT_SUMMARY: PartnerContextSummary = {
-  sources: { count: 0, labels: [] },
-  results: { count: 0, labels: [] },
-  pendingReview: { count: 0, labels: [] },
+  materials: { count: 0, labels: [] },
+  collaboration: { count: 0, labels: [] },
+  artifacts: { count: 0, labels: [] },
 };
 
 function filename(path: string): string {
@@ -50,10 +48,9 @@ export function projectPartnerContextSummary(
 ): PartnerContextSummary {
   const pendingSourceLabels = input.pendingSourcePaths.map(filename);
   const deliveryLabels = input.deliveryPaths.map(filename);
-  const pendingReviewLabels = input.pendingReviewPaths.map(filename);
 
   return {
-    sources: {
+    materials: {
       count:
         input.sourceLabels.length +
         input.pendingSourcePaths.length +
@@ -64,7 +61,11 @@ export function projectPartnerContextSummary(
         ...(input.remoteSourceLabels ?? []),
       ]),
     },
-    results: {
+    collaboration: {
+      count: input.expertLabels.length + input.skillLabels.length,
+      labels: compactLabels([...input.expertLabels, ...input.skillLabels]),
+    },
+    artifacts: {
       count:
         input.artifactLabels.length +
         input.transientArtifactLabels.length +
@@ -76,10 +77,6 @@ export function projectPartnerContextSummary(
         ...deliveryLabels,
         ...(input.remoteReceiptLabels ?? []),
       ]),
-    },
-    pendingReview: {
-      count: input.pendingReviewPaths.length + (input.remoteReviewLabels?.length ?? 0),
-      labels: compactLabels([...pendingReviewLabels, ...(input.remoteReviewLabels ?? [])]),
     },
   };
 }

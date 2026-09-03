@@ -257,7 +257,7 @@ import { getSpaceExpertCatalog } from '../space-extensions/runtime.js';
 import {
   createPartnerConnectorRunRuntime,
   isPartnerConnectorTool,
-  PARTNER_CONNECTOR_PROPOSE,
+  isPartnerConnectorWriteTool,
   type PartnerConnectorRunService,
 } from './partner-connector-runtime.js';
 import {
@@ -1911,7 +1911,7 @@ export class RealKodaXSession implements ManagedSession {
       this.surface === 'partner' &&
       isPartnerConnectorTool(tool) &&
       sdk.lookupRunScopedTool(runExtensionRuntime, tool) !== undefined &&
-      (tool !== PARTNER_CONNECTOR_PROPOSE ||
+      (!isPartnerConnectorWriteTool(tool) ||
         (runPermissionMode !== 'plan' && this.permissionMode !== 'plan'));
     const beforeToolExecute: NonNullable<KodaXEvents['beforeToolExecute']> = async (
       tool,

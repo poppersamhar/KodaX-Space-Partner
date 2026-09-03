@@ -1,9 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FeishuCli, FeishuCliError, type FeishuCliRunner } from './feishu-cli.js';
+import {
+  FeishuCli,
+  FeishuCliError,
+  type FeishuCliRunner,
+  type FeishuCreateBaseInput,
+} from './feishu-cli.js';
 
 const expected = { appId: 'cli_sample', openId: 'ou_sample' };
 const docUrl = 'https://sample.feishu.cn/docx/docToken';
+const baseScopes = [
+  'base:app:create',
+  'base:table:read',
+  'base:table:create',
+  'base:table:update',
+  'base:table:delete',
+] as const;
+const baseFields: FeishuCreateBaseInput['fields'] = [
+  { type: 'text', name: '事项' },
+  {
+    type: 'select',
+    name: '状态',
+    multiple: false,
+    options: [{ name: '待处理' }, { name: '已完成' }],
+  },
+  { type: 'datetime', name: '截止时间', style: { format: 'yyyy-MM-dd' } },
+];
+const baseInput = {
+  profile: 'partner',
+  expected,
+  folderUrl: 'https://sample.feishu.cn/drive/folder/folderToken',
+  baseName: '项目台账',
+  tableName: '任务',
+  fields: baseFields,
+};
 const validIdentity = {
   appId: expected.appId,
   brand: 'feishu',
@@ -13,10 +43,231 @@ const validIdentity = {
       verified: true,
       openId: expected.openId,
       userName: '测试',
-      scope: 'docx:document:readonly docx:document:create docx:document:write_only',
+      scope: [
+        'docx:document:readonly',
+        'docx:document:create',
+        'docx:document:write_only',
+        ...baseScopes,
+      ].join(' '),
     },
   },
 };
+
+test('createBase sends one bounded typed field document with the exact official user command', async () => {
+  let businessCalls = 0;
+  const cli = new FeishuCli(
+    fixture(async ({ args, stdin }) => {
+      businessCalls++;
+      assert.deepEqual(args, [
+        '--profile=partner',
+        'base',
+        '+base-create',
+        '--as',
+        'user',
+        '--format',
+        'json',
+        '--name',
+        '项目台账',
+        '--folder-token',
+        'folderToken',
+        '--time-zone',
+        'Asia/Shanghai',
+        '--table-name',
+        '任务',
+        '--fields',
+        JSON.stringify(baseFields),
+      ]);
+      assert.equal(stdin, undefined);
+      return {
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          ok: true,
+          identity: 'user',
+          data: {
+            created: true,
+            base: { app_token: 'baseToken', name: '项目台账' },
+            table: { id: 'tblTask', name: '任务' },
+            fields: baseFields.map((field, index) => ({
+              id: `fld${index}`,
+              ...field,
+            })),
+            default_table_deleted: true,
+            deleted_default_table_id: 'tblDefault',
+          },
+        }),
+      };
+    }),
+  );
+  assert.deepEqual(await cli.createBase(baseInput), {
+    status: 'success',
+    baseToken: 'baseToken',
+    tableId: 'tblTask',
+    url: 'https://www.feishu.cn/base/baseToken',
+  });
+  assert.equal(businessCalls, 1);
+});
+
+test('createBase defaults to the personal space when no folder is supplied', async () => {
+  const cli = new FeishuCli(
+    fixture(async ({ args }) => {
+      assert.deepEqual(args, [
+        '--profile=partner',
+        'base',
+        '+base-create',
+        '--as',
+        'user',
+        '--format',
+        'json',
+        '--name',
+        '项目台账',
+        '--time-zone',
+        'Asia/Shanghai',
+        '--table-name',
+        '任务',
+        '--fields',
+        JSON.stringify(baseFields),
+      ]);
+      return {
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          ok: true,
+          identity: 'user',
+          data: {
+            created: true,
+            base: { app_token: 'baseToken', name: '项目台账' },
+            table: { id: 'tblTask', name: '任务' },
+            fields: baseFields.map((field, index) => ({ id: `fld${index}`, ...field })),
+            default_table_deleted: true,
+            deleted_default_table_id: 'tblDefault',
+          },
+        }),
+      };
+    }),
+  );
+  const { folderUrl: _folderUrl, ...personalSpaceInput } = baseInput;
+  assert.equal((await cli.createBase(personalSpaceInput)).status, 'success');
+});
+
+test('createBase only accepts a success receipt with the complete requested field configuration', async () => {
+  let result = 'partial_success';
+  let fields: Array<Record<string, unknown>> = baseFields.map((field, index) => ({
+    id: `fld${index}`,
+    ...field,
+  }));
+  const cli = new FeishuCli(
+    fixture(async () => ({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        ok: true,
+        identity: 'user',
+        data: {
+          result,
+          created: true,
+          base: { app_token: 'baseToken', name: '项目台账' },
+          table: { id: 'tblTask', name: '任务' },
+          fields,
+          default_table_deleted: true,
+          deleted_default_table_id: 'tblDefault',
+        },
+      }),
+    })),
+  );
+  assert.equal((await cli.createBase(baseInput)).status, 'partial');
+  result = 'success';
+  fields = baseFields.map((field, index) => ({ id: `fld${index}`, ...field }));
+  fields[1] = { ...fields[1], multiple: true, options: [{ name: '待处理' }] };
+  assert.equal((await cli.createBase(baseInput)).status, 'partial');
+  fields = baseFields.map((field, index) => ({ id: `fld${index}`, ...field }));
+  fields[2] = { ...fields[2], style: { format: 'MM-dd' } };
+  assert.equal((await cli.createBase(baseInput)).status, 'partial');
+  result = 'unexpected';
+  fields = baseFields.map((field, index) => ({ id: `fld${index}`, ...field }));
+  assert.equal((await cli.createBase(baseInput)).status, 'unknown');
+});
+
+test('createBase revalidates the selected account after its async dispatch gate', async () => {
+  let currentIdentity = validIdentity;
+  let businessCalls = 0;
+  const cli = new FeishuCli(
+    fixture(
+      async () => {
+        businessCalls++;
+        throw new Error('business command must not spawn');
+      },
+      () => currentIdentity,
+    ),
+  );
+  await assert.rejects(
+    cli.createBase({
+      ...baseInput,
+      beforeDispatch: async () => {
+        currentIdentity = {
+          ...validIdentity,
+          identities: {
+            user: { ...validIdentity.identities.user, openId: 'ou_other' },
+          },
+        };
+      },
+    }),
+    (error: unknown) =>
+      error instanceof FeishuCliError && error.code === 'identity_changed' && !error.dispatched,
+  );
+  assert.equal(businessCalls, 0);
+});
+
+test('createBase rejects untyped or under-scoped input before dispatch and never retries uncertain receipts', async () => {
+  let businessCalls = 0;
+  const business: FeishuCliRunner = async () => {
+    businessCalls++;
+    return {
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        ok: true,
+        identity: 'user',
+        data: {
+          created: true,
+          base: { app_token: 'baseToken', name: '项目台账' },
+          table: { id: 'tblTask', name: '任务' },
+          fields: [],
+          default_table_deleted: false,
+          deleted_default_table_id: 'tblDefault',
+        },
+      }),
+    };
+  };
+  const cli = new FeishuCli(fixture(business));
+  assert.equal((await cli.createBase(baseInput)).status, 'partial');
+  assert.equal(businessCalls, 1);
+  await assert.rejects(
+    cli.createBase({
+      ...baseInput,
+      fields: [{ type: 'formula', name: '公式', expression: '1+1' }],
+    } as never),
+    (error: unknown) =>
+      error instanceof FeishuCliError && error.code === 'invalid_input' && !error.dispatched,
+  );
+  const noScope = new FeishuCli(
+    fixture(business, {
+      ...validIdentity,
+      identities: {
+        user: {
+          ...validIdentity.identities.user,
+          scope: baseScopes.slice(0, -1).join(' '),
+        },
+      },
+    }),
+  );
+  await assert.rejects(
+    noScope.createBase(baseInput),
+    (error: unknown) =>
+      error instanceof FeishuCliError && error.code === 'missing_scope' && !error.dispatched,
+  );
+  assert.equal(businessCalls, 1);
+});
 
 test('inspect forwards its optional cancellation signal to both verification subprocesses', async () => {
   const signal = new AbortController().signal;
@@ -33,12 +284,19 @@ test('inspect forwards its optional cancellation signal to both verification sub
   assert.ok((await cli.inspect('partner', signal)).identity);
 });
 
-function fixture(business: FeishuCliRunner, identity: unknown = validIdentity): FeishuCliRunner {
+function fixture(
+  business: FeishuCliRunner,
+  identity: unknown | (() => unknown) = validIdentity,
+): FeishuCliRunner {
   return async (request) => {
     if (request.args.includes('--version'))
       return { stdout: 'lark-cli version 1.0.92', stderr: '', exitCode: 0 };
     if (request.args.includes('auth'))
-      return { stdout: JSON.stringify(identity), stderr: '', exitCode: 0 };
+      return {
+        stdout: JSON.stringify(typeof identity === 'function' ? identity() : identity),
+        stderr: '',
+        exitCode: 0,
+      };
     return business(request);
   };
 }
@@ -100,7 +358,7 @@ test('missing or blank account display names fall back to the profile, not priva
   }
 });
 
-test('read checks the selected identity and returns the requested document with its real revision', async () => {
+test('read checks the selected identity and extracts the title from the Markdown export envelope', async () => {
   const cli = new FeishuCli(
     fixture(async ({ args }) => {
       assert.deepEqual(args, [
@@ -123,7 +381,11 @@ test('read checks the selected identity and returns the requested document with 
           ok: true,
           identity: 'user',
           data: {
-            document: { document_id: 'docToken', revision_id: 7, content: '# 项目摘要\n内容' },
+            document: {
+              document_id: 'docToken',
+              revision_id: 7,
+              content: '<title>项目&amp;摘要</title>\n\n# 项目摘要\n内容',
+            },
           },
         }),
         stderr: '',
@@ -134,13 +396,13 @@ test('read checks the selected identity and returns the requested document with 
   assert.deepEqual(await cli.read({ profile: 'partner', expected, documentUrl: docUrl }), {
     documentId: 'docToken',
     url: docUrl,
-    title: '项目摘要',
+    title: '项目&摘要',
     revision: 7,
-    content: '# 项目摘要\n内容',
+    content: '<title>项目&amp;摘要</title>\n\n# 项目摘要\n内容',
   });
 });
 
-test('create writes only approved escaped text to the selected folder through stdin', async () => {
+test('create imports approved Markdown into the selected folder through stdin', async () => {
   const cli = new FeishuCli(
     fixture(async ({ args, stdin }) => {
       assert.deepEqual(args, [
@@ -152,16 +414,15 @@ test('create writes only approved escaped text to the selected folder through st
         '--format',
         'json',
         '--doc-format',
-        'xml',
+        'markdown',
+        '--title',
+        'A & B',
         '--parent-token',
         'folderToken',
         '--content',
         '-',
       ]);
-      assert.equal(
-        stdin,
-        '<title>A &amp; B</title><p>&lt;img path="@/secret"/&gt;<br/>x &amp; y</p>',
-      );
+      assert.equal(stdin, '# 更新\n\n- x & y');
       assert.ok(!args.some((arg) => arg.includes('/secret')));
       return {
         stdout: JSON.stringify({
@@ -183,7 +444,7 @@ test('create writes only approved escaped text to the selected folder through st
       expected,
       folderUrl: 'https://sample.feishu.cn/drive/folder/folderToken',
       title: 'A & B',
-      text: '<img path="@/secret"/>\nx & y',
+      text: '# 更新\n\n- x & y',
     }),
     {
       status: 'success',
@@ -191,6 +452,76 @@ test('create writes only approved escaped text to the selected folder through st
       url: docUrl,
       revision: 1,
     },
+  );
+});
+
+test('create rejects Markdown resources before the CLI can read local files or fetch remote media', async () => {
+  let businessCalls = 0;
+  const cli = new FeishuCli(
+    fixture(async () => {
+      businessCalls++;
+      throw new Error('must not dispatch');
+    }),
+  );
+  for (const text of [
+    '![secret](@./secret.txt)',
+    '![remote](https://example.com/image.png)',
+    '<img path="@./secret.txt"/>',
+    '<source path="@./secret.txt"/>',
+  ]) {
+    await assert.rejects(
+      cli.create({ profile: 'partner', expected, title: '安全检查', text }),
+      (error: unknown) =>
+        error instanceof FeishuCliError && error.code === 'invalid_input' && !error.dispatched,
+    );
+  }
+  assert.equal(businessCalls, 0);
+});
+
+test('create defaults to the official my library position when no folder is supplied', async () => {
+  const cli = new FeishuCli(
+    fixture(async ({ args }) => {
+      assert.deepEqual(args, [
+        '--profile=partner',
+        'docs',
+        '+create',
+        '--as',
+        'user',
+        '--format',
+        'json',
+        '--doc-format',
+        'markdown',
+        '--title',
+        '周报',
+        '--parent-position',
+        'my_library',
+        '--content',
+        '-',
+      ]);
+      return {
+        stdout: JSON.stringify({
+          ok: true,
+          identity: 'user',
+          data: {
+            document: { document_id: 'docToken', revision_id: 1, url: docUrl },
+            warnings: [],
+          },
+        }),
+        stderr: '',
+        exitCode: 0,
+      };
+    }),
+  );
+  assert.equal(
+    (
+      await cli.create({
+        profile: 'partner',
+        expected,
+        title: '周报',
+        text: '本周进展',
+      })
+    ).status,
+    'success',
   );
 });
 
@@ -724,13 +1055,13 @@ test('inspect refuses unverified users, foreign brands, unsupported versions and
   assert.deepEqual(await old.inspect('partner'), {
     installed: true,
     version: '1.0.91',
-    reason: '请安装飞书官方 CLI 1.0.92。',
+    reason: '飞书连接组件版本不兼容，请更新 KodaX Space。',
   });
   const missing = new FeishuCli(async () => {
     throw new FeishuCliError('cli_missing', false);
   });
   assert.deepEqual(await missing.inspect('partner'), {
     installed: false,
-    reason: '未找到飞书 CLI，请先安装官方 lark-cli。',
+    reason: '飞书连接组件不可用，请更新或重新安装 KodaX Space。',
   });
 });

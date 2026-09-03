@@ -5,6 +5,7 @@ import {
   FeishuOnboardingError,
   isFeishuOnboardingAuthorizationUrl,
 } from './feishu-onboarding-cli.js';
+import { FeishuCliError } from './feishu-cli-runner.js';
 import type { FeishuAuthProcessInput } from './feishu-auth-process.js';
 
 const profile = 'space-12345678-1234-4234-8234-123456789abc';
@@ -16,10 +17,15 @@ const granted = [
   'docx:document:readonly',
   'docx:document:create',
   'docx:document:write_only',
+  'base:app:create',
+  'base:table:read',
+  'base:table:create',
+  'base:table:update',
+  'base:table:delete',
   'offline_access',
 ];
 
-test('public onboarding runs app creation then exact document-only authorization and emits only safe progress', async () => {
+test('public onboarding runs app creation then exact document and Base authorization and emits only safe progress', async () => {
   const calls: readonly string[][] = [];
   const commands: string[][] = [...calls];
   const events: unknown[] = [];
@@ -83,7 +89,7 @@ test('public onboarding runs app creation then exact document-only authorization
       'login',
       '--json',
       '--scope',
-      'docx:document:readonly docx:document:create docx:document:write_only',
+      'docx:document:readonly docx:document:create docx:document:write_only base:app:create base:table:read base:table:create base:table:update base:table:delete',
     ],
   ]);
   assert.deepEqual(
@@ -174,6 +180,282 @@ test('explicit installation consent selects the private CLI; an incompatible tru
     assert.equal(installs, override ? 0 : 1);
     assert.equal(authCalls, override ? 0 : 1);
   }
+});
+
+test('a host-bundled archive ignores PATH and environment overrides and prepares only the private CLI', async () => {
+  const bundledArchive = '/Applications/KodaX Space/resources/managed-components/lark-cli.tar.gz';
+  const privateExecutable = '/tmp/space-private-cli/lark-cli';
+  const executables: string[] = [];
+  let networkInstalls = 0;
+  let bundledInstalls = 0;
+  let privateReady = false;
+  const adapter = createFeishuOnboardingCli({
+    root: '/tmp/space-private-cli',
+    bundledArchive,
+    env: { KODAX_SPACE_FEISHU_CLI: '/trusted-but-external/lark-cli' },
+    installer: {
+      executable: privateExecutable,
+      install: async () => {
+        networkInstalls++;
+        return privateExecutable;
+      },
+      installBundled: async (archive) => {
+        assert.equal(archive, bundledArchive);
+        bundledInstalls++;
+        privateReady = true;
+        return privateExecutable;
+      },
+    },
+    runnerFactory:
+      (executable) =>
+      async ({ args }) => {
+        executables.push(executable);
+        return {
+          exitCode: 0,
+          stderr: '',
+          stdout: args.includes('--version')
+            ? executable === privateExecutable && privateReady
+              ? 'lark-cli version 1.0.92'
+              : executable === privateExecutable
+                ? 'lark-cli version 0.0.0'
+                : 'lark-cli version 1.0.92'
+            : '[]',
+        };
+      },
+    authProcessFactory: (executable) => async () => {
+      executables.push(executable);
+      return { exitCode: 1 };
+    },
+  });
+  await assert.rejects(
+    adapter.run({
+      profile,
+      installCli: false,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    }),
+    { code: 'authorization_failed' },
+  );
+  assert.equal(networkInstalls, 0);
+  assert.equal(bundledInstalls, 1);
+  assert.ok(executables.length > 0);
+  assert.ok(executables.every((executable) => executable === privateExecutable));
+});
+
+test('a bundled runner prepares the managed component before inspecting an existing profile', async () => {
+  const bundledArchive = '/Applications/KodaX Space/resources/managed-components/lark-cli.tar.gz';
+  const privateExecutable = '/tmp/space-private-cli/lark-cli';
+  const executables: string[] = [];
+  let bundledInstalls = 0;
+  let privateReady = false;
+  const adapter = createFeishuOnboardingCli({
+    root: '/tmp/space-private-cli',
+    bundledArchive,
+    env: { PATH: '/untrusted/bin' },
+    installer: {
+      executable: privateExecutable,
+      install: async () => {
+        throw new Error('network install must remain unused');
+      },
+      installBundled: async (archive) => {
+        assert.equal(archive, bundledArchive);
+        bundledInstalls++;
+        privateReady = true;
+        return privateExecutable;
+      },
+    },
+    runnerFactory:
+      (executable) =>
+      async ({ args }) => {
+        executables.push(executable);
+        if (!privateReady) throw new FeishuCliError('cli_missing', false);
+        return {
+          exitCode: 0,
+          stderr: '',
+          stdout: args.includes('--version') ? 'lark-cli version 1.0.92' : '[]',
+        };
+      },
+  });
+  const request = { args: ['profile', 'list'], signal: new AbortController().signal };
+  assert.equal((await adapter.runner(request)).stdout, '[]');
+  privateReady = false;
+  assert.equal((await adapter.runner(request)).stdout, '[]');
+  assert.equal(bundledInstalls, 2);
+  assert.deepEqual(executables, [privateExecutable, privateExecutable, privateExecutable]);
+});
+
+test('an incompatible managed version probe repairs locally and retries only that safe probe', async () => {
+  const privateExecutable = '/tmp/space-private-cli/lark-cli';
+  let bundledInstalls = 0;
+  let version = '0.0.0';
+  let commands = 0;
+  const adapter = createFeishuOnboardingCli({
+    root: '/tmp/space-private-cli',
+    bundledArchive: '/Applications/KodaX Space/resources/managed-components/lark-cli.tar.gz',
+    env: {},
+    installer: {
+      executable: privateExecutable,
+      install: async () => privateExecutable,
+      installBundled: async () => {
+        bundledInstalls++;
+        version = '1.0.92';
+        return privateExecutable;
+      },
+    },
+    runnerFactory:
+      () =>
+      async ({ args }) => {
+        commands++;
+        return {
+          exitCode: 0,
+          stderr: '',
+          stdout: args.includes('--version') ? `lark-cli version ${version}` : '[]',
+        };
+      },
+  });
+  const request = { args: ['--version'], signal: new AbortController().signal };
+  assert.equal((await adapter.runner(request)).stdout, 'lark-cli version 1.0.92');
+  version = '0.0.0';
+  assert.equal((await adapter.runner(request)).stdout, 'lark-cli version 1.0.92');
+  assert.equal(bundledInstalls, 2);
+  assert.equal(commands, 3);
+});
+
+test('a later onboarding run repairs an incompatible cached managed component before auth', async () => {
+  const privateExecutable = '/tmp/space-private-cli/lark-cli';
+  let bundledInstalls = 0;
+  let version = '0.0.0';
+  let authCalls = 0;
+  const adapter = createFeishuOnboardingCli({
+    root: '/tmp/space-private-cli',
+    bundledArchive: '/Applications/KodaX Space/resources/managed-components/lark-cli.tar.gz',
+    env: {},
+    installer: {
+      executable: privateExecutable,
+      install: async () => privateExecutable,
+      installBundled: async () => {
+        bundledInstalls++;
+        version = '1.0.92';
+        return privateExecutable;
+      },
+    },
+    runnerFactory:
+      () =>
+      async ({ args }) => ({
+        exitCode: 0,
+        stderr: '',
+        stdout: args.includes('--version') ? `lark-cli version ${version}` : '[]',
+      }),
+    authProcessFactory: () => async () => {
+      authCalls++;
+      return { exitCode: 1 };
+    },
+  });
+  assert.equal(
+    (
+      await adapter.runner({
+        args: ['--version'],
+        signal: new AbortController().signal,
+      })
+    ).stdout,
+    'lark-cli version 1.0.92',
+  );
+  version = '0.0.0';
+  await assert.rejects(
+    adapter.run({
+      profile,
+      installCli: false,
+      signal: new AbortController().signal,
+      onProgress: () => {},
+    }),
+    { code: 'authorization_failed' },
+  );
+  assert.equal(bundledInstalls, 2);
+  assert.equal(authCalls, 1);
+});
+
+test('cancelling bundled preparation aborts that batch and the next runner retries cleanly', async () => {
+  const privateExecutable = '/tmp/space-private-cli/lark-cli';
+  let attempts = 0;
+  let privateReady = false;
+  const adapter = createFeishuOnboardingCli({
+    root: '/tmp/space-private-cli',
+    bundledArchive: '/Applications/KodaX Space/resources/managed-components/lark-cli.tar.gz',
+    env: {},
+    installer: {
+      executable: privateExecutable,
+      install: async () => privateExecutable,
+      installBundled: async (_archive, signal) => {
+        attempts++;
+        if (attempts > 1) {
+          privateReady = true;
+          return privateExecutable;
+        }
+        return new Promise<string>((_resolve, reject) =>
+          signal.addEventListener('abort', () => reject(new FeishuOnboardingError('cancelled')), {
+            once: true,
+          }),
+        );
+      },
+    },
+    runnerFactory: () => async () => {
+      if (!privateReady) throw new Error('managed component was not prepared');
+      return { exitCode: 0, stderr: '', stdout: '[]' };
+    },
+  });
+  const controller = new AbortController();
+  const cancelled = adapter.runner({ args: ['profile', 'list'], signal: controller.signal });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(cancelled, { code: 'cancelled' });
+  assert.equal(
+    (
+      await adapter.runner({
+        args: ['profile', 'list'],
+        signal: new AbortController().signal,
+      })
+    ).stdout,
+    '[]',
+  );
+  assert.equal(attempts, 2);
+});
+
+test('one cancelled waiter does not abort bundled preparation still needed by another runner', async () => {
+  const privateExecutable = '/tmp/space-private-cli/lark-cli';
+  let attempts = 0;
+  let installSignal: AbortSignal | undefined;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const adapter = createFeishuOnboardingCli({
+    root: '/tmp/space-private-cli',
+    bundledArchive: '/Applications/KodaX Space/resources/managed-components/lark-cli.tar.gz',
+    env: {},
+    installer: {
+      executable: privateExecutable,
+      install: async () => privateExecutable,
+      installBundled: async (_archive, signal) => {
+        attempts++;
+        installSignal = signal;
+        await held;
+        if (signal.aborted) throw new FeishuOnboardingError('cancelled');
+        return privateExecutable;
+      },
+    },
+    runnerFactory: () => async () => ({ exitCode: 0, stderr: '', stdout: '[]' }),
+  });
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const first = adapter.runner({ args: ['profile', 'list'], signal: firstController.signal });
+  const second = adapter.runner({ args: ['profile', 'list'], signal: secondController.signal });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  firstController.abort();
+  await assert.rejects(first, { code: 'cancelled' });
+  assert.equal(installSignal?.aborted, false);
+  release();
+  assert.equal((await second).stdout, '[]');
+  assert.equal(attempts, 1);
 });
 
 test('only canonical official onboarding links without redirect injection may be opened', () => {

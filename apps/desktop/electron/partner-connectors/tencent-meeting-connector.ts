@@ -22,7 +22,7 @@ import {
   type ReadConnectorInput,
 } from './read-connector.js';
 
-const MEETING_REFERENCE = /^tmeet:\/\/meeting\/([0-9]{1,32})$/u;
+const MEETING_REFERENCE = /^tmeet:\/\/meeting-code\/([0-9]{6,15})$/u;
 
 export interface TencentMeetingConnectorOptions {
   root: string;
@@ -66,7 +66,7 @@ function safeField(value: unknown, maximum: number): string | undefined {
   return value.trim() || undefined;
 }
 
-function meetingDocument(stdout: string, id: string, url: string): ReadConnectorDocument {
+function meetingDocument(stdout: string, meetingCode: string, url: string): ReadConnectorDocument {
   let envelope: Record<string, unknown>;
   try {
     if (Buffer.byteLength(stdout) > 2 * 1024 * 1024) throw new Error('output limit');
@@ -78,12 +78,11 @@ function meetingDocument(stdout: string, id: string, url: string): ReadConnector
   if (envelope.error !== undefined || !Array.isArray(meetings) || meetings.length !== 1)
     throw new ReadConnectorError('invalid_response');
   const meeting = object(meetings[0]);
-  if (meeting.meeting_id !== id) throw new ReadConnectorError('invalid_response');
+  if (meeting.meeting_code !== meetingCode) throw new ReadConnectorError('invalid_response');
   const title = safeField(meeting.subject, 300);
   if (!title) throw new ReadConnectorError('invalid_response');
-  const lines = [`会议主题：${title}`, `会议 ID：${id}`];
+  const lines = [`会议主题：${title}`, `会议号：${meetingCode}`];
   for (const [key, label] of [
-    ['meeting_code', '会议号'],
     ['start_time', '开始时间'],
     ['end_time', '结束时间'],
     ['status', '状态'],
@@ -93,10 +92,16 @@ function meetingDocument(stdout: string, id: string, url: string): ReadConnector
   }
   lines.push(
     '',
-    '仅含会议详情；未读取录制内容或纪要。官方 CLI 附带的录制概要可能不完整，本结果不返回该概要。',
+    '仅含会议基本信息；未向模型展示或导出录制、纪要或参会人。官方 CLI 当前可能附带读取录制基础元数据，Space 会丢弃该数据。',
   );
+  const internalMeetingId = typeof meeting.meeting_id === 'string' ? meeting.meeting_id : undefined;
+  if (
+    internalMeetingId &&
+    (title.includes(internalMeetingId) || lines.some((line) => line.includes(internalMeetingId)))
+  )
+    throw new ReadConnectorError('invalid_response');
   return checkReadConnectorDocument({
-    documentId: id,
+    documentId: meetingCode,
     url,
     title,
     revision: 0,
@@ -235,13 +240,13 @@ async function readMeeting(
   host: TencentMeetingHost,
   input: ReadConnectorInput,
 ): Promise<ReadConnectorDocument> {
-  const id = MEETING_REFERENCE.exec(input.documentUrl)?.[1];
-  if (!id) throw new ReadConnectorError('invalid_resource');
+  const meetingCode = MEETING_REFERENCE.exec(input.documentUrl)?.[1];
+  if (!meetingCode) throw new ReadConnectorError('invalid_resource');
   await requireIdentity(host, input.profile, input.expected);
   let response;
   try {
     response = await host.processForProfile(input.profile)({
-      args: ['meeting', 'get', '--meeting-id', id, '--format', 'json'],
+      args: ['meeting', 'get', '--meeting-code', meetingCode, '--format', 'json'],
       beforeSpawn: async () => {
         await input.beforeRead();
         await requireIdentity(host, input.profile, input.expected);
@@ -254,7 +259,7 @@ async function readMeeting(
   }
   input.assertRead();
   if (response.exitCode !== 0) throw new ReadConnectorError('read_failed');
-  return meetingDocument(response.stdout, id, input.documentUrl);
+  return meetingDocument(response.stdout, meetingCode, input.documentUrl);
 }
 
 export function createTencentMeetingConnector(

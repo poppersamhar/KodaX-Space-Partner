@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronDown, ExternalLink, Loader2, X } from 'lucide-react';
+import { ArrowUpRight, Check, ExternalLink, Loader2, X } from 'lucide-react';
 import type {
   PartnerConnectorConnectionT,
   PartnerConnectorOnboardingT,
@@ -17,7 +17,6 @@ import { floatingSurfaceForBlockingModal } from '../../shell/floatingSurfacePoli
 import { invokeExtensionHost, useSpaceExtensions } from './SpaceExtensionsProvider.js';
 import { usePartnerConnectors } from './PartnerConnectorProvider.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
-import { PartnerConnectorAdvanced } from './PartnerConnectorAdvanced.js';
 import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
 import { connectorPresentation } from './partnerConnectorPresentation.js';
 
@@ -62,14 +61,25 @@ export function PartnerConnectorDialog({
   const { t } = useI18n();
   const readOnly = connector.adapter !== 'feishu-cli';
   const presentation = connectorPresentation[connector.adapter];
+  const privateCli = presentation.setupKind === 'private-cli';
+  const configurationRequired = presentation.setupKind === 'configuration-required';
   const hint = (phase: PartnerConnectorOnboardingT['phase']): string => {
-    if (!readOnly) return t(onboardingHints[phase]);
-    if (phase === 'needs_install')
+    if (!readOnly)
+      return t(
+        phase === 'needs_install' ? 'connectors.componentUnavailable' : onboardingHints[phase],
+      );
+    if (phase === 'needs_install' && privateCli)
       return t('connectors.providerInstall', {
         package: presentation.packageName,
         version: presentation.version,
       });
-    if (phase === 'preparing' || phase === 'installing') return t('connectors.providerPreparation');
+    if (phase === 'needs_install') return t('connectors.remoteUnavailable');
+    if (phase === 'preparing' || phase === 'installing')
+      return t(
+        presentation.setupKind === 'remote-oauth'
+          ? 'connectors.remotePreparation'
+          : 'connectors.providerPreparation',
+      );
     if (phase === 'cancelled') return t('connectors.providerCancelled');
     if (phase === 'connected') return t('connectors.readOnlyConnected');
     return t(onboardingHints[phase]);
@@ -82,7 +92,6 @@ export function PartnerConnectorDialog({
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [advanced, setAdvanced] = useState(false);
   const [selectedId, setSelectedId] = useState(connectionId ?? '');
   const mounted = useRef(true);
   const scope = useRef(context?.snapshot.context).current;
@@ -144,7 +153,9 @@ export function PartnerConnectorDialog({
   const knownConnections = context?.connectorCatalog.entries.find(
     (item) => item.extensionId === extension.id && item.connector.id === connector.id,
   )?.connections;
-  const accounts = knownConnections?.filter((item) => item.connected) ?? [];
+  const accounts = configurationRequired
+    ? []
+    : (knownConnections?.filter((item) => item.connected) ?? []);
   // An old completed job is not authority to revive a subsequently revoked local account.
   const job =
     storedJob?.phase === 'connected' &&
@@ -154,7 +165,7 @@ export function PartnerConnectorDialog({
   const connection =
     accounts.find((item) => item.id === selectedId) ??
     accounts[0] ??
-    (job?.phase === 'connected' ? job.connection : undefined);
+    (!configurationRequired && job?.phase === 'connected' ? job.connection : undefined);
   const perform = async (action: () => Promise<void>): Promise<void> => {
     if (busy || !isActive()) return;
     setBusy(true);
@@ -288,6 +299,11 @@ export function PartnerConnectorDialog({
         {readOnly && (
           <p className="mt-2 text-xs leading-5 text-fg-muted">{t(presentation.requirementsKey)}</p>
         )}
+        {configurationRequired && (
+          <p role="status" className="mt-4 rounded-xl bg-surface-2 p-4 text-sm text-fg-secondary">
+            {t('connectors.productAppRequiredHint')}
+          </p>
+        )}
         {error && (
           <p role="alert" className="mt-4 break-words text-sm text-danger">
             {error}
@@ -372,7 +388,7 @@ export function PartnerConnectorDialog({
           </div>
         ) : (
           <div className="mt-6 space-y-4">
-            {job && (
+            {!configurationRequired && job && (
               <div role="status" className="rounded-xl bg-surface-2 p-4 text-sm">
                 <p className="flex items-center gap-2 font-medium">
                   {activeJob && job.phase !== 'needs_install' ? (
@@ -381,27 +397,41 @@ export function PartnerConnectorDialog({
                     <Check className="h-4 w-4" aria-hidden />
                   ) : null}
                   {t(
-                    readOnly && job.phase === 'needs_install'
+                    privateCli && job.phase === 'needs_install'
                       ? 'connectors.providerRequired'
-                      : `connectors.phase.${job.phase}`,
+                      : job.phase === 'needs_install'
+                        ? 'connectors.phase.failed'
+                        : `connectors.phase.${job.phase}`,
                   )}
                 </p>
                 <p className="mt-2 text-xs leading-5 text-fg-muted">{hint(job.phase)}</p>
-                {job.error && <p className="mt-2 text-xs text-danger">{job.error}</p>}
+                {job.error && (readOnly || job.phase !== 'needs_install') && (
+                  <p className="mt-2 text-xs text-danger">{job.error}</p>
+                )}
               </div>
             )}
-            {(!job || (finished(job) && job.phase !== 'needs_install')) && (
+            {configurationRequired ? (
               <button
-                ref={firstButton}
                 type="button"
                 className="btn-accent w-full rounded-lg px-4 py-2.5 text-sm disabled:opacity-40"
-                disabled={busy}
-                onClick={() => void perform(() => start(false))}
+                disabled
               >
-                {busy ? t('connectors.busy') : t('connectors.connect')}
+                {t('connectors.productAppRequiredAction')}
               </button>
+            ) : (
+              (!job || (finished(job) && (job.phase !== 'needs_install' || !privateCli))) && (
+                <button
+                  ref={firstButton}
+                  type="button"
+                  className="btn-accent w-full rounded-lg px-4 py-2.5 text-sm disabled:opacity-40"
+                  disabled={busy}
+                  onClick={() => void perform(() => start(false))}
+                >
+                  {busy ? t('connectors.busy') : t('connectors.connect')}
+                </button>
+              )
             )}
-            {job?.phase === 'needs_install' && (
+            {privateCli && job?.phase === 'needs_install' && (
               <button
                 ref={firstButton}
                 type="button"
@@ -440,27 +470,6 @@ export function PartnerConnectorDialog({
               >
                 {t(cancelling ? 'connectors.cancelling' : 'connectors.cancelConnection')}
               </button>
-            )}
-          </div>
-        )}
-        {!activeJob && !readOnly && (
-          <div className="mt-6 border-t border-border-default pt-4">
-            <button
-              type="button"
-              aria-expanded={advanced}
-              className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg-primary"
-              onClick={() => setAdvanced((value) => !value)}
-            >
-              <ChevronDown className={`h-3.5 w-3.5 ${advanced ? 'rotate-180' : ''}`} aria-hidden />
-              {t('connectors.advanced')}
-            </button>
-            {advanced && (
-              <PartnerConnectorAdvanced
-                extensionId={extension.id}
-                connectorId={connector.id}
-                isActive={isActive}
-                onConnected={() => context?.refreshCatalog() ?? Promise.resolve()}
-              />
             )}
           </div>
         )}

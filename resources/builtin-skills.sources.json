@@ -2,6 +2,10 @@
   "schemaVersion": 1,
   "skills": [
     {
+      "name": "feishu-office-suite",
+      "sourcePath": "first-party-skills/feishu-office-suite"
+    },
+    {
       "name": "frontend-slides",
       "repository": "https://github.com/zarazhangrui/frontend-slides.git",
       "ref": "9906a34d640d2111f724544cbc50f7f130569ae1",

@@ -2,7 +2,15 @@ import type { FeishuOnboardingInput } from './feishu-onboarding-cli.js';
 import { MAX_PARTNER_REMOTE_TEXT_BYTES } from '@kodax-space/space-ipc-schema';
 
 /** Implemented, host-owned read adapters; never supplied by an extension or a model. */
-export type ReadConnectorId = 'wecom-cli' | 'dingtalk-cli' | 'tencent-meeting-cli';
+export type ReadConnectorId =
+  | 'wecom-cli'
+  | 'dingtalk-cli'
+  | 'tencent-meeting-cli'
+  | 'notion-mcp'
+  | 'airtable-mcp'
+  | 'atlassian-mcp'
+  | 'slack-mcp'
+  | 'zoom-mcp';
 export interface ReadConnectorIdentity {
   authorityId: string;
   subjectId: string;
@@ -49,6 +57,8 @@ export interface ReadConnector {
   /** Strict canonical reference validation. No arbitrary URL, command or JSON forwarding. */
   acceptsResource(value: string): boolean;
   read(input: ReadConnectorInput): Promise<ReadConnectorDocument>;
+  /** Remote OAuth adapters delete the profile credential; local CLIs may omit this hook. */
+  disconnect?(profile: string, signal?: AbortSignal): Promise<void>;
 }
 
 const messages = {
@@ -64,6 +74,8 @@ const messages = {
   read_failed: '读取失败，请确认账号对该资源具有查看权限。',
   resource_too_large:
     '资料超出当前读取上限（正文 128 KiB、标题 280 字符），请选择较小的资料；未保存截断内容。',
+  configuration_required:
+    '此连接器需要产品方预先配置并审核 Slack App 或 Zoom General App；当前构建未配置，尚未连接。',
 } as const;
 
 /** Only fixed safe messages cross the host boundary; never raw CLI output. */

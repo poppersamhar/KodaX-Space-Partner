@@ -199,7 +199,7 @@ const invalidPackages: readonly { name: string; options: ArchiveOptions; error: 
   },
   {
     name: 'incompatible host API',
-    options: { manifest: { hostApiVersion: 2 } },
+    options: { manifest: { hostApiVersion: 5 } },
     error: /hostApiVersion/i,
   },
   {
@@ -392,7 +392,7 @@ test('the independent build artifact installs and renders through the same publi
   const view = await store.getView(installed.id);
   assert.match(view.html, /专家/);
   assert.match(view.html, /连接器/);
-  assert.equal(installed.expertCount, 9);
+  assert.equal(installed.expertCount, 10);
   await store.uninstall(installed.id);
   assert.deepEqual(await store.list(), []);
 });

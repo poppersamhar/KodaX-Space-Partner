@@ -3,13 +3,18 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import type {
   PartnerConnectorSnapshotT,
+  PartnerFeishuBaseCreateTaskT,
+  PartnerNativeDocumentTaskT,
   PartnerRemoteProposalT,
   PartnerRemoteSourceT,
 } from '@kodax-space/space-ipc-schema';
+import { partnerFeishuBaseCreateToolInputJsonSchema } from '@kodax-space/space-ipc-schema';
 import {
   createPartnerConnectorRunRuntime,
   PARTNER_CONNECTOR_READ,
   PARTNER_CONNECTOR_PROPOSE,
+  PARTNER_FEISHU_BASE_CREATE,
+  PARTNER_FEISHU_DOCUMENT_CREATE,
 } from './partner-connector-runtime.js';
 import type { ExtensionRuntimeContract } from '@kodax-ai/kodax/coding';
 
@@ -53,7 +58,452 @@ const service = {
   propose: async (): Promise<PartnerRemoteProposalT> => {
     throw new Error('No writes expected');
   },
+  createBase: async (): Promise<PartnerFeishuBaseCreateTaskT> => {
+    throw new Error('No Base writes expected');
+  },
 };
+
+test('the admitted Partner run exposes a direct Feishu tool without model-selected account data', async () => {
+  const turnExecutionId = '615f80de-b447-4dd2-a416-28f1f6c7e2f8';
+  let received:
+    { readonly turnExecutionId: string; readonly input: Record<string, unknown> } | undefined;
+  const created: PartnerNativeDocumentTaskT = {
+    id: randomUUID(),
+    sessionId: context.sessionId,
+    projectRoot: context.projectRoot,
+    extensionId: binding.extensionId,
+    connectorId: binding.connectorId,
+    connectionId,
+    connectionRevision: 1,
+    provider: 'feishu',
+    turnExecutionId,
+    invocationKey: 'a'.repeat(64),
+    target: { kind: 'personal-space' },
+    requestedTitle: '周报',
+    content: '本周进展',
+    inputHash: 'b'.repeat(64),
+    scopeHash: 'c'.repeat(64),
+    status: 'succeeded',
+    resourceId: 'NewDoc',
+    title: '周报',
+    canonicalUrl: 'https://example.feishu.cn/docx/NewDoc',
+    revision: 2,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    {
+      ...context,
+      nativeDocumentDelivery: { turnExecutionId },
+      getCurrentBindings: () => [binding],
+    },
+    {
+      ...service,
+      createDocument: async (_context, receivedTurnExecutionId, input) => {
+        received = { turnExecutionId: receivedTurnExecutionId, input };
+        return created;
+      },
+    },
+  );
+  assert.ok(runtime);
+  const tool = runtime.listRunTools!('mcp').find(
+    (item) => item.name === PARTNER_FEISHU_DOCUMENT_CREATE,
+  );
+  assert.ok(tool);
+  const proposalTool = runtime.listRunTools!('mcp').find(
+    (item) => item.name === PARTNER_CONNECTOR_PROPOSE,
+  );
+  assert.deepEqual(
+    (proposalTool?.inputSchema.properties as Record<string, { enum?: string[] }>).operation?.enum,
+    ['append'],
+  );
+  assert.equal('connectionId' in (tool.inputSchema.properties as Record<string, unknown>), false);
+  await assert.rejects(
+    runtime.executeCapability('mcp', 'partner-connectors/propose', {
+      connectionId,
+      operation: 'create',
+      title: '不应创建本地待审核稿',
+      content: '正文',
+    }),
+  );
+  const result = await runtime.executeCapability('mcp', tool.capabilityId, {
+    title: '周报',
+    content: '本周进展',
+  });
+  assert.deepEqual(received, {
+    turnExecutionId,
+    input: { title: '周报', content: '本周进展' },
+  });
+  assert.equal(JSON.parse(result.content!).canonicalUrl, created.canonicalUrl);
+});
+
+test('direct document creation stays hidden until trusted eligibility resolves one account', async () => {
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    {
+      ...context,
+      nativeDocumentDelivery: {
+        turnExecutionId: '615f80de-b447-4dd2-a416-28f1f6c7e2f8',
+      },
+    },
+    {
+      ...service,
+      createDocument: async () => {
+        throw new Error('must remain hidden');
+      },
+      documentCreateEligibility: async () => ({
+        status: 'unavailable',
+        reason: 'missing-scope',
+        recoveryAction: 'reauthorize',
+        candidates: [],
+      }),
+    },
+  );
+  assert.ok(runtime);
+  assert.equal(
+    runtime.listRunTools!('mcp').some((tool) => tool.name === PARTNER_FEISHU_DOCUMENT_CREATE),
+    false,
+  );
+});
+
+test('the host capability handshake creates a turn identity without renderer or model input', async () => {
+  let receivedTurnExecutionId: string | undefined;
+  const runtime = await createPartnerConnectorRunRuntime(undefined, context, {
+    ...service,
+    nativeDocumentDeliveryEnabled: async () => true,
+    documentCreateEligibility: async () => ({
+      status: 'ready',
+      candidate: {
+        provider: 'feishu',
+        connectionId,
+        connectionRevision: binding.connectionRevision,
+        accountLabel: binding.accountLabel,
+      },
+    }),
+    createDocument: async (_context, turnExecutionId) => {
+      receivedTurnExecutionId = turnExecutionId;
+      throw new Error('dispatch sentinel');
+    },
+  });
+  assert.ok(runtime);
+  const tool = runtime.listRunTools!('mcp').find(
+    (item) => item.name === PARTNER_FEISHU_DOCUMENT_CREATE,
+  );
+  assert.ok(tool);
+  await assert.rejects(
+    runtime.executeCapability('mcp', tool.capabilityId, {
+      title: '周报',
+      content: '本周进展',
+    }),
+    /dispatch sentinel/u,
+  );
+  assert.match(receivedTurnExecutionId ?? '', /^[0-9a-f-]{36}$/u);
+});
+
+test('direct document creation accepts only the host-scoped folder for the trusted account', async () => {
+  const scopedFolder = 'https://example.feishu.cn/drive/folder/TrustedFolder';
+  const scopedBinding = { ...binding, createFolderUrl: scopedFolder };
+  const turnExecutionId = '615f80de-b447-4dd2-a416-28f1f6c7e2f8';
+  let createCalls = 0;
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    {
+      ...context,
+      bindings: [scopedBinding],
+      nativeDocumentDelivery: { turnExecutionId },
+      getCurrentBindings: () => [scopedBinding],
+    },
+    {
+      ...service,
+      documentCreateEligibility: async () => ({
+        status: 'ready',
+        candidate: {
+          provider: 'feishu',
+          connectionId,
+          connectionRevision: scopedBinding.connectionRevision,
+          accountLabel: scopedBinding.accountLabel,
+        },
+      }),
+      createDocument: async () => {
+        createCalls++;
+        throw new Error('dispatch sentinel');
+      },
+    },
+  );
+  assert.ok(runtime);
+  await assert.rejects(
+    runtime.executeCapability('mcp', 'partner-connectors/feishu-document-create', {
+      folderUrl: 'https://example.feishu.cn/drive/folder/NotAuthorized',
+      title: '周报',
+      content: '本周进展',
+    }),
+    /trusted Feishu account selection/u,
+  );
+  assert.equal(createCalls, 0);
+  await assert.rejects(
+    runtime.executeCapability('mcp', 'partner-connectors/feishu-document-create', {
+      folderUrl: scopedFolder,
+      title: '周报',
+      content: '本周进展',
+    }),
+    /dispatch sentinel/u,
+  );
+  assert.equal(createCalls, 1);
+});
+
+test('without native document delivery, review remains append-only while Base creation stays direct', async () => {
+  let proposalInput: Record<string, unknown> | undefined;
+  let baseInput: Record<string, unknown> | undefined;
+  const now = new Date().toISOString();
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    { ...context, getCurrentBindings: () => [binding] },
+    {
+      ...service,
+      propose: async (_context, input) => {
+        proposalInput = input;
+        return {
+          id: randomUUID(),
+          sessionId: context.sessionId,
+          projectRoot: context.projectRoot,
+          extensionId: binding.extensionId,
+          connectorId: binding.connectorId,
+          connectionId,
+          connectionRevision: 1,
+          operation: 'append',
+          targetUrl: 'https://test.feishu.cn/docx/doc123',
+          title: '周报',
+          content: '本周进展',
+          rationale: '',
+          contentHash: 'b'.repeat(64),
+          scopeHash: 'c'.repeat(64),
+          status: 'pending',
+          createdAt: now,
+          updatedAt: now,
+        };
+      },
+      createBase: async (_context, input) => {
+        baseInput = input;
+        return {
+          id: randomUUID(),
+          sessionId: context.sessionId,
+          projectRoot: context.projectRoot,
+          extensionId: binding.extensionId,
+          connectorId: binding.connectorId,
+          connectionId,
+          connectionRevision: 1,
+          baseName: '项目台账',
+          tableName: '任务',
+          fields: [{ type: 'text', name: '事项' }],
+          timeZone: 'Asia/Shanghai',
+          inputHash: 'd'.repeat(64),
+          scopeHash: 'e'.repeat(64),
+          status: 'succeeded',
+          baseToken: 'baseToken',
+          tableId: 'tblTask',
+          url: 'https://www.feishu.cn/base/baseToken',
+          createdAt: now,
+          updatedAt: now,
+        };
+      },
+    },
+  );
+  assert.ok(runtime);
+  assert.deepEqual(
+    runtime.listRunTools!('mcp').map((tool) => tool.name),
+    [PARTNER_CONNECTOR_READ, PARTNER_CONNECTOR_PROPOSE, PARTNER_FEISHU_BASE_CREATE],
+  );
+  const proposalTool = runtime.listRunTools!('mcp').find(
+    (tool) => tool.name === PARTNER_CONNECTOR_PROPOSE,
+  );
+  assert.deepEqual(
+    (proposalTool?.inputSchema.properties as Record<string, { enum?: string[] }>).operation?.enum,
+    ['append'],
+  );
+  await assert.rejects(
+    runtime.executeCapability('mcp', 'partner-connectors/propose', {
+      connectionId,
+      operation: 'create',
+      title: '周报',
+      content: '本周进展',
+    }),
+  );
+  await runtime.executeCapability('mcp', 'partner-connectors/propose', {
+    connectionId,
+    operation: 'append',
+    targetUrl: 'https://test.feishu.cn/docx/doc123',
+    title: '周报',
+    content: '本周进展',
+  });
+  assert.deepEqual(proposalInput, {
+    connectionId,
+    operation: 'append',
+    targetUrl: 'https://test.feishu.cn/docx/doc123',
+    title: '周报',
+    content: '本周进展',
+    rationale: '',
+  });
+  await runtime.executeCapability('mcp', 'partner-connectors/feishu-base-create', {
+    connectionId,
+    baseName: '项目台账',
+    tableName: '任务',
+    fields: [{ type: 'text', name: '事项' }],
+  });
+  assert.deepEqual(baseInput, {
+    connectionId,
+    baseName: '项目台账',
+    tableName: '任务',
+    fields: [{ type: 'text', name: '事项' }],
+  });
+});
+
+test('an explicitly scoped Feishu Base folder exposes one direct typed task tool with honest side effects', async () => {
+  const baseBinding: PartnerConnectorSnapshotT = {
+    ...binding,
+    createBaseFolderUrl: 'https://example.feishu.cn/drive/folder/BaseFolder',
+  };
+  let calls = 0;
+  let mode: 'accept-edits' | 'plan' = 'accept-edits';
+  const created: PartnerFeishuBaseCreateTaskT = {
+    id: randomUUID(),
+    sessionId: context.sessionId,
+    projectRoot: context.projectRoot,
+    extensionId: binding.extensionId,
+    connectorId: binding.connectorId,
+    connectionId,
+    connectionRevision: 1,
+    folderUrl: baseBinding.createBaseFolderUrl!,
+    baseName: '项目台账',
+    tableName: '任务',
+    fields: [{ type: 'text', name: '事项' }],
+    timeZone: 'Asia/Shanghai',
+    inputHash: 'd'.repeat(64),
+    scopeHash: 'e'.repeat(64),
+    status: 'succeeded',
+    baseToken: 'baseToken',
+    tableId: 'tblTask',
+    url: 'https://www.feishu.cn/base/baseToken',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    {
+      ...context,
+      bindings: [baseBinding],
+      getCurrentBindings: () => [baseBinding],
+      getCurrentPermissionMode: () => mode,
+    },
+    {
+      ...service,
+      createBase: async (_context, input) => {
+        calls++;
+        assert.deepEqual(input, {
+          connectionId,
+          folderUrl: baseBinding.createBaseFolderUrl,
+          baseName: '项目台账',
+          tableName: '任务',
+          fields: [{ type: 'text', name: '事项' }],
+        });
+        return mode === 'plan'
+          ? {
+              ...created,
+              status: 'failed',
+              baseToken: undefined,
+              tableId: undefined,
+              url: undefined,
+              error: 'Plan mode blocked this task',
+            }
+          : created;
+      },
+    },
+  );
+  assert.ok(runtime);
+  assert.deepEqual(
+    runtime.listRunTools!('mcp').map((tool) => tool.name),
+    [PARTNER_CONNECTOR_READ, PARTNER_CONNECTOR_PROPOSE, PARTNER_FEISHU_BASE_CREATE],
+  );
+  const tool = runtime.listRunTools!('mcp').find(
+    (item) => item.name === PARTNER_FEISHU_BASE_CREATE,
+  )!;
+  assert.match(tool.description, /删除.*默认表/);
+  assert.match(tool.description, /不会自动重试/);
+  assert.strictEqual(tool.inputSchema, partnerFeishuBaseCreateToolInputJsonSchema);
+  assert.equal('fieldsJson' in (tool.inputSchema.properties as Record<string, unknown>), false);
+  const input = {
+    connectionId,
+    folderUrl: baseBinding.createBaseFolderUrl,
+    baseName: '项目台账',
+    tableName: '任务',
+    fields: [{ type: 'text', name: '事项' }],
+  };
+  assert.equal(
+    JSON.parse((await runtime.executeCapability('mcp', tool.capabilityId, input)).content!).status,
+    'succeeded',
+  );
+  mode = 'plan';
+  assert.equal(
+    JSON.parse((await runtime.executeCapability('mcp', tool.capabilityId, input)).content!).status,
+    'failed',
+  );
+  assert.equal(calls, 2);
+});
+
+test('a live Base scope revocation is delegated so the host can persist a failed task', async () => {
+  const baseBinding: PartnerConnectorSnapshotT = {
+    ...binding,
+    createBaseFolderUrl: 'https://example.feishu.cn/drive/folder/BaseFolder',
+  };
+  let currentBindings: readonly PartnerConnectorSnapshotT[] = [baseBinding];
+  let calls = 0;
+  const failed: PartnerFeishuBaseCreateTaskT = {
+    id: randomUUID(),
+    sessionId: context.sessionId,
+    projectRoot: context.projectRoot,
+    extensionId: binding.extensionId,
+    connectorId: binding.connectorId,
+    connectionId,
+    connectionRevision: 1,
+    folderUrl: baseBinding.createBaseFolderUrl!,
+    baseName: '项目台账',
+    tableName: '任务',
+    fields: [{ type: 'text', name: '事项' }],
+    timeZone: 'Asia/Shanghai',
+    inputHash: 'd'.repeat(64),
+    scopeHash: 'e'.repeat(64),
+    status: 'failed',
+    error: 'Scope revoked before dispatch',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const runtime = await createPartnerConnectorRunRuntime(
+    undefined,
+    {
+      ...context,
+      bindings: [baseBinding],
+      getCurrentBindings: () => currentBindings,
+    },
+    {
+      ...service,
+      createBase: async () => {
+        calls++;
+        return failed;
+      },
+    },
+  );
+  assert.ok(runtime);
+  currentBindings = [];
+  const result = await runtime.executeCapability('mcp', 'partner-connectors/feishu-base-create', {
+    connectionId,
+    folderUrl: baseBinding.createBaseFolderUrl,
+    baseName: '项目台账',
+    tableName: '任务',
+    fields: [{ type: 'text', name: '事项' }],
+  });
+  assert.equal(JSON.parse(result.content!).status, 'failed');
+  assert.equal(calls, 1);
+});
 
 test('read-only connector runs never advertise proposals and accept only their scoped resource', async () => {
   const selected: PartnerConnectorSnapshotT = {
@@ -61,7 +511,7 @@ test('read-only connector runs never advertise proposals and accept only their s
     adapter: 'tencent-meeting-cli',
     connectorId: 'tencent-meeting',
     name: '腾讯会议',
-    documents: [{ url: 'tmeet://meeting/12345', access: 'read' }],
+    documents: [{ url: 'tmeet://meeting-code/123456', access: 'read' }],
   };
   const runtime = await createPartnerConnectorRunRuntime(
     undefined,
@@ -76,12 +526,12 @@ test('read-only connector runs never advertise proposals and accept only their s
   assert.doesNotMatch(runtime.listRunTools!('mcp')[0].description, /Feishu document/);
   await runtime.executeCapability('mcp', 'partner-connectors/read', {
     connectionId,
-    documentUrl: 'tmeet://meeting/12345',
+    documentUrl: 'tmeet://meeting-code/123456',
   });
   await assert.rejects(
     runtime.executeCapability('mcp', 'partner-connectors/read', {
       connectionId,
-      documentUrl: 'tmeet://meeting/999',
+      documentUrl: 'tmeet://meeting-code/999',
     }),
   );
   await assert.rejects(runtime.executeCapability('mcp', 'partner-connectors/propose', {}));
@@ -93,7 +543,7 @@ test('connector tools are run-scoped, Partner-only, available-only and never reg
   const runtime = await createPartnerConnectorRunRuntime(undefined, context, service);
   assert.deepEqual(
     sdk.listRunScopedTools(runtime).map((tool) => tool.name),
-    [PARTNER_CONNECTOR_READ, PARTNER_CONNECTOR_PROPOSE],
+    [PARTNER_CONNECTOR_READ, PARTNER_CONNECTOR_PROPOSE, PARTNER_FEISHU_BASE_CREATE],
   );
   assert.equal(
     await createPartnerConnectorRunRuntime(undefined, { ...context, surface: 'code' }, service),
@@ -303,7 +753,12 @@ test('the run adapter preserves existing MCP capability and lifecycle methods wi
   );
   assert.deepEqual(
     runtime.listRunTools?.('mcp').map((tool) => tool.name),
-    ['existing_tool', PARTNER_CONNECTOR_READ, PARTNER_CONNECTOR_PROPOSE],
+    [
+      'existing_tool',
+      PARTNER_CONNECTOR_READ,
+      PARTNER_CONNECTOR_PROPOSE,
+      PARTNER_FEISHU_BASE_CREATE,
+    ],
   );
 });
 

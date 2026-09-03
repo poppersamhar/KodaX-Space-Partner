@@ -71,10 +71,12 @@ test('builds an independently installable, self-contained Partner library archiv
   const manifest = JSON.parse(await zip.file('manifest.json').async('string'));
   const html = await zip.file('ui/index.html').async('string');
   assert.equal(manifest.id, 'kodax.partner-library');
-  assert.equal(manifest.version, '0.6.0');
-  assert.equal(manifest.experts.length, 9);
+  assert.equal(manifest.hostApiVersion, 4);
+  assert.equal(manifest.version, '0.9.1');
+  assert.deepEqual(manifest.requiredHostCapabilities, ['partnerNativeDocumentDeliveryV1']);
+  assert.equal(manifest.experts.length, 10);
   assert.equal(manifest.experts[0].id, 'writing-mentor');
-  assert.equal(manifest.experts[0].revision, 1);
+  assert.equal(manifest.experts[0].revision, 2);
   assert.ok(manifest.experts[0].prompt.length > 0);
   assert.equal(manifest.experts[0].skillRef, undefined);
   assert.deepEqual(manifest.connectors.slice(0, 1), [
@@ -82,7 +84,8 @@ test('builds an independently installable, self-contained Partner library archiv
       id: 'feishu-docs',
       adapter: 'feishu-cli',
       name: '飞书',
-      description: '连接飞书文档，读取指定资料；新建和追加内容审核后提交。',
+      description:
+        '连接飞书文档与多维表格；读取指定资料，直接新建文档，受审追加既有文档，并可在个人空间或授权文件夹中新建 Base。',
     },
   ]);
   assert.deepEqual(
@@ -92,18 +95,39 @@ test('builds an independently installable, self-contained Partner library archiv
       ['wecom', 'wecom-cli', '企业微信'],
       ['dingtalk', 'dingtalk-cli', '钉钉'],
       ['tencent-meeting', 'tencent-meeting-cli', '腾讯会议'],
+      ['notion', 'notion-mcp', 'Notion'],
+      ['airtable', 'airtable-mcp', 'Airtable'],
+      ['atlassian', 'atlassian-mcp', 'Atlassian'],
+      ['slack', 'slack-mcp', 'Slack'],
+      ['zoom', 'zoom-mcp', 'Zoom'],
     ],
   );
   assert.equal(manifest.ui.sha256, createHash('sha256').update(html).digest('hex'));
   assert.match(html, /专家/);
   assert.match(html, /连接器/);
   assert.match(html, /role="tablist"/);
+  assert.match(html, /岗位专家/);
+  assert.match(html, /任务专家/);
+  assert.match(html, /平台专家/);
+  assert.match(html, /专家团/);
   const embeddedLogos = [...html.matchAll(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g)];
-  assert.equal(embeddedLogos.length, 4, 'Every implemented provider has its own offline brand');
+  assert.equal(embeddedLogos.length, 4, 'Every local CLI provider has its own offline brand');
   for (const [index, brand] of ['feishu', 'wecom', 'dingtalk', 'tencent-meeting'].entries()) {
     assert.deepEqual(
       Buffer.from(embeddedLogos[index][1], 'base64'),
       await fs.readFile(new URL(`../../resources/brands/${brand}.png`, import.meta.url)),
+    );
+  }
+  const embeddedSvgLogos = [...html.matchAll(/data:image\/svg\+xml;base64,([A-Za-z0-9+/=]+)/g)];
+  assert.equal(
+    embeddedSvgLogos.length,
+    4,
+    'Redistributable remote-provider brands are embedded for offline use',
+  );
+  for (const [index, brand] of ['notion', 'airtable', 'atlassian', 'zoom'].entries()) {
+    assert.deepEqual(
+      Buffer.from(embeddedSvgLogos[index][1], 'base64'),
+      await fs.readFile(new URL(`../../resources/brands/${brand}.svg`, import.meta.url)),
     );
   }
   assert.doesNotMatch(html, /(?:src|href)\s*=\s*["'](?:https?:|\/\/)|\bimport\s*\(/i);
@@ -114,22 +138,89 @@ test('the library contains eight stable scene experts with original tasks and re
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'partner-scene-experts-'));
   t.after(() => fs.rm(outDir, { recursive: true, force: true }));
   const { manifest } = await buildPartnerExtension({ outDir });
-  assert.equal(manifest.version, '0.6.0');
+  assert.equal(manifest.version, '0.9.1');
   assert.deepEqual(
     manifest.experts.map((expert) => expert.id),
-    ['writing-mentor', ...migratedScenes.map(([id]) => id)],
+    ['writing-mentor', ...migratedScenes.map(([id]) => id), 'feishu-office-suite'],
   );
   for (const [id, name, description, starterTask] of migratedScenes) {
     const expert = manifest.experts.find((candidate) => candidate.id === id);
     assert.equal(expert.name, name);
     assert.equal(expert.description, description);
-    assert.equal(expert.revision, 1);
+    assert.equal(expert.revision, 2);
     assert.deepEqual(expert.starterTasks, [starterTask]);
     assert.match(expert.prompt, /你是/);
     assert.doesNotMatch(expert.prompt, /【|】/);
     assert.notEqual(expert.prompt, starterTask);
     assert.equal(expert.skillRef, undefined);
   }
-  assert.equal(manifest.experts[0].revision, 1);
+  assert.equal(manifest.experts[0].revision, 2);
   assert.equal(manifest.experts[0].skillRef, undefined);
+  assert.deepEqual(
+    manifest.experts.map(({ id, expertType, category, listingType }) => [
+      id,
+      expertType,
+      category,
+      listingType,
+    ]),
+    [
+      ['writing-mentor', 'role', '内容创作', 'expert'],
+      ['document-processing', 'task', '文档办公', 'expert'],
+      ['deep-research', 'task', '研究分析', 'expert'],
+      ['data-analysis', 'task', '数据分析', 'expert'],
+      ['presentation', 'task', '内容创作', 'expert'],
+      ['finance', 'role', '投资分析', 'expert'],
+      ['product-management', 'role', '产品设计', 'expert'],
+      ['design', 'role', '产品设计', 'expert'],
+      ['email-editing', 'task', '内容创作', 'expert'],
+      ['feishu-office-suite', 'platform', undefined, 'expert'],
+    ],
+  );
+});
+
+test('the first formal platform expert combines prompt, Skill, connector guide and real tasks', async (t) => {
+  const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'partner-platform-expert-'));
+  t.after(() => fs.rm(outDir, { recursive: true, force: true }));
+  const { manifest } = await buildPartnerExtension({ outDir });
+  const expert = manifest.experts.find((candidate) => candidate.id === 'feishu-office-suite');
+  assert.ok(expert);
+  assert.equal(expert.revision, 3);
+  assert.equal(expert.expertType, 'platform');
+  assert.equal(expert.category, undefined);
+  assert.equal(expert.listingType, 'expert');
+  assert.equal(expert.skillRef, 'feishu-office-suite');
+  const builtinLock = JSON.parse(
+    await fs.readFile(new URL('../../resources/builtin-skills.lock.json', import.meta.url), 'utf8'),
+  );
+  assert.ok(
+    builtinLock.skills.some(({ name }) => name === expert.skillRef),
+    'The formal expert Skill must be shipped in the builtin snapshot',
+  );
+  assert.match(expert.prompt, /连接器|授权/);
+  assert.match(expert.prompt, /直接创建/);
+  assert.match(expert.prompt, /追加.*待审核/);
+  assert.deepEqual(
+    expert.capabilityGuide.groups.map((group) => [
+      group.id,
+      group.label,
+      group.actions.map((action) => action.id),
+    ]),
+    [
+      ['documents', '飞书文档', ['create-document', 'summarize-document', 'append-document']],
+      ['base', '多维表格', ['create-base']],
+    ],
+  );
+  for (const group of expert.capabilityGuide.groups) {
+    for (const action of group.actions) {
+      assert.deepEqual(action.requiredConnectorIds, ['feishu-docs']);
+      assert.ok(action.promptTemplate.length > 0);
+    }
+  }
+  const skill = await fs.readFile(
+    new URL('../../resources/first-party-skills/feishu-office-suite/SKILL.md', import.meta.url),
+    'utf8',
+  );
+  assert.match(skill, /partner_feishu_document_create/);
+  assert.match(skill, /partner_connector_propose/);
+  assert.match(skill, /append/u);
 });

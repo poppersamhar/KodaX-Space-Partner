@@ -82,7 +82,10 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
   });
   let tasks: PartnerConnectorTasks;
   let enabled = true;
-  const cli: Pick<FeishuCli, 'inspect' | 'listProfiles' | 'read' | 'create' | 'append'> = {
+  const cli: Pick<
+    FeishuCli,
+    'inspect' | 'listProfiles' | 'read' | 'create' | 'append' | 'createBase'
+  > = {
     inspect: async (profile) => ({
       installed: true,
       version: '1.0.92',
@@ -91,7 +94,16 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
         appId: 'cli_fixture',
         openId: 'ou_fixture',
         label: 'Test account',
-        scopes: ['docx:document:readonly', 'docx:document:create', 'docx:document:write_only'],
+        scopes: [
+          'docx:document:readonly',
+          'docx:document:create',
+          'docx:document:write_only',
+          'base:app:create',
+          'base:table:read',
+          'base:table:create',
+          'base:table:update',
+          'base:table:delete',
+        ],
       },
     }),
     listProfiles: async () => [],
@@ -102,6 +114,9 @@ async function fixture(t: { after(fn: () => Promise<void>): void }) {
       throw new Error('No business operation permitted');
     },
     append: async () => {
+      throw new Error('No business operation permitted');
+    },
+    createBase: async () => {
       throw new Error('No business operation permitted');
     },
   };
@@ -388,7 +403,7 @@ test('invalid/expired URLs and a missing installation stay safe and terminal; on
   await settleUntil(() => tasks.get(first).phase === 'needs_install');
   const second = tasks.start({ ...owner, installCli: true });
   await settleUntil(() => tasks.get(second).phase === 'needs_install');
-  assert.deepEqual(consent, [false, true]);
+  assert.deepEqual(consent, [false, false]);
   assert.notEqual(first.id, second.id);
 });
 
@@ -440,7 +455,7 @@ test('disconnect and disable abort an active authorization synchronously before 
     const accounts = await f.service.accounts(owner.extensionId, owner.connectorId);
     assert.equal(accounts.length, 1);
     assert.equal(accounts[0].id, account.id);
-    if (operation === 'disconnect') assert.equal(accounts[0].connected, false);
+    assert.equal(accounts[0].connected, false);
   }
 });
 

@@ -39,20 +39,30 @@ test('subprocess runner preserves argument boundaries and stdin without inheriti
   const result = await run({
     args: [
       '-e',
-      'let input="";process.stdin.on("data",s=>input+=s);process.stdin.on("end",()=>process.stdout.write(JSON.stringify({arg:process.argv[1],input,keys:Object.keys(process.env)})));',
+      'let input="";process.stdin.on("data",s=>input+=s);process.stdin.on("end",()=>process.stdout.write(JSON.stringify({arg:process.argv[1],input,update:process.env.LARKSUITE_CLI_NO_UPDATE_NOTIFIER,skills:process.env.LARKSUITE_CLI_NO_SKILLS_NOTIFIER,keys:Object.keys(process.env)})));',
       'x;$(touch /not-executed)',
     ],
     stdin: 'plain body',
   });
-  const value = JSON.parse(result.stdout) as { arg: string; input: string; keys: string[] };
+  const value = JSON.parse(result.stdout) as {
+    arg: string;
+    input: string;
+    update: string;
+    skills: string;
+    keys: string[];
+  };
   assert.equal(result.exitCode, 0);
   assert.equal(value.arg, 'x;$(touch /not-executed)');
   assert.equal(value.input, 'plain body');
   assert.ok(value.keys.includes('PATH'));
   assert.ok(value.keys.includes('USERPROFILE'));
+  assert.equal(value.update, '1');
+  assert.equal(value.skills, '1');
   assert.ok(
     !value.keys.some((key) =>
-      /LARK|OPENCLAW|HERMES|NODE_OPTIONS|NODE_PATH|ELECTRON|API_KEY/u.test(key),
+      /LARKSUITE_CLI_(APP_SECRET|CONFIG_DIR)|LARK_CHANNEL|OPENCLAW|HERMES|NODE_OPTIONS|NODE_PATH|ELECTRON|API_KEY/u.test(
+        key,
+      ),
     ),
   );
 });

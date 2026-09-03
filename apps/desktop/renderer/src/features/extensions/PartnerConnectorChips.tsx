@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link2, Settings2 } from 'lucide-react';
+import { ArrowUpRight, Link2 } from 'lucide-react';
 import type {
   PartnerConnectorConnectionT,
+  PartnerConnectorSnapshotT,
+  PartnerConnectorStateT,
   SpaceConnectorDefinitionT,
 } from '@kodax-space/space-ipc-schema';
 import {
   usePartnerConnectors,
-  requestPartnerConnectorDetail,
   requestPartnerConnectorManagement,
+  type PartnerConnectorCatalogEntry,
 } from './PartnerConnectorProvider.js';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { FloatingSurfaceHost } from '../../shell/FloatingSurfaceHost.js';
 import type { FloatingSurfaceDescriptor } from '../../shell/floatingSurfacePolicy.js';
 import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
+import { isConfigurationRequiredConnector } from './partnerConnectorPresentation.js';
 
 const popoverSurface: FloatingSurfaceDescriptor = {
   id: 'partner-connectors',
@@ -26,12 +29,103 @@ const popoverSurface: FloatingSurfaceDescriptor = {
   label: 'Conversation connectors',
 };
 
+interface PartnerConnectorMenuRow {
+  readonly extensionId: string;
+  readonly connector: SpaceConnectorDefinitionT;
+  readonly connection?: PartnerConnectorConnectionT;
+  readonly selected?: PartnerConnectorStateT['connectors'][number];
+  readonly connected: boolean;
+  readonly configurationRequired: boolean;
+  readonly index: number;
+}
+
+function unavailableConnection(binding: PartnerConnectorSnapshotT): PartnerConnectorConnectionT {
+  return {
+    id: binding.connectionId,
+    extensionId: binding.extensionId,
+    connectorId: binding.connectorId,
+    revision: binding.connectionRevision,
+    ...(binding.adapter ? { adapter: binding.adapter } : {}),
+    profile: 'unavailable',
+    accountLabel: binding.accountLabel,
+    connected: false,
+    permissions: { read: false, create: false, append: false, createBase: false },
+  };
+}
+
+/** Project one connector per definition while retaining a removable row for stale session bindings. */
+export function projectPartnerConnectorMenuRows(
+  entries: readonly PartnerConnectorCatalogEntry[],
+  selected: PartnerConnectorStateT['connectors'],
+): readonly PartnerConnectorMenuRow[] {
+  const rows: PartnerConnectorMenuRow[] = entries.map((entry, index) => {
+    const configurationRequired = isConfigurationRequiredConnector(entry.connector.adapter);
+    const selectedItem = selected.find(
+      (item) =>
+        item.binding.extensionId === entry.extensionId &&
+        item.binding.connectorId === entry.connector.id,
+    );
+    const selectedConnection = configurationRequired
+      ? undefined
+      : entry.connections.find(
+          (item) => item.connected && item.id === selectedItem?.binding.connectionId,
+        );
+    const firstConnected = configurationRequired
+      ? undefined
+      : entry.connections.find((item) => item.connected);
+    return {
+      ...entry,
+      connection:
+        selectedItem && !selectedConnection
+          ? unavailableConnection(selectedItem.binding)
+          : (selectedConnection ?? firstConnected),
+      selected: selectedItem,
+      connected: !!firstConnected,
+      configurationRequired,
+      index,
+    };
+  });
+  for (const item of selected) {
+    if (
+      rows.some(
+        (row) =>
+          row.extensionId === item.binding.extensionId &&
+          row.connector.id === item.binding.connectorId,
+      )
+    )
+      continue;
+    rows.push({
+      extensionId: item.binding.extensionId,
+      connector: {
+        id: item.binding.connectorId,
+        adapter: item.binding.adapter ?? 'feishu-cli',
+        name: item.binding.name,
+        description: '',
+      },
+      connection: unavailableConnection(item.binding),
+      selected: item,
+      connected: false,
+      configurationRequired: isConfigurationRequiredConnector(item.binding.adapter ?? 'feishu-cli'),
+      index: rows.length,
+    });
+  }
+  return rows
+    .sort((left, right) => {
+      const selectedOrder = Number(!!right.selected) - Number(!!left.selected);
+      const connectionOrder = Number(right.connected) - Number(left.connected);
+      return selectedOrder || connectionOrder || left.index - right.index;
+    })
+    .slice(0, 5);
+}
+
 export function PartnerConnectorMenuContent({
   onClose,
   showHeading = true,
+  connectedOnly = false,
 }: {
   readonly onClose: () => void;
   readonly showHeading?: boolean;
+  readonly connectedOnly?: boolean;
 }): JSX.Element | null {
   const context = usePartnerConnectors();
   const { t } = useI18n();
@@ -43,42 +137,10 @@ export function PartnerConnectorMenuContent({
   if (!context || context.snapshot.context.surface !== 'partner') return null;
   const { snapshot, connectorCatalog } = context;
   const selected = snapshot.state.connectors;
-  const rows: {
-    extensionId: string;
-    connector: SpaceConnectorDefinitionT;
-    connection: PartnerConnectorConnectionT;
-  }[] = connectorCatalog.entries.flatMap((entry) =>
-    entry.connections
-      .filter((connection) => connection.connected)
-      .map((connection) => ({
-        extensionId: entry.extensionId,
-        connector: entry.connector,
-        connection,
-      })),
-  );
-  for (const item of selected) {
-    if (rows.some((row) => row.connection.id === item.binding.connectionId)) continue;
-    rows.push({
-      extensionId: item.binding.extensionId,
-      connector: {
-        id: item.binding.connectorId,
-        adapter: item.binding.adapter ?? 'feishu-cli',
-        name: item.binding.name,
-        description: '',
-      },
-      connection: {
-        id: item.binding.connectionId,
-        extensionId: item.binding.extensionId,
-        connectorId: item.binding.connectorId,
-        revision: item.binding.connectionRevision,
-        ...(item.binding.adapter ? { adapter: item.binding.adapter } : {}),
-        profile: 'unavailable',
-        accountLabel: item.binding.accountLabel,
-        connected: false,
-        permissions: { read: false, create: false, append: false },
-      },
-    });
-  }
+  const projectedRows = projectPartnerConnectorMenuRows(connectorCatalog.entries, selected);
+  const rows = connectedOnly
+    ? projectedRows.filter((row) => row.connected && row.connection?.connected)
+    : projectedRows;
   const toggle = async (connection: PartnerConnectorConnectionT): Promise<void> => {
     setError(null);
     try {
@@ -100,7 +162,10 @@ export function PartnerConnectorMenuContent({
   };
   const busy = snapshot.loading || snapshot.changing;
   return (
-    <div data-testid="partner-connector-menu-content" className="p-3 text-fg-primary">
+    <div
+      data-testid="partner-connector-menu-content"
+      className={showHeading ? 'p-3 text-fg-primary' : 'py-1 text-fg-primary'}
+    >
       {showHeading && (
         <div className="mb-3 flex items-center justify-between gap-3 text-xs">
           <span className="font-medium">{t('connectors.composer')}</span>
@@ -109,75 +174,63 @@ export function PartnerConnectorMenuContent({
           </span>
         </div>
       )}
-      {rows.map(({ extensionId, connector, connection }) => {
-        const item = selected.find((entry) => entry.binding.connectionId === connection.id);
-        const unavailable = !!item && (!item.available || !connection.connected);
+      {rows.map(({ extensionId, connector, connection, selected: item, configurationRequired }) => {
+        const unavailable = !!item && (!item.available || !connection?.connected);
         return (
           <div
-            key={connection.id}
-            className="border-b border-border-default/60 py-3 last:border-b-0"
+            key={`${extensionId}:${connector.id}`}
+            data-testid="partner-connector-menu-row"
+            className="flex items-center gap-2 px-3 py-2 hover:bg-hover-bg"
           >
-            <div className="flex items-center gap-3">
-              <PartnerConnectorIcon
-                adapter={connector.adapter}
-                className="h-5 w-5 shrink-0 text-accent-ink"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm">{connector.name}</p>
-                <p
-                  className={`truncate text-xs ${unavailable ? 'text-danger' : 'text-fg-muted'}`}
-                  title={item?.unavailableReason}
-                >
-                  {connection.accountLabel}
-                  {unavailable ? ` · ${t('connectors.unavailable')}` : ''}
-                </p>
-              </div>
+            <PartnerConnectorIcon
+              adapter={connector.adapter}
+              className="h-4 w-4 shrink-0 text-accent-ink"
+            />
+            <p
+              data-connector-name
+              className="min-w-0 flex-1 truncate text-xs text-fg-secondary"
+              title={item?.unavailableReason ?? connection?.accountLabel}
+            >
+              {connector.name}
+            </p>
+            {configurationRequired && item && connection ? (
+              <button
+                type="button"
+                aria-label={t('connectors.removeUnavailable', { name: connector.name })}
+                disabled={busy}
+                onClick={() => void toggle(connection)}
+                className="shrink-0 text-xs text-danger hover:underline disabled:opacity-40"
+              >
+                {t('connectors.remove')}
+              </button>
+            ) : connection ? (
               <button
                 type="button"
                 role="switch"
-                aria-label={t('connectors.sessionSwitch', { name: connection.accountLabel })}
+                aria-label={t('connectors.sessionSwitch', { name: connector.name })}
                 aria-checked={!!item}
-                disabled={
-                  busy || (!item && (!connection.connected || !snapshot.context.projectRoot))
-                }
+                disabled={busy || (!item && !snapshot.context.projectRoot)}
                 onClick={() => void toggle(connection)}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-40 ${item ? 'bg-accent' : 'bg-fg-muted/35'}`}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-40 ${item ? (unavailable ? 'bg-danger' : 'bg-accent') : 'bg-fg-muted/35'}`}
               >
                 <span
                   className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${item ? 'left-[18px]' : 'left-0.5'}`}
                 />
               </button>
-            </div>
-            <div className="ml-8 mt-2 flex items-center gap-3">
+            ) : (
               <button
                 type="button"
-                className="text-xs text-fg-muted hover:text-fg-primary"
+                aria-label={`${t('connectors.connect')} ${connector.name}`}
+                className="inline-flex shrink-0 items-center gap-1 text-xs text-fg-muted hover:text-fg-primary"
                 onClick={() => {
                   onClose();
-                  requestPartnerConnectorDetail({
-                    context: snapshot.context,
-                    extensionId,
-                    connector,
-                    connectionId: connection.id,
-                  });
+                  requestPartnerConnectorManagement(snapshot.context, extensionId);
                 }}
               >
-                {t(
-                  connector.adapter === 'feishu-cli'
-                    ? 'connectors.documentScope'
-                    : 'connectors.resourceScope',
-                )}
+                <Link2 className="h-4 w-4" aria-hidden />
+                {t('connectors.connect')}
               </button>
-              {item && !item.binding.documents.length && (
-                <span className="text-[10px] text-fg-muted">
-                  {t(
-                    connector.adapter === 'feishu-cli'
-                      ? 'connectors.emptyScope'
-                      : 'connectors.emptyResourceScope',
-                  )}
-                </span>
-              )}
-            </div>
+            )}
           </div>
         );
       })}
@@ -186,10 +239,8 @@ export function PartnerConnectorMenuContent({
           {t('common.loading')}
         </p>
       )}
-      {!connectorCatalog.loading && !connectorCatalog.error && !rows.length && (
-        <p className="py-2 text-xs leading-5 text-fg-muted">
-          {t('connectors.noConnectedAccounts')}
-        </p>
+      {!connectorCatalog.loading && !connectorCatalog.error && !connectorCatalog.entries.length && (
+        <p className="py-2 text-xs leading-5 text-fg-muted">{t('connectors.emptyCatalog')}</p>
       )}
       {(error || snapshot.error || connectorCatalog.error) && (
         <p role="alert" className="py-2 text-xs text-danger">
@@ -198,17 +249,17 @@ export function PartnerConnectorMenuContent({
       )}
       <button
         type="button"
-        className="mt-2 flex w-full items-center gap-2 rounded-lg border-t border-border-default px-2 py-3 text-left text-xs hover:bg-hover-bg"
+        className="mt-1 flex w-full items-center gap-2 border-t border-border-default px-3 py-2 text-left text-xs text-fg-secondary hover:bg-hover-bg hover:text-fg-primary"
         onClick={() => {
           onClose();
           requestPartnerConnectorManagement(
             snapshot.context,
-            connectorCatalog.entries[0]?.extensionId,
+            rows[0]?.extensionId ?? connectorCatalog.entries[0]?.extensionId,
           );
         }}
       >
-        <Settings2 className="h-4 w-4" aria-hidden />
-        {t('connectors.manage')}
+        <ArrowUpRight className="h-4 w-4" aria-hidden />
+        {t('connectors.more')}
       </button>
     </div>
   );
@@ -243,6 +294,17 @@ export function PartnerConnectorChips(): JSX.Element | null {
   }, [anchor]);
   if (!context || context.snapshot.context.surface !== 'partner') return null;
   const selected = context.snapshot.state.connectors;
+  const connectedRows = projectPartnerConnectorMenuRows(
+    context.connectorCatalog.entries,
+    selected,
+  ).filter((row) => row.connected && row.connection?.connected);
+  const activeRows = connectedRows.filter(
+    (row) =>
+      !!row.selected &&
+      row.selected.available &&
+      row.selected.binding.connectionId === row.connection?.id,
+  );
+  if (!activeRows.length) return null;
   return (
     <div data-testid="partner-connector-chips" className="inline-flex items-center">
       <button
@@ -257,10 +319,18 @@ export function PartnerConnectorChips(): JSX.Element | null {
             current ? null : (trigger.current?.getBoundingClientRect() ?? null),
           )
         }
-        className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2 text-xs hover:bg-hover-bg ${selected.some((item) => !item.available) ? 'border-danger text-danger' : selected.length ? 'border-accent/30 bg-accent/10 text-accent-ink' : 'border-border-default text-fg-muted'}`}
+        className={`inline-flex h-6 items-center rounded-md px-1 hover:bg-hover-bg ${selected.some((item) => !item.available) ? 'text-danger' : 'bg-surface-2 text-fg-muted'}`}
       >
-        <Link2 className="h-4 w-4" aria-hidden />
-        {selected.length > 0 && <span>{selected.length}</span>}
+        {activeRows.map((row, index) => (
+          <span
+            key={`${row.extensionId}:${row.connector.id}`}
+            data-testid="partner-connector-active-icon"
+            title={row.connector.name}
+            className={`flex h-5 w-5 items-center justify-center rounded-full bg-surface ${index ? '-ml-1' : ''}`}
+          >
+            <PartnerConnectorIcon adapter={row.connector.adapter} className="h-5 w-5" />
+          </span>
+        ))}
       </button>
       {anchor && (
         <FloatingSurfaceHost
@@ -272,9 +342,9 @@ export function PartnerConnectorChips(): JSX.Element | null {
         >
           <div
             ref={panel}
-            className="pointer-events-auto fixed w-80 max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-border-default bg-surface shadow-2xl"
+            className="pointer-events-auto fixed w-60 max-w-[calc(100vw-24px)] overflow-y-auto rounded-lg border border-border-default bg-surface shadow-2xl"
             style={{
-              left: Math.max(12, Math.min(anchor.left, window.innerWidth - 332)),
+              left: Math.max(12, Math.min(anchor.left, window.innerWidth - 252)),
               ...(anchor.top > 240
                 ? { bottom: window.innerHeight - anchor.top + 8 }
                 : { top: anchor.bottom + 8 }),
@@ -284,7 +354,11 @@ export function PartnerConnectorChips(): JSX.Element | null {
                   : Math.max(160, window.innerHeight - anchor.bottom - 24),
             }}
           >
-            <PartnerConnectorMenuContent onClose={() => setAnchor(null)} />
+            <PartnerConnectorMenuContent
+              onClose={() => setAnchor(null)}
+              showHeading={false}
+              connectedOnly
+            />
           </div>
         </FloatingSurfaceHost>
       )}

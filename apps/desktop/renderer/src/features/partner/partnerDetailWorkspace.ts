@@ -1,22 +1,24 @@
-import type {
-  PartnerResultDestination,
-  PartnerResultSelectionRequest,
-} from './partnerResultRail.js';
 import type { TransientArtifactSnapshot } from '../artifact/transientArtifact.js';
 import type {
+  PartnerFeishuBaseCreateTaskT,
+  PartnerDeliveryRefT,
   PartnerExpertSnapshotT,
+  SkillMeta,
   SpaceConnectorDefinitionT,
 } from '@kodax-space/space-ipc-schema';
+import { partnerDeliveryPreviewVersion } from '../../lib/generatedResourceRef.js';
 
 export type PartnerDetailTabKind =
-  | 'sources'
-  | 'results'
-  | 'pendingReview'
+  | 'materials'
+  | 'outputs'
+  | 'collaboration'
   | 'files'
   | 'file'
+  | 'artifact'
+  | 'baseTask'
   | 'browser'
-  | 'terminal'
   | 'expert'
+  | 'skill'
   | 'connector';
 
 export interface PartnerDetailTab {
@@ -24,7 +26,12 @@ export interface PartnerDetailTab {
   readonly kind: PartnerDetailTabKind;
   readonly title: string;
   readonly snapshot?: TransientArtifactSnapshot;
+  readonly artifactId?: string;
+  readonly baseTask?: PartnerFeishuBaseCreateTaskT;
+  readonly browserUrl?: string;
+  readonly resourceKey?: string;
   readonly expert?: PartnerExpertSnapshotT;
+  readonly skill?: SkillMeta;
   readonly connector?: SpaceConnectorDefinitionT;
   readonly extensionId?: string;
   readonly connectionId?: string;
@@ -36,21 +43,26 @@ export interface PartnerDetailWorkspaceState {
 }
 
 export type PartnerDetailOpenTarget =
-  | { readonly kind: 'sources'; readonly openPicker?: boolean }
-  | {
-      readonly kind: 'results';
-      readonly selection?: PartnerResultDestination;
-      readonly focusArtifact?: {
-        readonly id?: string;
-        readonly snapshot?: TransientArtifactSnapshot;
-      };
-    }
-  | { readonly kind: 'pendingReview' }
+  | { readonly kind: 'materials'; readonly openPicker?: boolean }
+  | { readonly kind: 'outputs' }
+  | { readonly kind: 'collaboration' }
   | { readonly kind: 'files' }
   | { readonly kind: 'file'; readonly snapshot: TransientArtifactSnapshot }
-  | { readonly kind: 'browser' }
-  | { readonly kind: 'terminal' }
+  | {
+      readonly kind: 'artifact';
+      readonly artifactId: string;
+      readonly title?: string;
+      readonly snapshot?: TransientArtifactSnapshot;
+    }
+  | { readonly kind: 'baseTask'; readonly task: PartnerFeishuBaseCreateTaskT }
+  | {
+      readonly kind: 'browser';
+      readonly initialUrl?: string;
+      readonly resourceKey?: string;
+      readonly title?: string;
+    }
   | { readonly kind: 'expert'; readonly expert: PartnerExpertSnapshotT }
+  | { readonly kind: 'skill'; readonly skill: SkillMeta }
   | {
       readonly kind: 'connector';
       readonly extensionId: string;
@@ -67,6 +79,36 @@ export interface PartnerDetailOpenRequest {
   readonly revision: number;
   readonly context?: PartnerDetailWorkspaceContext;
   readonly target: PartnerDetailOpenTarget;
+}
+
+export function partnerDetailTargetForDelivery(
+  delivery: PartnerDeliveryRefT,
+): PartnerDetailOpenTarget | null {
+  if (delivery.kind !== 'file') return null;
+  const version = partnerDeliveryPreviewVersion(delivery.updatedAt);
+  return {
+    kind: 'file',
+    snapshot: {
+      id: `delivery-preview-${delivery.id}`,
+      kind: 'file',
+      title: delivery.title,
+      source: 'delivery-preview',
+      version,
+      path: delivery.relativePath,
+      projectRoot: delivery.projectRoot,
+      sessionId: delivery.sessionId,
+      fileSource: 'delivery-store',
+      deliveryId: delivery.id,
+      versions: [
+        {
+          v: version,
+          path: delivery.relativePath,
+          fileSource: 'delivery-store',
+          deliveryId: delivery.id,
+        },
+      ],
+    },
+  };
 }
 
 export type PartnerDetailWorkspaceAction =
@@ -88,9 +130,9 @@ export function createPartnerDetailTab(
   uniqueId: number,
 ): PartnerDetailTab {
   const staticId =
-    target.kind === 'sources' ||
-    target.kind === 'results' ||
-    target.kind === 'pendingReview' ||
+    target.kind === 'materials' ||
+    target.kind === 'outputs' ||
+    target.kind === 'collaboration' ||
     target.kind === 'files'
       ? `partner-detail-${target.kind}`
       : null;
@@ -100,18 +142,42 @@ export function createPartnerDetailTab(
         ? `partner-detail-connector-${target.extensionId}-${target.connector.id}${target.connectionId ? `-${target.connectionId}` : ''}`
         : target.kind === 'expert'
           ? `partner-detail-expert-${target.expert.extensionId}-${target.expert.expert.id}`
-          : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
+          : target.kind === 'skill'
+            ? `partner-detail-skill-${target.skill.name}`
+            : target.kind === 'artifact'
+              ? `partner-detail-artifact-${target.artifactId}`
+              : target.kind === 'baseTask'
+                ? `partner-detail-base-task-${target.task.id}`
+                : target.kind === 'browser' && target.resourceKey
+                  ? `partner-detail-${target.resourceKey}`
+                  : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
     kind: target.kind,
     title:
       target.kind === 'connector'
         ? target.connector.name
         : target.kind === 'expert'
           ? target.expert.expert.name
-          : target.kind === 'file'
-            ? target.snapshot.title
-            : title,
+          : target.kind === 'skill'
+            ? target.skill.name
+            : target.kind === 'artifact'
+              ? (target.title ?? target.snapshot?.title ?? title)
+              : target.kind === 'baseTask'
+                ? target.task.baseName
+                : target.kind === 'browser' && target.title
+                  ? target.title
+                  : target.kind === 'file'
+                    ? target.snapshot.title
+                    : title,
     ...(target.kind === 'file' ? { snapshot: target.snapshot } : {}),
+    ...(target.kind === 'artifact'
+      ? { artifactId: target.artifactId, snapshot: target.snapshot }
+      : {}),
+    ...(target.kind === 'baseTask' ? { baseTask: target.task } : {}),
+    ...(target.kind === 'browser'
+      ? { browserUrl: target.initialUrl, resourceKey: target.resourceKey }
+      : {}),
     ...(target.kind === 'expert' ? { expert: target.expert } : {}),
+    ...(target.kind === 'skill' ? { skill: target.skill } : {}),
     ...(target.kind === 'connector'
       ? {
           connector: target.connector,
@@ -181,22 +247,4 @@ export function reducePartnerDetailWorkspace(
       };
     }
   }
-}
-
-export function resultSelectionForPartnerDetailRequest(
-  request: PartnerDetailOpenRequest | null,
-): PartnerResultSelectionRequest | null {
-  if (request?.target.kind === 'results') {
-    return {
-      revision: request.revision,
-      selection: request.target.selection ?? { destination: 'results', view: 'artifacts' },
-    };
-  }
-  if (request?.target.kind === 'pendingReview') {
-    return {
-      revision: request.revision,
-      selection: { destination: 'pendingReview' },
-    };
-  }
-  return null;
 }

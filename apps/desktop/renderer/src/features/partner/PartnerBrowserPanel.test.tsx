@@ -8,17 +8,15 @@ function renderPanel(element: JSX.Element): string {
   return renderToStaticMarkup(<I18nProvider>{element}</I18nProvider>);
 }
 
-test('renders a remote page in a constrained iframe with honest controls', () => {
+test('renders a remote page in an isolated persistent Partner web session', () => {
   const html = renderPanel(<PartnerBrowserPanel initialUrl="https://example.com/docs" />);
 
   assert.match(html, /data-testid="partner-browser-panel"/);
   assert.match(html, /src="https:\/\/example\.com\/docs"/);
-  assert.match(html, /name="kodax-partner-browser-[^"]+"/);
-  assert.match(html, /sandbox="allow-forms allow-scripts"/);
-  assert.doesNotMatch(html, /allow-same-origin/);
-  assert.doesNotMatch(html, /allow-top-navigation/);
-  assert.match(html, /X-Frame-Options/);
-  assert.match(html, /CSP/);
+  assert.match(html, /<webview/);
+  assert.match(html, /partition="persist:kodax-partner-browser-v1"/);
+  assert.doesNotMatch(html, /<iframe/);
+  assert.match(html, /independent from connector authorization/i);
   assert.match(html, /aria-label="Open in system browser"/);
   assert.match(html, /aria-label="Open address"/);
 });
@@ -26,7 +24,7 @@ test('renders a remote page in a constrained iframe with honest controls', () =>
 test('starts without an iframe or enabled navigation controls when no URL was submitted', () => {
   const html = renderPanel(<PartnerBrowserPanel />);
 
-  assert.doesNotMatch(html, /<iframe/);
+  assert.doesNotMatch(html, /<webview/);
   assert.match(html, /aria-label="Back"[^>]*disabled/);
   assert.match(html, /aria-label="Forward"[^>]*disabled/);
   assert.match(html, /aria-label="Refresh"[^>]*disabled/);

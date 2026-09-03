@@ -1,4 +1,4 @@
-import { Sparkles, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { requestPartnerExpertDetail, usePartnerExpert } from './PartnerExpertProvider.js';
 
@@ -10,26 +10,14 @@ export function PartnerExpertChip({ running }: { readonly running: boolean }): J
   const expert = snapshot.state.expert;
   if (!expert && !snapshot.error && !snapshot.changing) return null;
   return (
-    <div className="flex flex-wrap items-center gap-2 px-0.5" data-testid="partner-expert-binding">
+    <div
+      className="flex min-w-0 flex-wrap items-center gap-1.5"
+      data-testid="partner-expert-binding"
+    >
       {expert && (
         <div
-          className={`inline-flex max-w-full items-center rounded-md border text-xs ${snapshot.state.available ? 'border-border-default bg-surface' : 'border-danger/40 bg-danger/5'}`}
+          className={`inline-flex h-7 max-w-full items-center rounded-md text-xs ${snapshot.state.available ? 'bg-hover-bg' : 'bg-danger/5'}`}
         >
-          <button
-            type="button"
-            data-testid="partner-expert-chip"
-            onClick={() => requestPartnerExpertDetail(expert, snapshot.context)}
-            className="inline-flex min-w-0 items-center gap-1.5 px-2 py-1 text-fg-secondary"
-            title={t('extensions.expertDetails')}
-          >
-            <Sparkles className="h-3.5 w-3.5 shrink-0 text-accent-ink" aria-hidden />
-            <span className="truncate">{expert.expert.name}</span>
-            {!snapshot.state.available && (
-              <span className="shrink-0 text-[10px] text-danger">
-                {t('extensions.expertUnavailable')}
-              </span>
-            )}
-          </button>
           <button
             type="button"
             data-testid="partner-expert-remove"
@@ -41,9 +29,23 @@ export function PartnerExpertChip({ running }: { readonly running: boolean }): J
             }
             title={t('extensions.removeExpert')}
             aria-label={t('extensions.removeExpert')}
-            className="mr-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-hover-bg disabled:opacity-50"
+            className="ml-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-secondary hover:bg-surface disabled:opacity-50"
           >
-            <X className="h-3 w-3" aria-hidden />
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+          <button
+            type="button"
+            data-testid="partner-expert-chip"
+            onClick={() => requestPartnerExpertDetail(expert, snapshot.context)}
+            className="inline-flex min-w-0 items-center px-1.5 pr-2 py-1 text-fg-secondary"
+            title={t('extensions.expertDetails')}
+          >
+            <span className="truncate">{expert.expert.name}</span>
+            {!snapshot.state.available && (
+              <span className="shrink-0 text-[10px] text-danger">
+                {t('extensions.expertUnavailable')}
+              </span>
+            )}
           </button>
         </div>
       )}

@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -49,6 +57,90 @@ test('installer verifies and atomically publishes only the pinned native binary 
       'https://github.com/larksuite/cli/releases/download/v1.0.92/lark-cli-1.0.92-darwin-arm64.tar.gz',
     );
     assert.ok(binary.startsWith(root + path.sep));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a bundled official archive installs locally without touching the network', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-bundled-test-'));
+  const data = archive('bundled native executable');
+  const bundledArchive = path.join(root, 'lark-cli.tar.gz');
+  await writeFile(bundledArchive, data);
+  let networkCalls = 0;
+  const installer = createFeishuCliInstaller({
+    root: path.join(root, 'private'),
+    platform: 'darwin',
+    arch: 'arm64',
+    expectedDigest: createHash('sha256').update(data).digest('hex'),
+    fetch: async () => {
+      networkCalls++;
+      throw new Error('network must remain unused');
+    },
+    verifyBinary: async (file) => (await readFile(file, 'utf8')) === 'bundled native executable',
+  });
+  try {
+    const binary = await installer.installBundled(bundledArchive, new AbortController().signal);
+    assert.equal(binary, installer.executable);
+    assert.equal(await readFile(binary, 'utf8'), 'bundled native executable');
+    assert.equal(networkCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a bundled official archive repairs a corrupted Space-managed executable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-bundled-test-'));
+  const data = archive('repaired native executable');
+  const bundledArchive = path.join(root, 'lark-cli.tar.gz');
+  await writeFile(bundledArchive, data);
+  const installer = createFeishuCliInstaller({
+    root: path.join(root, 'private'),
+    platform: 'darwin',
+    arch: 'arm64',
+    expectedDigest: createHash('sha256').update(data).digest('hex'),
+    verifyBinary: async (file) => {
+      const contents = await readFile(file, 'utf8');
+      assert.notEqual(
+        contents,
+        'corrupted Space-managed executable',
+        'a checksum-mismatched managed executable must never be run for version verification',
+      );
+      return contents === 'repaired native executable';
+    },
+  });
+  try {
+    await mkdir(path.dirname(installer.executable), { recursive: true });
+    await writeFile(installer.executable, 'corrupted Space-managed executable');
+    await installer.installBundled(bundledArchive, new AbortController().signal);
+    assert.equal(await readFile(installer.executable, 'utf8'), 'repaired native executable');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a damaged bundled archive fails without falling back to a network download', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'space-feishu-bundled-test-'));
+  const bundledArchive = path.join(root, 'lark-cli.tar.gz');
+  await writeFile(bundledArchive, archive('damaged archive'));
+  let networkCalls = 0;
+  const installer = createFeishuCliInstaller({
+    root: path.join(root, 'private'),
+    platform: 'darwin',
+    arch: 'arm64',
+    expectedDigest: '0'.repeat(64),
+    fetch: async () => {
+      networkCalls++;
+      return new Response();
+    },
+    verifyBinary: async () => true,
+  });
+  try {
+    await assert.rejects(installer.installBundled(bundledArchive, new AbortController().signal), {
+      code: 'component_unavailable',
+    });
+    assert.equal(networkCalls, 0);
+    await assert.rejects(readFile(installer.executable), { code: 'ENOENT' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

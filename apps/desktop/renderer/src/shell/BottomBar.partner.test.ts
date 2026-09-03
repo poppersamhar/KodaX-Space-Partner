@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { register } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -54,4 +56,18 @@ test('Partner composer uses the shared plus menu instead of separate Skill and c
     if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);
     else Reflect.deleteProperty(globalThis, 'localStorage');
   }
+});
+
+test('Partner connector icons and persistent expert share the project context row without using plus', () => {
+  const source = readFileSync(fileURLToPath(new URL('./BottomBar.tsx', import.meta.url)), 'utf8');
+  const contextToolbar = source.indexOf('data-testid="composer-context-toolbar"');
+  const connectorIcons = source.indexOf('<PartnerConnectorChips />');
+  const expertChip = source.indexOf('<PartnerExpertChip');
+  const attachTrigger = source.indexOf('data-testid="composer-attach-menu-trigger"');
+  assert.notEqual(contextToolbar, -1);
+  assert.notEqual(connectorIcons, -1);
+  assert.ok(contextToolbar < connectorIcons);
+  assert.ok(connectorIcons < expertChip);
+  assert.ok(expertChip < attachTrigger);
+  assert.equal(source.match(/<PartnerConnectorChips \/>/g)?.length, 1);
 });

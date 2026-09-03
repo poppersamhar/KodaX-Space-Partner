@@ -20,14 +20,16 @@ import {PartnerConnectorProvider,usePartnerConnectors} from './PartnerConnectorP
 import {PartnerConnectorDetails} from './PartnerConnectorDetails.tsx';
 import {PartnerConnectorChips} from './PartnerConnectorChips.tsx';
 import {PartnerRemoteRecords} from './PartnerRemoteRecords.tsx';
+import {PartnerRemoteRecordsProvider} from './usePartnerRemoteRecords.ts';
 import {useAppStore} from '../../store/appStore.ts';
 import {useSurfaceStore} from '../../store/surface.ts';
 import {useConfirmStore} from '../../store/confirmStore.ts';
 import {startNewConversation} from '../../store/newConversation.ts';
-const connector={id:'feishu-docs',adapter:window.fixtureAdapter??'feishu-cli',name:'Feishu documents',description:''};
+const adapter=window.fixtureAdapter??'feishu-cli';
+const connector={id:'feishu-docs',adapter,name:adapter==='slack-mcp'?'Slack':'Feishu documents',description:''};
 const extension={id:'library',version:'0.4.0',name:'Library',description:'',enabled:true,installedAt:1,expertCount:0,connectorCount:1};
-const connection={id:'00000000-0000-4000-8000-000000000001',extensionId:'library',connectorId:'feishu-docs',revision:1,profile:'qa',accountLabel:'QA account',connected:true,permissions:{read:true,create:true,append:true}};
-if(window.fixtureAdapter){connection.adapter=window.fixtureAdapter;connection.permissions={read:true,create:false,append:false};}
+const connection={id:'00000000-0000-4000-8000-000000000001',extensionId:'library',connectorId:'feishu-docs',revision:1,profile:'qa',accountLabel:'QA account',connected:true,permissions:{read:true,create:true,append:true,createBase:true}};
+if(window.fixtureAdapter){connection.adapter=window.fixtureAdapter;connection.permissions={read:true,create:false,append:false,createBase:false};}
 let connected=true;let allowed=false;let selected=[];
 const proposal={id:'00000000-0000-4000-8000-000000000002',sessionId:'test-session',projectRoot:'/project',extensionId:'library',connectorId:'feishu-docs',connectionId:connection.id,connectionRevision:1,operation:'append',targetUrl:'https://example.feishu.cn/docx/Doc1',title:'Append conclusion',content:'Only append this reviewed sentence.',rationale:'Requested summary',contentHash:'a'.repeat(64),scopeHash:'b'.repeat(64),baseRevision:8,status:'pending',createdAt:'2026-09-01T00:00:00Z',updatedAt:'2026-09-01T00:00:00Z'};
 window.calls=[];
@@ -40,10 +42,12 @@ if(channel==='partner.connectors.inspect')return {ok:true,data:{installed:true,v
 if(channel==='admin.policy.get')return {ok:true,data:{policy:{connectors:{writesAllowed:allowed}}}};
 if(channel==='admin.policy.set'){allowed=input.connectors.writesAllowed;return {ok:true,data:{policy:{connectors:{writesAllowed:allowed}},diagnostics:[]}};}
 if(channel==='partner.connectors.connect'){connected=true;return {ok:true,data:{connection}};}
+if(channel==='partner.connectors.disconnect'){connected=false;return {ok:true,data:{ok:true}};}
+if(channel==='partner.connectors.forget'){connected=false;return {ok:true,data:{ok:true}};}
 if(channel==='partner.connectors.resolve'){selected=input.connectors;return {ok:true,data:{connectors:input.connectors.map(binding=>({binding:{...binding,name:'Feishu documents',accountLabel:'QA account'},available:true}))}};}
 if(channel==='session.partnerConnectors.get')return {ok:true,data:{connectors:selected.map(binding=>({binding:{...binding,name:'Feishu documents',accountLabel:'QA account'},available:true}))}};
 if(channel==='partner.connectors.read')return new Promise(resolve=>{window.finishRead=()=>resolve({ok:true,data:{source:{id:'old-source',title:'Old project source',content:'Old content'}}});});
-if(channel==='partner.connectors.records')return {ok:true,data:{sources:[],proposals:[proposal],receipts:[]}};
+if(channel==='partner.connectors.records')return {ok:true,data:{sources:[],proposals:[proposal],receipts:[],baseTasks:[]}};
 if(channel==='partner.connectors.proposals.get')return {ok:true,data:{proposal}};
 if(channel==='partner.connectors.proposals.apply'){proposal.status='unknown';proposal.error='Connection lost after dispatch';return {ok:true,data:{proposal}};}
 return {ok:false,error:{message:'Fixture did not allow '+channel}};
@@ -51,8 +55,89 @@ return {ok:false,error:{message:'Fixture did not allow '+channel}};
 useSurfaceStore.getState().setSurface('partner');useAppStore.getState().setCurrentProject('/project');
 function Confirm(){const current=useConfirmStore(state=>state.current);return current?<div role="dialog"><p>{current.message}</p><button onClick={()=>useConfirmStore.getState().settle(current.id,true)}>Confirm policy</button><button onClick={()=>useConfirmStore.getState().settle(current.id,false)}>Cancel policy</button></div>:null;}
 function RefreshBinding(){const context=usePartnerConnectors();const [finished,setFinished]=useState(false);return <><button onClick={async()=>{await context.binding.refresh();setFinished(true);}}>Refresh binding metadata</button><output>{finished?'Metadata refreshed':'Waiting metadata'}</output></>;}
-createRoot(document.getElementById('root')).render(<I18nProvider><SpaceExtensionsProvider><PartnerConnectorProvider><textarea aria-label="Draft" defaultValue="Keep this draft"/><PartnerConnectorChips/><RefreshBinding/><button onClick={()=>startNewConversation()}>New conversation</button><button onClick={()=>useAppStore.getState().setCurrentSession('test-session')}>Enter test session</button><button onClick={()=>useAppStore.getState().setCurrentProject('/other')}>Switch project</button><button onClick={()=>window.finishRead?.()}>Finish old read</button><PartnerConnectorDetails extensionId="library" connector={connector}/><PartnerRemoteRecords kind="pendingReview"/><Confirm/></PartnerConnectorProvider></SpaceExtensionsProvider></I18nProvider>);
+createRoot(document.getElementById('root')).render(<I18nProvider><SpaceExtensionsProvider><PartnerConnectorProvider><PartnerRemoteRecordsProvider><textarea aria-label="Draft" defaultValue="Keep this draft"/><PartnerConnectorChips/><RefreshBinding/><button onClick={()=>startNewConversation()}>New conversation</button><button onClick={()=>useAppStore.getState().setCurrentSession('test-session')}>Enter test session</button><button onClick={()=>useAppStore.getState().setCurrentProject('/other')}>Switch project</button><button onClick={()=>window.finishRead?.()}>Finish old read</button><PartnerConnectorDetails extensionId="library" connector={connector}/><PartnerRemoteRecords kind="pendingReview"/><Confirm/></PartnerRemoteRecordsProvider></PartnerConnectorProvider></SpaceExtensionsProvider></I18nProvider>);
 `;
+
+test(
+  'configuration-required connector details hide stale connected state and can remove its local account record',
+  { skip: !browserPath },
+  async (t) => {
+    const output = await build({
+      stdin: {
+        contents: `window.fixtureAdapter='slack-mcp';\n${fixture}`,
+        resolveDir: fileURLToPath(new URL('.', import.meta.url)),
+        loader: 'tsx',
+      },
+      bundle: true,
+      write: false,
+      format: 'iife',
+      platform: 'browser',
+      jsx: 'automatic',
+      loader: { '.png': 'dataurl', '.svg': 'dataurl' },
+      logLevel: 'silent',
+      define: { 'import.meta.env': '{}' },
+    });
+    const browser = await chromium.launch({ executablePath: browserPath, headless: true });
+    t.after(() => browser.close());
+    const page = await browser.newPage({ locale: 'en-US' });
+    page.setDefaultTimeout(3_000);
+    await page.route('http://configuration-required-details.test/', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }),
+    );
+    await page.goto('http://configuration-required-details.test/');
+    await page.addScriptTag({ content: output.outputFiles[0].text });
+
+    const details = page.getByTestId('partner-connector-details');
+    await details.getByRole('heading', { name: 'Slack', exact: true }).waitFor();
+    assert.equal(await details.getByRole('combobox', { name: 'Account connection' }).count(), 0);
+    assert.equal(await details.getByRole('heading', { name: 'Resource scope' }).count(), 0);
+    const remove = details.getByRole('button', {
+      name: 'Remove local account record QA account',
+      exact: true,
+    });
+    await remove.waitFor();
+    await remove.click();
+    await page.getByRole('button', { name: 'Confirm policy', exact: true }).click();
+    await page.waitForFunction(() =>
+      Reflect.get(window, 'calls').some(
+        (call: { channel: string }) => call.channel === 'partner.connectors.forget',
+      ),
+    );
+    await remove.waitFor({ state: 'detached' });
+    const accountLoadsBeforeRefresh = await page.evaluate(
+      () =>
+        Reflect.get(window, 'calls').filter(
+          (call: { channel: string }) => call.channel === 'partner.connectors.accounts',
+        ).length,
+    );
+    await details.getByRole('button', { name: 'Refresh status', exact: true }).click();
+    await page.waitForFunction(
+      (previous) =>
+        Reflect.get(window, 'calls').filter(
+          (call: { channel: string }) => call.channel === 'partner.connectors.accounts',
+        ).length > previous,
+      accountLoadsBeforeRefresh,
+    );
+    assert.equal(
+      await details
+        .getByRole('button', { name: 'Remove local account record QA account', exact: true })
+        .count(),
+      0,
+    );
+    const calls = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
+      channel: string;
+      input?: { connectionRevision?: number };
+    }[];
+    assert.equal(
+      calls.find((call) => call.channel === 'partner.connectors.forget')?.input?.connectionRevision,
+      1,
+    );
+    assert.equal(
+      calls.some((call) => /partner\.connectors\.(?:resolve|read)/u.test(call.channel)),
+      false,
+    );
+  },
+);
 
 test(
   'read-only provider details save the adapter and hide irrelevant Feishu write controls',
@@ -69,7 +154,7 @@ test(
       format: 'iife',
       platform: 'browser',
       jsx: 'automatic',
-      loader: { '.png': 'dataurl' },
+      loader: { '.png': 'dataurl', '.svg': 'dataurl' },
       logLevel: 'silent',
       define: { 'import.meta.env': '{}' },
     });
@@ -92,10 +177,16 @@ test(
       await details.getByRole('textbox', { name: 'Optional folder for new documents' }).count(),
       0,
     );
+    assert.equal(
+      await details
+        .getByRole('textbox', { name: 'Optional folder for new multidimensional tables' })
+        .count(),
+      0,
+    );
     await details.getByRole('button', { name: 'Add resource', exact: true }).click();
     await details
       .getByRole('textbox', { name: 'Exact target 1', exact: true })
-      .fill('tmeet://meeting/12345');
+      .fill('tmeet://meeting-code/123456');
     await details
       .getByRole('button', { name: 'Use this scope in the conversation', exact: true })
       .click();
@@ -111,7 +202,7 @@ test(
     const saved = calls.filter((call) => call.channel === 'partner.connectors.resolve').at(-1)
       ?.input.connectors?.[0];
     assert.equal(saved?.adapter, 'tencent-meeting-cli');
-    assert.equal(saved?.documents[0].url, 'tmeet://meeting/12345');
+    assert.equal(saved?.documents[0].url, 'tmeet://meeting-code/123456');
     assert.equal(
       calls.some((call) =>
         /onboarding|partner.connectors.read|admin.policy.set/.test(call.channel),
@@ -136,7 +227,7 @@ test(
       format: 'iife',
       platform: 'browser',
       jsx: 'automatic',
-      loader: { '.png': 'dataurl' },
+      loader: { '.png': 'dataurl', '.svg': 'dataurl' },
       logLevel: 'silent',
       define: { 'import.meta.env': '{}' },
     });
@@ -180,15 +271,20 @@ test(
       }),
       [700, 700, '', 'true'],
     );
-    assert.equal(await page.locator('[data-testid="partner-connector-chips"]').count(), 1);
+    assert.equal(await page.locator('[data-testid="partner-connector-chips"]').count(), 0);
     await page
       .getByText('Account connected; not selected for this conversation', { exact: true })
       .waitFor();
-    assert.equal(await page.getByTestId('partner-connector-chips').innerText(), '');
     await page.getByRole('button', { name: 'Add document', exact: true }).click();
     await page
       .getByRole('textbox', { name: 'Exact target 1', exact: true })
       .fill('https://example.feishu.cn/docx/Doc1');
+    await page
+      .getByRole('textbox', {
+        name: 'Optional folder for new multidimensional tables',
+        exact: true,
+      })
+      .fill('https://example.feishu.cn/drive/folder/BaseFolder');
     await page
       .getByRole('button', { name: 'Use this scope in the conversation', exact: true })
       .click();
@@ -197,11 +293,20 @@ test(
       .getByRole('textbox', { name: 'Exact target 1', exact: true })
       .fill('https://example.feishu.cn/docx/Unsaved');
     await page
-      .getByRole('combobox', { name: 'Documents available to this conversation', exact: true })
+      .getByRole('combobox', {
+        name: 'Documents and optional destination folders for this conversation',
+        exact: true,
+      })
       .selectOption('append');
     await page
       .getByRole('textbox', { name: 'Optional folder for new documents', exact: true })
       .fill('https://example.feishu.cn/drive/folder/UnsavedFolder');
+    await page
+      .getByRole('textbox', {
+        name: 'Optional folder for new multidimensional tables',
+        exact: true,
+      })
+      .fill('https://example.feishu.cn/drive/folder/UnsavedBaseFolder');
     await page.getByRole('button', { name: 'Refresh binding metadata', exact: true }).click();
     await page.getByText('Metadata refreshed', { exact: true }).waitFor();
     assert.equal(
@@ -210,7 +315,10 @@ test(
     );
     assert.equal(
       await page
-        .getByRole('combobox', { name: 'Documents available to this conversation', exact: true })
+        .getByRole('combobox', {
+          name: 'Documents and optional destination folders for this conversation',
+          exact: true,
+        })
         .inputValue(),
       'append',
     );
@@ -221,13 +329,27 @@ test(
       'https://example.feishu.cn/drive/folder/UnsavedFolder',
     );
     assert.equal(
+      await page
+        .getByRole('textbox', {
+          name: 'Optional folder for new multidimensional tables',
+          exact: true,
+        })
+        .inputValue(),
+      'https://example.feishu.cn/drive/folder/UnsavedBaseFolder',
+    );
+    assert.equal(
       await page.getByRole('textbox', { name: 'Draft', exact: true }).inputValue(),
       'Keep this draft',
     );
     const calls = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
       channel: string;
-      input: unknown;
+      input: { connectors?: { createBaseFolderUrl?: string }[] };
     }[];
+    assert.equal(
+      calls.filter((item) => item.channel === 'partner.connectors.resolve').at(-1)?.input
+        .connectors?.[0]?.createBaseFolderUrl,
+      'https://example.feishu.cn/drive/folder/BaseFolder',
+    );
     assert.equal(
       calls.some(
         (item) => item.channel === 'session.create' || item.channel === 'partner.connectors.read',
@@ -264,7 +386,7 @@ test(
     );
     await page.getByRole('button', { name: 'New conversation', exact: true }).click();
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="partner-connector-chips"]')?.textContent === '',
+      () => document.querySelector('[data-testid="partner-connector-chips"]') === null,
     );
     assert.equal(
       await page.getByRole('textbox', { name: 'Draft', exact: true }).inputValue(),

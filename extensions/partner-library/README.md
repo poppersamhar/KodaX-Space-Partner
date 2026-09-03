@@ -6,10 +6,13 @@ self-contained `ui/index.html`. Version 0.5.1 retains the writing mentor and
 eight scene experts: document processing, research, data analysis, presentations,
 finance, product management, design, and email editing. Their persistent role
 prompts are separate from the original task templates, which remain starter tasks.
-No built-in expert configures a Skill by default. This version declares the
-Feishu connector (displayed as `飞书`), backed by the trusted host's supported `feishu-cli`
-adapter. A declaration is not a connected account. The package does not include
-or install Skills, authenticate CLI accounts, or receive credentials/documents.
+No built-in expert configures a Skill by default. This version declares Feishu,
+WeCom, DingTalk, Tencent Meeting, Notion, Airtable, Atlassian, Slack and Zoom
+cards backed by trusted host adapters. Notion, Airtable and Atlassian use the
+host's read-only remote OAuth path. Slack and Zoom intentionally remain disabled
+until the product has reviewed application credentials. A declaration is not a
+connected account. The package does not include or install Skills, authenticate
+accounts, or receive credentials/documents.
 
 ## Build
 
@@ -122,12 +125,14 @@ whole F146 feature or the interactive Electron install/select/send flow is compl
 The package frame can only request `connector.catalog` and `connector.configure`.
 It cannot provide an extension/session identity, obtain tokens, read documents,
 change global policy, or approve writes. Configuration opens the trusted Space
-connection dialog. The 0.5.0 host adds explicit private installation of official
-CLI 1.0.92 and a cancellable first-connection flow through official Feishu pages.
+connection dialog. The current host ships a checksum-pinned official CLI 1.0.92
+archive with Space, prepares it locally without a user-facing install step, and
+provides a cancellable first-connection flow through official Feishu pages.
 Merely opening the library or dialog cannot install, start authorization or bind
-an account. Existing CLI profiles remain available through the advanced account
-option; creating a new connection uses a distinct Space-owned profile and preserves
-existing profile entries and the default selection. Credentials remain owned by
+an account. The connector UI no longer exposes a CLI/profile advanced option;
+existing stored connections and their underlying profiles remain compatible. Creating
+a new connection uses a distinct Space-owned profile and preserves existing profile
+entries and the default selection. Credentials remain owned by
 the official CLI: choosing an existing app on Feishu's website may share its
 app/user credential storage with other profiles. The package frame receives only connected connector
 IDs for its status indicators, never account details or authorization links.
@@ -143,10 +148,14 @@ The existing global connector-write policy remains off unless explicitly changed
 in the trusted confirmation dialog. Enabling it affects all connectors but does
 not bypass account permissions, document scopes or individual write approvals.
 
-Reads appear in the existing 资料 card as immutable remote snapshots. Proposed
-create/append content appears in 待审核; its complete content, target, operation
-and version are shown before a host confirmation submits the exact content hash.
-Only verified successes appear in 成果 as remote receipts. Unknown/partial or
+Reads appear in the existing 资料 card as immutable remote snapshots. With the
+generic `partnerNativeDocumentDeliveryV1` host capability, a complete request to
+create a new document is dispatched once through the selected platform adapter;
+the host privately reads it back, returns only a verified canonical URL, and opens
+that URL in Partner's right-hand browser. Feishu is the first write adapter, while
+the task/signal/opener contract is provider-neutral for later DingTalk and Tencent
+Docs adapters. Proposed append content still appears in 待审核 with its complete
+content, target, operation and version before confirmation. Unknown/partial or
 submitting records cannot be retried; conflicts require rereading and proposing
 again. Remote records never masquerade as local file paths or local deliveries.
 

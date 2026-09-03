@@ -44,17 +44,8 @@ export function PartnerRemoteComposer({
       operation: document.access === 'append' ? ('append' as const) : ('read' as const),
       label: item.binding.accountLabel,
     })),
-    ...(item.binding.createFolderUrl
-      ? [
-          {
-            connectionId: item.binding.connectionId,
-            url: item.binding.createFolderUrl,
-            operation: 'create' as const,
-            label: item.binding.accountLabel,
-          },
-        ]
-      : []),
   ]);
+  if (!targets.length) return null;
   const key = (item: (typeof targets)[number]) => `${item.connectionId}:${item.url}`;
   const active = targets.find((item) => key(item) === target) ?? targets[0];
   const act = async (read: boolean): Promise<void> => {
@@ -115,22 +106,18 @@ export function PartnerRemoteComposer({
               ))}
             </select>
           </label>
-          {active?.operation !== 'create' && (
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={busy || !active}
-              onClick={() => void act(true)}
-            >
-              {t(
-                selected.some(
-                  (item) => item.binding.adapter && item.binding.adapter !== 'feishu-cli',
-                )
-                  ? 'connectors.readResourceNow'
-                  : 'connectors.readNow',
-              )}
-            </button>
-          )}
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={busy || !active}
+            onClick={() => void act(true)}
+          >
+            {t(
+              selected.some((item) => item.binding.adapter && item.binding.adapter !== 'feishu-cli')
+                ? 'connectors.readResourceNow'
+                : 'connectors.readNow',
+            )}
+          </button>
           {active && active.operation !== 'read' && (
             <>
               <p className="text-fg-muted">{t('connectors.proposalHint')}</p>

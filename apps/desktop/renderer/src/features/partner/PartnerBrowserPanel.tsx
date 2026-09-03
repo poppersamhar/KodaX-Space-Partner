@@ -1,5 +1,5 @@
-import { PARTNER_BROWSER_FRAME_NAME_PREFIX } from '@kodax-space/space-ipc-schema';
-import { useEffect, useState, type FormEvent } from 'react';
+import { PARTNER_BROWSER_PARTITION } from '@kodax-space/space-ipc-schema';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft,
@@ -77,9 +77,7 @@ export function PartnerBrowserPanel({ initialUrl }: PartnerBrowserPanelProps): J
     createPartnerBrowserHistory(initialUrl),
   );
   const [frameNavigation, setFrameNavigation] = useState(history);
-  const [frameName] = useState(
-    () => `${PARTNER_BROWSER_FRAME_NAME_PREFIX}${globalThis.crypto.randomUUID()}`,
-  );
+  const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const [draft, setDraft] = useState(history.currentUrl ?? '');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(history.currentUrl));
@@ -93,16 +91,24 @@ export function PartnerBrowserPanel({ initialUrl }: PartnerBrowserPanelProps): J
   };
 
   useEffect(() => {
-    return window.kodaxSpace?.on('partner.browserNavigated', (payload) => {
-      if (payload.frameName !== frameName) return;
-      const normalized = normalizePartnerBrowserUrl(payload.url);
+    const webview = webviewRef.current;
+    if (!webview) return;
+    const started = (): void => setLoading(true);
+    const stopped = (): void => {
+      setLoading(false);
+      const normalized = normalizePartnerBrowserUrl(webview.getURL());
       if (!normalized.ok) return;
       setHistory((current) => synchronizePartnerBrowserUrl(current, normalized.url));
       setDraft(normalized.url);
       setError(null);
-      setLoading(false);
-    });
-  }, [frameName]);
+    };
+    webview.addEventListener('did-start-loading', started);
+    webview.addEventListener('did-stop-loading', stopped);
+    return () => {
+      webview.removeEventListener('did-start-loading', started);
+      webview.removeEventListener('did-stop-loading', stopped);
+    };
+  }, [frameNavigation.currentUrl, frameNavigation.revision]);
 
   const submitAddress = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -200,14 +206,13 @@ export function PartnerBrowserPanel({ initialUrl }: PartnerBrowserPanelProps): J
                 />
               </div>
             ) : null}
-            <iframe
+            <webview
+              ref={webviewRef}
               key={`${frameNavigation.currentUrl}:${frameNavigation.revision}`}
-              name={frameName}
               title={t('partner.browser.frameTitle')}
               src={frameNavigation.currentUrl}
-              sandbox="allow-forms allow-scripts"
-              referrerPolicy="no-referrer"
-              onLoad={() => setLoading(false)}
+              {...{ partition: PARTNER_BROWSER_PARTITION }}
+              data-testid="partner-browser-webview"
               className="h-full min-h-0 w-full flex-1 border-0 bg-white"
             />
           </div>

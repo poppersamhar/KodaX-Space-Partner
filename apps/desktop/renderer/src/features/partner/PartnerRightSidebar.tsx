@@ -1,14 +1,5 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useReducer,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
-import { FileText, Globe2, Plus, SquareTerminal, X } from 'lucide-react';
+import { useCallback, useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
+import { FileText, Globe2, Plus, X } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { FilesPanel } from '../../shell/popouts/FilesPanel.js';
 import { ArtifactPanel } from './ArtifactPanel.js';
@@ -19,19 +10,17 @@ import {
   createPartnerDetailTab,
   createPartnerDetailWorkspaceState,
   reducePartnerDetailWorkspace,
-  resultSelectionForPartnerDetailRequest,
   type PartnerDetailOpenRequest,
+  type PartnerDetailOpenTarget,
   type PartnerDetailTabKind,
 } from './partnerDetailWorkspace.js';
 import { handleTablistKeyDown } from './tablistKeyboard.js';
 import { PartnerExpertDetails } from '../extensions/PartnerExpertDetails.js';
 import { PartnerConnectorDetails } from '../extensions/PartnerConnectorDetails.js';
-
-const LazyTerminalManager = lazy(() =>
-  import('../terminal/TerminalManager.js').then((module) => ({
-    default: module.TerminalManager,
-  })),
-);
+import { usePartnerRemoteRecords } from '../extensions/usePartnerRemoteRecords.js';
+import { PartnerFeishuBaseTaskPanel } from './PartnerFeishuBaseTaskPanel.js';
+import { PartnerCollaborationPanel } from './PartnerCollaborationPanel.js';
+import { PartnerSkillDetails } from './PartnerSkillDetails.js';
 
 interface PartnerRightSidebarProps {
   readonly open: boolean;
@@ -64,6 +53,7 @@ export function PartnerRightSidebar({
   onConsumeOpenRequest,
 }: PartnerRightSidebarProps): JSX.Element {
   const { t } = useI18n();
+  const { records: remoteRecords } = usePartnerRemoteRecords();
   const nextUniqueIdRef = useRef(openRequest?.revision ?? 0);
   const initialTab = openRequest
     ? createPartnerDetailTab(
@@ -87,7 +77,7 @@ export function PartnerRightSidebar({
   const launcherToggleRef = useRef<HTMLButtonElement | null>(null);
   const focusAfterStateChangeRef = useRef(false);
   const [sourcePickerRequest, setSourcePickerRequest] = useState(
-    openRequest?.target.kind === 'sources' && openRequest.target.openPicker ? 1 : 0,
+    openRequest?.target.kind === 'materials' && openRequest.target.openPicker ? 1 : 0,
   );
   const consumeSourcePickerRequest = useCallback((): void => {
     setSourcePickerRequest(0);
@@ -97,7 +87,7 @@ export function PartnerRightSidebar({
     if (!openRequest || lastRequestRevisionRef.current === openRequest.revision) return;
     lastRequestRevisionRef.current = openRequest.revision;
     nextUniqueIdRef.current = Math.max(nextUniqueIdRef.current, openRequest.revision);
-    if (!(openRequest.target.kind === 'sources' && openRequest.target.openPicker)) {
+    if (!(openRequest.target.kind === 'materials' && openRequest.target.openPicker)) {
       focusAfterStateChangeRef.current = true;
     }
     dispatch({
@@ -108,7 +98,7 @@ export function PartnerRightSidebar({
         openRequest.revision,
       ),
     });
-    if (openRequest.target.kind === 'sources' && openRequest.target.openPicker) {
+    if (openRequest.target.kind === 'materials' && openRequest.target.openPicker) {
       setSourcePickerRequest((request) => request + 1);
     }
   }, [openRequest, t]);
@@ -130,16 +120,16 @@ export function PartnerRightSidebar({
   }, [state.activeId, state.tabs]);
 
   const activeTab = state.tabs.find((tab) => tab.id === state.activeId) ?? null;
-  const resultSelectionRequest = resultSelectionForPartnerDetailRequest(openRequest);
 
-  const launch = (kind: 'files' | 'browser' | 'terminal'): void => {
+  const openLocalDetail = (target: PartnerDetailOpenTarget): void => {
     nextUniqueIdRef.current += 1;
     focusAfterStateChangeRef.current = true;
     dispatch({
       type: 'open',
-      tab: createPartnerDetailTab({ kind }, detailTitle(kind, t), nextUniqueIdRef.current),
+      tab: createPartnerDetailTab(target, detailTitle(target.kind, t), nextUniqueIdRef.current),
     });
   };
+  const launch = (kind: 'files' | 'browser'): void => openLocalDetail({ kind });
 
   const closeTab = (id: string): void => {
     focusAfterStateChangeRef.current = true;
@@ -169,7 +159,13 @@ export function PartnerRightSidebar({
           {state.tabs.map((tab, index) => {
             const active = tab.id === state.activeId;
             const translatedTitle =
-              tab.kind === 'file' || tab.kind === 'expert' || tab.kind === 'connector'
+              tab.kind === 'file' ||
+              tab.kind === 'artifact' ||
+              tab.kind === 'expert' ||
+              tab.kind === 'skill' ||
+              tab.kind === 'connector' ||
+              tab.kind === 'baseTask' ||
+              tab.kind === 'browser'
                 ? tab.title
                 : detailTitle(tab.kind, t);
             const tabbable = active || (state.activeId === null && index === 0);
@@ -251,7 +247,45 @@ export function PartnerRightSidebar({
           ))}
 
         {state.tabs
-          .filter((tab) => tab.kind === 'sources')
+          .filter((tab) => tab.kind === 'skill' && tab.skill)
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              <PartnerSkillDetails skill={tab.skill!} />
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'collaboration')
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {activeTab?.id === tab.id && (
+                <PartnerCollaborationPanel
+                  onOpenExpert={(expert) => openLocalDetail({ kind: 'expert', expert })}
+                  onOpenSkill={(skill) => openLocalDetail({ kind: 'skill', skill })}
+                />
+              )}
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'baseTask' && tab.baseTask)
+          .map((tab) => {
+            const task =
+              remoteRecords.baseTasks.find((candidate) => candidate.id === tab.baseTask!.id) ??
+              tab.baseTask!;
+            return (
+              <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+                {task.status === 'succeeded' && task.url ? (
+                  <PartnerBrowserPanel initialUrl={task.url} />
+                ) : (
+                  <PartnerFeishuBaseTaskPanel task={task} />
+                )}
+              </DetailTabPanel>
+            );
+          })}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'materials')
           .map((tab) => (
             <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
               <SourcesPanel
@@ -263,22 +297,22 @@ export function PartnerRightSidebar({
           ))}
 
         {state.tabs
-          .filter((tab) => tab.kind === 'results' || tab.kind === 'pendingReview')
+          .filter((tab) => tab.kind === 'outputs')
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {activeTab?.id === tab.id && <ArtifactPanel onOpenDetail={openLocalDetail} />}
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'artifact' && tab.artifactId)
           .map((tab) => (
             <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
               {activeTab?.id === tab.id && (
                 <ArtifactPanel
-                  hideDestinationTabs
-                  destination={tab.kind === 'pendingReview' ? 'pendingReview' : 'results'}
-                  selectionRequest={resultSelectionRequest}
-                  focusRequest={
-                    openRequest?.target.kind === 'results' && openRequest.target.focusArtifact
-                      ? {
-                          revision: openRequest.revision,
-                          ...openRequest.target.focusArtifact,
-                        }
-                      : null
-                  }
+                  includeRemoteOutputs={false}
+                  focusedArtifact={{ id: tab.artifactId!, snapshot: tab.snapshot }}
+                  onOpenDetail={openLocalDetail}
                 />
               )}
             </DetailTabPanel>
@@ -313,16 +347,10 @@ export function PartnerRightSidebar({
           })}
 
         {state.tabs
-          .filter((tab) => tab.kind === 'browser' || tab.kind === 'terminal')
+          .filter((tab) => tab.kind === 'browser')
           .map((tab) => (
             <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
-              {tab.kind === 'browser' ? (
-                <PartnerBrowserPanel />
-              ) : (
-                <Suspense fallback={<PartnerDetailLoading />}>
-                  <LazyTerminalManager />
-                </Suspense>
-              )}
+              <PartnerBrowserPanel initialUrl={tab.browserUrl} />
             </DetailTabPanel>
           ))}
       </div>
@@ -364,18 +392,19 @@ function DetailTabPanel({
 function detailTitle(kind: PartnerDetailTabKind, t: ReturnType<typeof useI18n>['t']): string {
   if (kind === 'connector') return t('connectors.setup');
   if (kind === 'expert') return t('extensions.expertDetails');
-  if (kind === 'sources') return t('partner.sources.title');
-  if (kind === 'results') return t('partner.results.tab.results');
-  if (kind === 'pendingReview') return t('partner.results.tab.pendingReview');
+  if (kind === 'materials') return t('partner.taskCards.materials');
+  if (kind === 'outputs' || kind === 'artifact') return t('partner.taskCards.artifacts');
+  if (kind === 'collaboration') return t('partner.taskCards.collaboration');
   if (kind === 'files' || kind === 'file') return t('files.title');
+  if (kind === 'baseTask') return t('partner.baseTask.title');
   if (kind === 'browser') return t('partner.detail.browser');
-  return t('partner.detail.terminal');
+  return t('partner.detail.browser');
 }
 
 function PartnerDetailLauncher({
   onLaunch,
 }: {
-  readonly onLaunch: (kind: 'files' | 'browser' | 'terminal') => void;
+  readonly onLaunch: (kind: 'files' | 'browser') => void;
 }): JSX.Element {
   const { t } = useI18n();
   return (
@@ -391,7 +420,7 @@ function PartnerDetailLauncher({
           {t('partner.detail.launcherBody')}
         </div>
       </div>
-      <div className="grid w-full max-w-sm grid-cols-3 gap-2">
+      <div className="grid w-full max-w-sm grid-cols-2 gap-2">
         <LauncherButton
           icon={<FileText className="h-5 w-5" strokeWidth={1.7} aria-hidden />}
           label={t('partner.detail.files')}
@@ -403,12 +432,6 @@ function PartnerDetailLauncher({
           label={t('partner.detail.browser')}
           onClick={() => onLaunch('browser')}
           testId="partner-detail-open-browser"
-        />
-        <LauncherButton
-          icon={<SquareTerminal className="h-5 w-5" strokeWidth={1.7} aria-hidden />}
-          label={t('partner.detail.terminal')}
-          onClick={() => onLaunch('terminal')}
-          testId="partner-detail-open-terminal"
         />
       </div>
     </div>
@@ -436,14 +459,5 @@ function LauncherButton({
       {icon}
       <span>{label}</span>
     </button>
-  );
-}
-
-function PartnerDetailLoading(): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="flex h-full items-center justify-center text-xs text-fg-muted">
-      {t('common.loading')}
-    </div>
   );
 }

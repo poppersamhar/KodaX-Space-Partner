@@ -34,6 +34,18 @@ function luminance(color: string): number {
   return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
 }
 
+async function waitForConfigureRequests(
+  requests: ExtensionFrameRequest[],
+  count: number,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (requests.filter((request) => request.method === 'connector.configure').length >= count)
+      return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.fail(`Timed out waiting for ${count} connector.configure requests`);
+}
+
 async function openLibrary(
   t: TestContext,
   initialExperts: SpaceExpertDefinitionT[] = [preset],
@@ -82,6 +94,36 @@ async function openLibrary(
                 name: '腾讯会议',
                 description: 'Read a selected meeting',
               },
+              {
+                id: 'notion',
+                adapter: 'notion-mcp',
+                name: 'Notion',
+                description: 'Read selected pages',
+              },
+              {
+                id: 'airtable',
+                adapter: 'airtable-mcp',
+                name: 'Airtable',
+                description: 'Read selected tables',
+              },
+              {
+                id: 'atlassian',
+                adapter: 'atlassian-mcp',
+                name: 'Atlassian',
+                description: 'Read selected Jira or Confluence resources',
+              },
+              {
+                id: 'slack',
+                adapter: 'slack-mcp',
+                name: 'Slack',
+                description: 'Requires a product app',
+              },
+              {
+                id: 'zoom',
+                adapter: 'zoom-mcp',
+                name: 'Zoom',
+                description: 'Requires a product app',
+              },
             ]
           : Array.from({ length: options.twoConnectors ? 2 : 1 }, (_, index) => ({
               id: index === 0 ? 'feishu-docs' : 'feishu-secondary',
@@ -95,8 +137,10 @@ async function openLibrary(
         finishConfiguration = () => resolve({ configured: true });
       });
     if (request.method === 'expert.save') {
-      const saved = {
-        ...request.values,
+      const { category, ...draftValues } = request.values;
+      const saved: SpaceExpertDefinitionT = {
+        ...draftValues,
+        ...(category === null || category === undefined ? {} : { category }),
         id: request.expertId?.startsWith('user.') ? request.expertId : 'user.created',
         revision: request.expertId?.startsWith('user.') ? request.expectedRevision! + 1 : 1,
       };
@@ -198,13 +242,97 @@ test(
       const logo = card.locator('img');
       await logo.evaluate((image: HTMLImageElement) => image.decode());
       assert.equal(await logo.evaluate((image: HTMLImageElement) => image.naturalWidth), width);
-      await card.getByRole('button', { name: '连接', exact: true }).click();
+      await card.getByRole('button', { name: `连接 ${name}`, exact: true }).click();
       await frame.getByText('请在连接弹窗中继续。', { exact: true }).waitFor();
       assert.equal(
         requests.filter((request) => request.method === 'connector.configure').at(-1)?.connectorId,
         id,
       );
     }
+  },
+);
+
+test(
+  'hosted connectors stay offline-branded while app-registration connectors cannot start configuration',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, requests } = await openLibrary(t, [preset], 'connectors', {
+      allProviders: true,
+    });
+    for (const [index, name] of ['Notion', 'Airtable', 'Atlassian'].entries()) {
+      const card = frame
+        .getByRole('article')
+        .filter({ has: frame.getByRole('heading', { name, exact: true }) });
+      const logo = card.locator('img');
+      await logo.evaluate((image: HTMLImageElement) => image.decode());
+      assert.match((await logo.getAttribute('src')) ?? '', /^data:image\/svg\+xml;base64,/u);
+      await card.getByRole('button', { name: `连接 ${name}`, exact: true }).click();
+      await waitForConfigureRequests(requests, index + 1);
+    }
+    assert.deepEqual(
+      requests
+        .filter((request) => request.method === 'connector.configure')
+        .map((request) => request.connectorId),
+      ['notion', 'airtable', 'atlassian'],
+    );
+    for (const name of ['Slack', 'Zoom'] as const) {
+      const card = frame
+        .getByRole('article')
+        .filter({ has: frame.getByRole('heading', { name, exact: true }) });
+      await card.getByText('需要产品 App', { exact: true }).waitFor();
+      const unavailable = card.getByRole('button', {
+        name: `需要产品 App 配置 ${name}`,
+        exact: true,
+      });
+      assert.equal(await unavailable.isDisabled(), true);
+      assert.equal(await card.getByText('已连接', { exact: true }).count(), 0);
+    }
+    const slackCard = frame
+      .getByRole('article')
+      .filter({ has: frame.getByRole('heading', { name: 'Slack', exact: true }) });
+    assert.equal(await slackCard.locator('img').count(), 0);
+    assert.equal(await slackCard.locator('svg[data-connector-fallback="true"]').count(), 1);
+  },
+);
+
+test(
+  'redistributable monochrome remote logos stay visible in the standalone dark theme',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, setTheme } = await openLibrary(t, [preset], 'connectors', {
+      allProviders: true,
+    });
+    await setTheme('dark');
+    for (const name of ['Notion', 'Airtable', 'Atlassian', 'Zoom'] as const) {
+      const card = frame
+        .getByRole('article')
+        .filter({ has: frame.getByRole('heading', { name, exact: true }) });
+      assert.equal(
+        await card.locator('img').evaluate((image) => getComputedStyle(image).filter),
+        'invert(1)',
+      );
+    }
+    const feishuCard = frame
+      .getByRole('article')
+      .filter({ has: frame.getByRole('heading', { name: '飞书', exact: true }) });
+    assert.equal(
+      await feishuCard.locator('img').evaluate((image) => getComputedStyle(image).filter),
+      'none',
+    );
+  },
+);
+
+test(
+  'standalone connector actions include the provider in their accessible names',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, changeConnected } = await openLibrary(t, [preset], 'connectors', {
+      allProviders: true,
+    });
+    await frame.getByRole('button', { name: '连接 Notion', exact: true }).waitFor();
+    await frame.getByRole('button', { name: '需要产品 App 配置 Slack', exact: true }).waitFor();
+    await changeConnected();
+    await frame.getByRole('button', { name: '管理连接 飞书', exact: true }).waitFor();
   },
 );
 
@@ -223,12 +351,12 @@ test(
     );
     await frame.getByRole('heading', { name: '飞书', exact: true }).waitFor();
     await frame.getByText('未连接', { exact: true }).waitFor();
-    await frame.getByRole('button', { name: '连接', exact: true }).waitFor();
+    await frame.getByRole('button', { name: '连接 飞书', exact: true }).waitFor();
     await frame.getByRole('article').click();
     await frame.getByText('请在连接弹窗中继续。', { exact: true }).waitFor();
     await changeConnected();
     await frame.getByText('已连接', { exact: true }).waitFor();
-    await frame.getByRole('button', { name: '管理连接', exact: true }).waitFor();
+    await frame.getByRole('button', { name: '管理连接 飞书', exact: true }).waitFor();
     for (const theme of ['light', 'dark'] as const) {
       await setTheme(theme);
       const colors = await frame.getByText('已连接', { exact: true }).evaluate((element) => ({
@@ -287,7 +415,7 @@ test(
     assert.match((await logo.getAttribute('src')) ?? '', /^data:image\/png;base64,/);
     const logoBox = await logo.boundingBox();
     const headingBox = await card.getByRole('heading').boundingBox();
-    const action = card.getByRole('button', { name: '连接', exact: true });
+    const action = card.getByRole('button', { name: '连接 飞书', exact: true });
     const actionBox = await action.boundingBox();
     assert.ok(logoBox && headingBox && actionBox);
     assert.equal(logoBox.width, 32);
@@ -321,25 +449,221 @@ test(
 );
 
 test(
+  'experts are browsed by role, task, or platform and use broad categories with teams as one filter',
+  { skip: !browserPath },
+  async (t) => {
+    type ClassifiedExpert = SpaceExpertDefinitionT & {
+      expertType: 'role' | 'task' | 'platform';
+      category?: string;
+      listingType?: 'expert' | 'team';
+    };
+    const classifiedExperts: ClassifiedExpert[] = [
+      { ...preset, expertType: 'role', category: '内容创作' },
+      {
+        ...preset,
+        id: 'finance',
+        name: '投资分析师',
+        expertType: 'role',
+        category: '投资分析',
+      },
+      {
+        ...preset,
+        id: 'content-team',
+        name: '内容创作团队',
+        expertType: 'role',
+        category: '内容创作',
+        listingType: 'team',
+      },
+      {
+        ...preset,
+        id: 'document-processing',
+        name: '文档处理',
+        expertType: 'task',
+        category: '文档办公',
+      },
+      {
+        ...preset,
+        id: 'feishu-office',
+        name: '飞书协同办公',
+        expertType: 'platform',
+      },
+    ];
+    const { frame, requests, setTheme } = await openLibrary(t, classifiedExperts);
+
+    assert.equal(
+      await frame.getByRole('button', { name: /岗位专家/ }).getAttribute('aria-pressed'),
+      'true',
+    );
+    await frame.getByRole('heading', { name: '写作导师', exact: true }).waitFor();
+    await frame.getByRole('heading', { name: '投资分析师', exact: true }).waitFor();
+    assert.equal(await frame.getByRole('heading', { name: '文档处理', exact: true }).count(), 0);
+    for (const category of ['全部', '内容创作', '投资分析', '专家团'])
+      await frame.getByRole('button', { name: category, exact: true }).waitFor();
+    const hierarchyStyles = await frame.locator('body').evaluate(() => {
+      const panel = getComputedStyle(document.querySelector('.expert-panel')!);
+      const tabs = getComputedStyle(document.querySelector('.tabs')!);
+      const selectedTab = getComputedStyle(document.querySelector('.tab[aria-selected="true"]')!);
+      const type = getComputedStyle(document.querySelector('.expert-type-tab')!);
+      const category = getComputedStyle(document.querySelector('.expert-category-tab')!);
+      const card = getComputedStyle(document.querySelector('.expert-card')!);
+      return {
+        panelBorder: panel.borderTopWidth,
+        tabRule: tabs.borderBottomWidth,
+        selectedTabRule: selectedTab.borderBottomWidth,
+        typeBorder: type.borderTopWidth,
+        categoryBorder: category.borderTopWidth,
+        cardBorder: card.borderTopWidth,
+        typeSize: Number.parseFloat(type.fontSize),
+        categorySize: Number.parseFloat(category.fontSize),
+      };
+    });
+    assert.deepEqual(
+      {
+        panelBorder: hierarchyStyles.panelBorder,
+        tabRule: hierarchyStyles.tabRule,
+        selectedTabRule: hierarchyStyles.selectedTabRule,
+        typeBorder: hierarchyStyles.typeBorder,
+        categoryBorder: hierarchyStyles.categoryBorder,
+        cardBorder: hierarchyStyles.cardBorder,
+      },
+      {
+        panelBorder: '0px',
+        tabRule: '1px',
+        selectedTabRule: '2px',
+        typeBorder: '0px',
+        categoryBorder: '0px',
+        cardBorder: '1px',
+      },
+    );
+    assert.ok(hierarchyStyles.typeSize > hierarchyStyles.categorySize);
+    for (const theme of ['light', 'dark'] as const) {
+      await setTheme(theme);
+      for (const selector of [
+        '.expert-type-tab[aria-pressed="true"]',
+        '.expert-category-tab[aria-pressed="true"]',
+      ]) {
+        const colors = await frame.locator(selector).evaluate((element) => ({
+          foreground: getComputedStyle(element).color,
+          background: getComputedStyle(element).backgroundColor,
+        }));
+        const foreground = luminance(colors.foreground);
+        const background = luminance(colors.background);
+        const contrast =
+          (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+        assert.ok(contrast >= 4.5, `${theme} selected filter contrast: ${contrast}`);
+      }
+    }
+
+    const teamFilter = frame.getByRole('button', { name: '专家团', exact: true });
+    await teamFilter.focus();
+    await teamFilter.press('Enter');
+    await frame.getByRole('heading', { name: '内容创作团队', exact: true }).waitFor();
+    assert.equal(
+      await teamFilter.evaluate((element) => element.ownerDocument.activeElement === element),
+      true,
+    );
+    assert.equal(await frame.getByRole('heading', { name: '写作导师', exact: true }).count(), 0);
+
+    await frame.getByRole('button', { name: /任务专家/ }).click();
+    await frame.getByRole('heading', { name: '文档处理', exact: true }).waitFor();
+    await frame.getByRole('button', { name: '文档办公', exact: true }).waitFor();
+    assert.equal(await frame.getByRole('button', { name: '内容创作', exact: true }).count(), 0);
+
+    await frame.getByRole('button', { name: /平台专家/ }).click();
+    await frame.getByRole('heading', { name: '飞书协同办公', exact: true }).waitFor();
+    assert.deepEqual(await frame.locator('#expert-category-tabs button').allTextContents(), [
+      '全部',
+      '专家团',
+    ]);
+    assert.equal(requests.filter((request) => request.method === 'catalog.list').length, 1);
+    assert.equal(
+      requests.some((request) => request.method.startsWith('expert.')),
+      false,
+    );
+  },
+);
+
+test(
+  'an expert type without entries keeps only all and team filters and shows a truthful empty state',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame } = await openLibrary(t);
+    await frame.getByRole('button', { name: /平台专家/ }).click();
+    await frame.getByText('当前还没有平台专家。', { exact: true }).waitFor();
+    assert.deepEqual(await frame.locator('#expert-category-tabs button').allTextContents(), [
+      '全部',
+      '专家团',
+    ]);
+  },
+);
+
+test(
+  'editing can explicitly clear a broad category and reserved filter names are rejected locally',
+  { skip: !browserPath },
+  async (t) => {
+    const classified = {
+      ...preset,
+      expertType: 'role' as const,
+      category: '内容创作',
+      listingType: 'expert' as const,
+    };
+    const { frame, requests } = await openLibrary(t, [classified]);
+    await frame.getByRole('button', { name: '修改副本', exact: true }).click();
+    const editor = frame.getByRole('form', { name: '修改预置副本' });
+    for (const reservedCategory of ['专家团', 'all', 'team']) {
+      await editor.getByLabel('分类（可选）', { exact: true }).fill(reservedCategory);
+      await editor.getByRole('button', { name: '保存为我的副本', exact: true }).click();
+      await editor.getByText('这个名称是保留筛选名称，请换一个分类。', { exact: true }).waitFor();
+      assert.equal(requests.filter((request) => request.method === 'expert.save').length, 0);
+    }
+
+    await editor.getByLabel('专家类型', { exact: true }).selectOption('platform');
+    await editor.getByLabel('分类（可选）', { exact: true }).fill('');
+    await editor.getByRole('button', { name: '保存为我的副本', exact: true }).click();
+    await frame
+      .getByText('已保存。需要重新选择专家，才会在会话中应用新版本。', { exact: true })
+      .waitFor();
+    const save = requests.find((request) => request.method === 'expert.save');
+    assert.equal(save?.values.expertType, 'platform');
+    assert.equal(save?.values.category, null);
+    await frame.getByRole('heading', { name: '写作导师', exact: true }).waitFor();
+    assert.deepEqual(await frame.locator('#expert-category-tabs button').allTextContents(), [
+      '全部',
+      '专家团',
+    ]);
+  },
+);
+
+test(
   'the independent package creates an expert with explicit fields without selecting it or sending a prompt',
   { skip: !browserPath },
   async (t) => {
     const { frame, requests } = await openLibrary(t);
     await frame.getByRole('button', { name: '新建专家', exact: true }).click();
-    await frame.getByLabel('专家名称', { exact: true }).fill('我的编辑');
-    await frame.getByLabel('说明', { exact: true }).fill('校对文档');
-    await frame.getByLabel('专家提示词', { exact: true }).fill('请帮我校对文档。');
-    await frame.getByLabel('示例任务 1', { exact: true }).fill('检查这份提纲');
-    await frame.getByLabel('Skill 名称（可选）', { exact: true }).fill('document-processing');
+    const editor = frame.getByRole('form', { name: '新建专家' });
+    await editor.getByLabel('专家名称', { exact: true }).fill('我的编辑');
+    await editor.getByLabel('说明', { exact: true }).fill('校对文档');
+    await editor.getByLabel('专家类型', { exact: true }).selectOption('task');
+    await editor.getByLabel('分类（可选）', { exact: true }).fill('文档办公');
+    await editor.getByLabel('专家提示词', { exact: true }).fill('请帮我校对文档。');
+    await editor.getByLabel('示例任务 1', { exact: true }).fill('检查这份提纲');
+    await editor.getByLabel('Skill 名称（可选）', { exact: true }).fill('document-processing');
     await frame.getByRole('button', { name: '保存专家', exact: true }).click();
     await frame
       .getByText('已保存。需要重新选择专家，才会在会话中应用新版本。', { exact: true })
       .waitFor();
+    assert.equal(
+      await frame.getByRole('button', { name: /任务专家/ }).getAttribute('aria-pressed'),
+      'true',
+    );
+    await frame.getByRole('heading', { name: '我的编辑', exact: true }).waitFor();
     const saves = requests.filter((request) => request.method === 'expert.save');
     assert.equal(saves.length, 1);
     assert.deepEqual(saves[0]?.values, {
       name: '我的编辑',
       description: '校对文档',
+      expertType: 'task',
+      category: '文档办公',
       prompt: '请帮我校对文档。',
       starterTasks: ['检查这份提纲'],
       skillRef: 'document-processing',

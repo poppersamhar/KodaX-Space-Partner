@@ -625,6 +625,7 @@ export { notificationShowChannel, notificationClickedChannel } from './channels/
 export {
   PARTNER_BROWSER_FRAME_NAME_PREFIX,
   PARTNER_BROWSER_MAX_URL_LENGTH,
+  PARTNER_BROWSER_PARTITION,
   partnerBrowserNavigatedChannel,
   windowActivityChannel,
   windowActivityStateSchema,
@@ -789,6 +790,7 @@ export {
   SPACE_EXTENSION_MAX_HTML_BYTES,
   SPACE_EXTENSION_MAX_FRAME_DOCUMENT_CHARACTERS,
   spaceExtensionIdSchema,
+  spaceExtensionHostCapabilitySchema,
   spaceExtensionManifestSchema,
   spaceExtensionSchema,
   spaceExtensionsListChannel,
@@ -797,10 +799,14 @@ export {
   spaceExtensionsUninstallChannel,
   spaceExtensionsViewChannel,
   spaceExtensionsChangedChannel,
+  type SpaceExtensionHostCapabilityT,
   type SpaceExtensionManifestT,
   type SpaceExtensionT,
 } from './channels/space-extension.js';
 export {
+  spaceExpertTypeSchema,
+  spaceExpertListingTypeSchema,
+  spaceExpertCategorySchema,
   spaceExpertDefinitionSchema,
   spaceExpertDraftSchema,
   spaceExpertSaveInputSchema,

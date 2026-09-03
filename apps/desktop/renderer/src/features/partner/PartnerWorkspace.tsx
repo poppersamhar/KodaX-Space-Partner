@@ -8,6 +8,8 @@ import { PartnerEvidenceDetail } from './PartnerEvidenceDetail.js';
 import type { PartnerDetailOpenTarget } from './partnerDetailWorkspace.js';
 import { OPEN_PARTNER_MATERIAL_PICKER_EVENT } from './partnerMaterialPicker.js';
 import { shouldAutoHidePartnerContextRail } from './partnerWorkspaceLayout.js';
+import { PartnerBaseTaskAutoOpener } from './PartnerBaseTaskAutoOpener.js';
+import { PartnerNativeDocumentAutoOpener } from './PartnerNativeDocumentAutoOpener.js';
 
 const PARTNER_CONTEXT_OPEN_KEY = 'kodax-space.partnerContextRailOpen.v1';
 const COMPACT_PARTNER_QUERY = '(max-width: 900px)';
@@ -71,7 +73,7 @@ export function PartnerWorkspace({
   const contextRailVisible = contextRailOpen && !compact && !contextRailAutoHidden;
 
   const requestMaterialPicker = useCallback((): void => {
-    onOpenDetail({ kind: 'sources', openPicker: true });
+    onOpenDetail({ kind: 'materials', openPicker: true });
   }, [onOpenDetail]);
 
   useEffect(() => {
@@ -94,7 +96,7 @@ export function PartnerWorkspace({
 
   const toggleContextRail = (): void => {
     if (compact) {
-      onOpenDetail({ kind: 'sources' });
+      onOpenDetail({ kind: 'materials' });
       return;
     }
     if (contextRailAutoHidden) {
@@ -126,6 +128,8 @@ export function PartnerWorkspace({
       data-testid="partner-workspace"
       style={workspaceMode ? { display: 'none' } : undefined}
     >
+      <PartnerBaseTaskAutoOpener onOpenDetail={onOpenDetail} />
+      <PartnerNativeDocumentAutoOpener onOpenDetail={onOpenDetail} />
       <div className="flex h-10 flex-shrink-0 items-center gap-1 border-b border-border-default px-3">
         <SidebarToggleButton
           side="left"
@@ -172,10 +176,7 @@ export function PartnerWorkspace({
       <div className="flex min-h-0 flex-1">
         <PartnerConversation />
         {contextRailVisible && (
-          <PartnerContextRail
-            onOpenDetail={(kind) => onOpenDetail({ kind })}
-            onAddMaterial={requestMaterialPicker}
-          />
+          <PartnerContextRail onOpenDetail={onOpenDetail} onAddMaterial={requestMaterialPicker} />
         )}
       </div>
       <PartnerEvidenceDetail />

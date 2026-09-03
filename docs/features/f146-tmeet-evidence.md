@@ -38,20 +38,20 @@
 - macOS 的凭据密文位于所选 DATA_DIR；master key 使用官方 macOS Keychain 的 `tmeet / master.key` 全局槽。它是共享加密主密钥，不是共享账号 token。宿主不读、不重置、不删除该 Keychain 项。
 - Windows 实现使用固定 HKCU 注册表 keychain，不能据 DATA_DIR 宣称隔离。其他平台虽有官方原生包，本批仅对 macOS arm64 交付上述路径与隔离验证，其他平台明确不支持。
 
-## 指定会议详情，不含纪要和写入
+## 以会议号指定会议，不向模型导出内部 ID、录制、纪要或参会人
 
 来源：[meeting/get.go](https://github.com/TencentCloud/tencentmeeting-cli/blob/v1.0.15/cmd/meeting/get.go)、[record_enrich.go](https://github.com/TencentCloud/tencentmeeting-cli/blob/v1.0.15/cmd/meeting/record_enrich.go)、[output/print.go](https://github.com/TencentCloud/tencentmeeting-cli/blob/v1.0.15/internal/output/print.go)、[官方查询会议 API](https://cloud.tencent.com/document/product/1095/93432)。
 
-- 资源严格限定为 `tmeet://meeting/<数字meetingId>`，不是网页地址；用户需会议 ID，不能将 9 位会议码当作已经解析出的 ID。
-- 唯一业务命令：`meeting get --meeting-id <id> --format json`。对应 `GET /v1/meetings/{meetingId}`，instanceid=1、operator_id=当前 OpenId、operator_id_type=2。
-- 输出 envelope 的 `data.meeting_info_list` 必须恰为一个会议，且返回 meeting_id 必须与请求一致。仅提取 subject、meeting_id、meeting_code、start_time、end_time、status，限定字段和总体大小。不给模型原始 JSON、trace_id、主持人密钥、会议密码、参会者或录制链接。
-- CLI 自动请求同一会议的录制基础概要（最多 2×100 条，失败降级），不能据空 records 断言无录制，也不能承诺概要完整。本实现不暴露这些概要，不另取录制/纪要，不申请权限。返回文本明确说明不含录制与纪要。
-- `documentId=meetingId`、`url=原内部ref`、`revision=0`；0 不表示可做乐观写入。
+- 资源严格限定为 `tmeet://meeting-code/<6–15 位数字会议号>`，不是网页地址，也不接收平台内部 `meeting_id`。会议号由用户明确提供，宿主不搜索、不猜测，也不把 URL 或任意 CLI 参数当作资源。
+- 唯一业务命令：`meeting get --meeting-code <meetingCode> --format json`。业务命令只携带会议号，不把返回的内部 `meeting_id` 用作后续参数。
+- 输出 envelope 的 `data.meeting_info_list` 必须恰为一个会议，且返回 `meeting_code` 必须与请求会议号完全一致。仅提取 subject、meeting_code、start_time、end_time、status，限定字段和总体大小。`documentId` 使用会议号；模型文本只显示会议号，不输出内部 `meeting_id`，也不给模型原始 JSON、trace_id、主持人密钥、会议密码、参会者或录制链接。
+- 官方 CLI 当前可能自动请求同一会议的录制基础元数据（最多 2×100 条，失败降级）。Space 丢弃该数据，不向模型展示或导出录制、纪要或参会人；因此既不把“未导出”误写成 CLI 完全没有读取，也不据空 records 断言没有录制或概要完整。
+- `documentId=meetingCode`、`url=原内部ref`、`revision=0`；0 不表示可做乐观写入。
 - 每次读前校验预期身份；进程目录/环境准备完后，在 `beforeSpawn` 内执行宿主 beforeRead 并再次在线比对身份，最后同步 assertRead 紧贴 spawn。业务返回后再 assertRead，避免撤销/切换期间的数据回流。
-- 本批无搜索、录制下载、纪要读取、授权申请或任何写入。后续写入仍需独立评审/授权，不以本切片冒充完成。
+- 本批无搜索、录制下载、纪要读取、参会人导出、授权申请或任何写入。后续写入仍需独立评审/授权，不以本切片冒充完成。
 
 ## 品牌资产与验证
 
 - 官网首页 [meeting.tencent.com](https://meeting.tencent.com/) 的图片元数据引用 [官方 logo128.png](https://cdn.meeting.tencent.com/assets/next-website/logo128.png)。保存为 `resources/brands/tencent-meeting.png`，128×128 RGBA，未加工；SHA256 `40f08c632268086cff8bbbbe6c292b95ccf5effbb1f7dfa9966592ed40df48c9`。仅用于指认腾讯会议，商标权归原权利人。
 - 测试为注入进程/安装器的本地合约与隔离检查，不声称线上业务 E2E 已完成。覆盖缺少安装确认、原生文件完整性、私有配置路径、已有凭据拒绝、在线身份失败、账号变更、命令/URL 限定、超时/取消、权限撤销、回包错配及敏感字段不透出。
-- 真实账号验收待用户自行发起：确认 macOS arm64；在宿主明确安装确认后打开官方授权；按官方页面授予；校验显示实际账号；仅加入有权读取的指定会议 ID；撤销会话开关后不得读取；系统终端已有账号保持不变。不要在仓库/日志/截图中保存 token、授权码或账号密码。
+- 真实账号验收待用户自行发起：确认 macOS arm64；在宿主明确安装确认后打开官方授权；按官方页面授予；校验显示实际账号；仅加入有权读取的 6–15 位会议号；确认模型结果不含内部 `meeting_id`、录制、纪要或参会人；撤销会话开关后不得读取；系统终端已有账号保持不变。不要在仓库/日志/截图中保存 token、授权码或账号密码。

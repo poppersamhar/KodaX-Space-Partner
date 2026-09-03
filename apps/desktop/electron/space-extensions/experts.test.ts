@@ -33,20 +33,33 @@ async function buildArchive(
   experts = [WRITING_MENTOR],
   version = '0.2.0',
   id = 'test.library',
+  connectors: Array<{
+    id: string;
+    adapter: 'feishu-cli';
+    name: string;
+    description: string;
+  }> = [],
 ) {
+  const hostApiVersion = experts.some(
+    (expert) => expert.capabilityGuide,
+  )
+    ? 3
+    : experts.some((expert) => expert.expertType || expert.category || expert.listingType)
+    ? 2
+    : 1;
   const zip = new JSZip();
   zip.file(
     'manifest.json',
     JSON.stringify({
       formatVersion: 1,
-      hostApiVersion: 1,
+      hostApiVersion,
       id,
       name: 'Test Library',
       description: 'Expert catalog',
       version,
       ui: { entry: 'ui/index.html', sha256: createHash('sha256').update(HTML).digest('hex') },
       experts,
-      connectors: [],
+      connectors,
     }),
   );
   zip.file('ui/index.html', HTML);
@@ -276,6 +289,139 @@ test('editing a built-in expert creates a user copy without accepting stale or m
   await assert.rejects(catalog.save({ ...input, expectedRevision: 2 }), /revision/i);
   await assert.rejects(catalog.save({ ...input, expertId: 'missing' }), /no longer available/i);
   assert.deepEqual(await catalog.list('test.library'), [WRITING_MENTOR, copy]);
+});
+
+test('older expert editors preserve catalog classification when copying or revising an expert', async (t) => {
+  const { directory, store, catalog } = await fixture(t);
+  const classified = {
+    ...WRITING_MENTOR,
+    expertType: 'role' as const,
+    category: '内容创作',
+    listingType: 'expert' as const,
+  };
+  await store.install(await buildArchive(directory, [classified]));
+  await store.setEnabled('test.library', true);
+  const legacyValues = {
+    name: '我的写作导师',
+    description: '兼容旧编辑器',
+    prompt: '保留分类并更新角色说明。',
+    starterTasks: [],
+  };
+  const copy = await catalog.save({
+    extensionId: 'test.library',
+    expertId: classified.id,
+    expectedRevision: 1,
+    values: legacyValues,
+  });
+  assert.deepEqual(
+    {
+      expertType: copy.expertType,
+      category: copy.category,
+      listingType: copy.listingType,
+    },
+    { expertType: 'role', category: '内容创作', listingType: 'expert' },
+  );
+  const revised = await catalog.save({
+    extensionId: 'test.library',
+    expertId: copy.id,
+    expectedRevision: 1,
+    values: { ...legacyValues, prompt: '第二版角色说明。' },
+  });
+  assert.equal(revised.revision, 2);
+  assert.equal(revised.expertType, 'role');
+  assert.equal(revised.category, '内容创作');
+  assert.equal(revised.listingType, 'expert');
+  const cleared = await catalog.save({
+    extensionId: 'test.library',
+    expertId: copy.id,
+    expectedRevision: 2,
+    values: {
+      ...legacyValues,
+      expertType: 'platform',
+      category: null,
+      prompt: '平台专家不设置业务大类。',
+    },
+  });
+  assert.equal(cleared.revision, 3);
+  assert.equal(cleared.expertType, 'platform');
+  assert.equal(cleared.category, undefined);
+  assert.equal(cleared.listingType, 'expert');
+});
+
+test('copying or editing a built-in platform expert preserves its package capability guide', async (t) => {
+  const { directory, store, catalog } = await fixture(t);
+  const platformExpert = {
+    ...WRITING_MENTOR,
+    id: 'feishu-office-suite',
+    expertType: 'platform' as const,
+    skillRef: 'lark-base',
+    capabilityGuide: {
+      groups: [
+        {
+          id: 'base',
+          label: '多维表格',
+          actions: [
+            {
+              id: 'create-base',
+              label: '新建多维表格',
+              requiredConnectorIds: ['feishu-docs'],
+              promptTemplate: '请新建一个飞书多维表格。',
+            },
+          ],
+        },
+      ],
+    },
+  };
+  await store.install(
+    await buildArchive(directory, [platformExpert], '0.8.0', 'test.library', [
+      {
+        id: 'feishu-docs',
+        adapter: 'feishu-cli',
+        name: '飞书',
+        description: '飞书官方 CLI 连接器。',
+      },
+    ]),
+  );
+  await store.setEnabled('test.library', true);
+  const copy = await catalog.save({
+    extensionId: 'test.library',
+    expertId: platformExpert.id,
+    expectedRevision: 1,
+    values: {
+      name: '我的飞书办公套件专家',
+      description: '保留包提供的受控能力入口。',
+      prompt: '使用当前会话授权的飞书能力完成任务。',
+      starterTasks: [],
+      skillRef: 'lark-base',
+    },
+  });
+  assert.deepEqual(copy.capabilityGuide, platformExpert.capabilityGuide);
+  const revised = await catalog.save({
+    extensionId: 'test.library',
+    expertId: copy.id,
+    expectedRevision: 1,
+    values: {
+      name: copy.name,
+      description: copy.description,
+      prompt: '第二版平台专家提示词。',
+      starterTasks: [],
+      skillRef: 'lark-base',
+    },
+  });
+  assert.deepEqual(revised.capabilityGuide, platformExpert.capabilityGuide);
+  const converted = await catalog.save({
+    extensionId: 'test.library',
+    expertId: copy.id,
+    expectedRevision: 2,
+    values: {
+      name: copy.name,
+      description: copy.description,
+      prompt: '改为普通岗位专家。',
+      starterTasks: [],
+      expertType: 'role',
+    },
+  });
+  assert.equal(converted.capabilityGuide, undefined);
 });
 
 test('editing a user expert increments its revision without mutating an old session snapshot', async (t) => {

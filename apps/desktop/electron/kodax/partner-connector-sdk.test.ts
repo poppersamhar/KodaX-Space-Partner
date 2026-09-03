@@ -130,6 +130,9 @@ const service: PartnerConnectorRunService = {
       updatedAt: new Date().toISOString(),
     };
   },
+  createBase: async () => {
+    throw new Error('No Base task expected');
+  },
 };
 before(async () => {
   await fs.mkdir(projectRoot, { recursive: true });

@@ -25,7 +25,8 @@ test('onboarding streams output before exit and removes inherited credential/run
   });
   assert.equal(result.exitCode, 0);
   assert.ok(seen.some((line) => line.includes('stdout:first')));
-  assert.doesNotMatch(seen.join(''), /LARKSUITE|NODE_OPTIONS|ELECTRON/u);
+  assert.doesNotMatch(seen.join(''), /LARKSUITE_CLI_TOKEN|NODE_OPTIONS|ELECTRON_RUN_AS_NODE/u);
+  assert.match(seen.join(''), /LARKSUITE_CLI_NO_UPDATE_NOTIFIER/u);
 });
 
 test('cancel, deadlines and output limits stop an onboarding process and never expose raw errors', async () => {

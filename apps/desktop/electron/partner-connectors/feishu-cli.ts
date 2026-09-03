@@ -5,11 +5,16 @@ import {
   type FeishuCliRunner,
 } from './feishu-cli-runner.js';
 import {
+  feishuBaseCreateSpecSchema,
+  feishuBaseUrlSchema,
   feishuDocumentUrlSchema,
   feishuFolderUrlSchema,
   feishuProfileSchema,
   MAX_PARTNER_REMOTE_TEXT_BYTES,
+  type FeishuBaseCreateSpecT,
 } from '@kodax-space/space-ipc-schema';
+import { FEISHU_BASE_CREATE_SCOPES } from './feishu-scopes.js';
+import { FEISHU_CLI_VERSION, isCompatibleFeishuCliVersion } from './feishu-cli-release.js';
 export { FeishuCliError } from './feishu-cli-runner.js';
 export type { FeishuCliRunner, FeishuCliErrorCode } from './feishu-cli-runner.js';
 
@@ -45,7 +50,7 @@ export interface FeishuReadInput extends FeishuAccountInput {
   assertRead?: () => void;
 }
 export interface FeishuCreateInput extends FeishuAccountInput {
-  folderUrl: string;
+  folderUrl?: string;
   title: string;
   text: string;
   beforeDispatch?: () => Promise<void>;
@@ -63,6 +68,18 @@ export interface FeishuWriteResult {
   url?: string;
   revision?: number;
 }
+export type FeishuCreateBaseInput = FeishuAccountInput &
+  FeishuBaseCreateSpecT & {
+    beforeDispatch?: () => Promise<void>;
+    assertDispatch?: () => void;
+  };
+export interface FeishuBaseWriteResult {
+  status: 'success' | 'partial' | 'unknown';
+  baseToken?: string;
+  tableId?: string;
+  url?: string;
+}
+const feishuToken = /^[A-Za-z0-9_-]{1,128}$/u;
 
 function documentReference(
   value: string,
@@ -90,6 +107,51 @@ function xmlText(text: string, maximum: number): string {
     .replace(/</gu, '&lt;')
     .replace(/>/gu, '&gt;')
     .replace(/\r\n?|\n/gu, '<br/>');
+}
+
+function markdownDocumentText(text: string): string {
+  if (
+    typeof text !== 'string' ||
+    !text.trim() ||
+    text.length > MAX_PARTNER_REMOTE_TEXT_BYTES ||
+    Buffer.byteLength(text, 'utf8') > MAX_PARTNER_REMOTE_TEXT_BYTES ||
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text) ||
+    /!\[[^\n\]]*\]\([^\n)]*\)/u.test(text) ||
+    /<\s*(?:img|source)\b/iu.test(text)
+  ) {
+    throw new FeishuCliError('invalid_input', false);
+  }
+  return text.normalize('NFC').replace(/\r\n?/gu, '\n');
+}
+
+function documentTitle(text: string): string {
+  if (
+    typeof text !== 'string' ||
+    !text.trim() ||
+    text.length > 280 ||
+    /[\r\n\u0000-\u001f\u007f]/u.test(text)
+  ) {
+    throw new FeishuCliError('invalid_input', false);
+  }
+  return text.normalize('NFC').trim();
+}
+
+function decodeMarkdownExportTitle(text: string): string {
+  return text
+    .replace(/&lt;/gu, '<')
+    .replace(/&gt;/gu, '>')
+    .replace(/&quot;/gu, '"')
+    .replace(/&apos;/gu, "'")
+    .replace(/&amp;/gu, '&');
+}
+
+function markdownExportTitle(content: string, fallback: string): string {
+  const firstLine = content.split('\n').find((line) => line.trim())?.trim();
+  if (!firstLine) return fallback;
+  const tagged = /^<title>(.*?)<\/title>$/u.exec(firstLine);
+  const heading = /^#+\s+(.+?)\s*$/u.exec(firstLine);
+  const title = decodeMarkdownExportTitle(tagged?.[1] ?? heading?.[1] ?? firstLine).trim();
+  return title.slice(0, 280) || fallback;
 }
 
 function writeReceipt(envelope: Record<string, unknown>): FeishuWriteResult {
@@ -122,6 +184,131 @@ function writeReceipt(envelope: Record<string, unknown>): FeishuWriteResult {
     url: ref.url,
     revision: Number(doc.revision_id),
   };
+}
+
+function baseWriteReceipt(
+  envelope: Record<string, unknown>,
+  spec: FeishuBaseCreateSpecT,
+): FeishuBaseWriteResult {
+  const data = record(envelope.data);
+  if (envelope.ok !== true || envelope.identity !== 'user' || data.created !== true)
+    return { status: 'unknown' };
+  if (data.result !== undefined && data.result !== 'success' && data.result !== 'partial_success')
+    return { status: 'unknown' };
+  const header = baseReceiptHeader(data, spec);
+  if (!header) return { status: 'unknown' };
+  const resource = baseReceiptResource(data, spec, header.base, header.token);
+  const warningsExact =
+    data.warnings === undefined || (Array.isArray(data.warnings) && data.warnings.length === 0);
+  const exact =
+    data.result !== 'partial_success' &&
+    resource.exact &&
+    baseReceiptBodyMatches(data, spec, resource.tableId) &&
+    warningsExact;
+  return {
+    status: exact ? 'success' : 'partial',
+    baseToken: header.token,
+    ...(resource.tableId ? { tableId: resource.tableId } : {}),
+    ...(resource.url ? { url: resource.url } : {}),
+  };
+}
+
+function baseReceiptHeader(data: Record<string, unknown>, spec: FeishuBaseCreateSpecT) {
+  const base = record(data.base);
+  const appToken = base.app_token;
+  const legacyToken = base.base_token;
+  const token = appToken ?? legacyToken;
+  if (
+    typeof token !== 'string' ||
+    !feishuToken.test(token) ||
+    (typeof appToken === 'string' && typeof legacyToken === 'string' && appToken !== legacyToken) ||
+    base.name !== spec.baseName
+  )
+    return undefined;
+  return { base, token };
+}
+
+function baseReceiptResource(
+  data: Record<string, unknown>,
+  spec: FeishuBaseCreateSpecT,
+  base: Record<string, unknown>,
+  token: string,
+) {
+  let exact = true;
+  const table = record(data.table);
+  const primaryTableId = table.id;
+  const legacyTableId = table.table_id;
+  const tableId = primaryTableId ?? legacyTableId;
+  if (
+    typeof tableId !== 'string' ||
+    !feishuToken.test(tableId) ||
+    (typeof primaryTableId === 'string' &&
+      typeof legacyTableId === 'string' &&
+      primaryTableId !== legacyTableId) ||
+    table.name !== spec.tableName
+  )
+    exact = false;
+
+  let url: string | undefined;
+  if (base.url === undefined) url = `https://www.feishu.cn/base/${token}`;
+  else if (
+    typeof base.url === 'string' &&
+    feishuBaseUrlSchema.safeParse(base.url).success &&
+    base.url.split('/').at(-1) === token
+  )
+    url = base.url;
+  else exact = false;
+  return {
+    exact,
+    tableId: typeof tableId === 'string' && feishuToken.test(tableId) ? tableId : undefined,
+    url,
+  };
+}
+
+function baseReceiptBodyMatches(
+  data: Record<string, unknown>,
+  spec: FeishuBaseCreateSpecT,
+  tableId?: string,
+): boolean {
+  const receiptFields = data.fields;
+  if (!Array.isArray(receiptFields) || receiptFields.length !== spec.fields.length) return false;
+  if (!spec.fields.every((expected, index) => baseFieldMatches(receiptFields[index], expected)))
+    return false;
+  const deletedDefaultId = data.deleted_default_table_id;
+  return !(
+    data.default_table_deleted !== true ||
+    typeof deletedDefaultId !== 'string' ||
+    !feishuToken.test(deletedDefaultId) ||
+    deletedDefaultId === tableId
+  );
+}
+
+function baseFieldMatches(
+  value: unknown,
+  expected: FeishuBaseCreateSpecT['fields'][number],
+): boolean {
+  const actual = record(value);
+  if (
+    typeof actual.id !== 'string' ||
+    !feishuToken.test(actual.id) ||
+    actual.name !== expected.name ||
+    actual.type !== expected.type
+  )
+    return false;
+  if (expected.type === 'select') return baseSelectMatches(actual, expected);
+  if (expected.type !== 'datetime') return true;
+  const actualStyle = record(actual.style);
+  return expected.style ? actualStyle.format === expected.style.format : actual.style === undefined;
+}
+
+function baseSelectMatches(
+  actual: Record<string, unknown>,
+  expected: Extract<FeishuBaseCreateSpecT['fields'][number], { type: 'select' }>,
+): boolean {
+  const options = actual.options;
+  if (actual.multiple !== expected.multiple || !Array.isArray(options)) return false;
+  if (options.length !== expected.options.length) return false;
+  return expected.options.every((option, index) => record(options[index]).name === option.name);
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -181,7 +368,7 @@ export class FeishuCli {
   async listProfiles(): Promise<Array<{ name: string; label: string }>> {
     try {
       const probe = await this.runner({ args: ['--version'] });
-      if (probe.exitCode !== 0 || !/^lark-cli version 1\.0\.92\s*$/u.test(probe.stdout))
+      if (probe.exitCode !== 0 || !isCompatibleFeishuCliVersion(probe.stdout))
         throw new FeishuCliError('unsupported_version', false);
       const response = await this.runner({ args: ['profile', 'list'] });
       if (response.exitCode !== 0) throw new FeishuCliError('not_connected', false);
@@ -225,7 +412,8 @@ export class FeishuCli {
   private async authorize(input: FeishuAccountInput, scopes: readonly string[]): Promise<void> {
     const status = await this.inspect(input.profile);
     if (!status.installed) throw new FeishuCliError('cli_missing', false);
-    if (status.version !== '1.0.92') throw new FeishuCliError('unsupported_version', false);
+    if (status.version !== FEISHU_CLI_VERSION)
+      throw new FeishuCliError('unsupported_version', false);
     if (!status.identity) throw new FeishuCliError('not_connected', false);
     if (
       status.identity.appId !== input.expected.appId ||
@@ -272,24 +460,21 @@ export class FeishuCli {
     ) {
       throw new FeishuCliError('invalid_response', false);
     }
-    const title =
-      doc.content
-        .split('\n')
-        .find((line) => line.trim())
-        ?.replace(/^#+\s*/u, '')
-        .slice(0, 120) || ref.id;
     return {
       documentId: ref.id,
       url: ref.url,
-      title,
+      title: markdownExportTitle(doc.content, ref.id),
       revision: Number(doc.revision_id),
       content: doc.content,
     };
   }
 
   async create(input: FeishuCreateInput): Promise<FeishuWriteResult> {
-    const folder = documentReference(input.folderUrl, 'drive/folder');
-    const content = `<title>${xmlText(input.title, 280)}</title><p>${xmlText(input.text, MAX_PARTNER_REMOTE_TEXT_BYTES)}</p>`;
+    const parentArgs = input.folderUrl
+      ? ['--parent-token', documentReference(input.folderUrl, 'drive/folder').id]
+      : ['--parent-position', 'my_library'];
+    const title = documentTitle(input.title);
+    const content = markdownDocumentText(input.text);
     await this.authorize(input, ['docx:document:create']);
     await input.beforeDispatch?.();
     input.assertDispatch?.();
@@ -304,9 +489,10 @@ export class FeishuCli {
           '--format',
           'json',
           '--doc-format',
-          'xml',
-          '--parent-token',
-          folder.id,
+          'markdown',
+          '--title',
+          title,
+          ...parentArgs,
           '--content',
           '-',
         ],
@@ -315,6 +501,49 @@ export class FeishuCli {
       true,
     );
     return writeReceipt(envelope);
+  }
+
+  async createBase(input: FeishuCreateBaseInput): Promise<FeishuBaseWriteResult> {
+    const parsed = feishuBaseCreateSpecSchema.safeParse({
+      folderUrl: input.folderUrl,
+      baseName: input.baseName,
+      tableName: input.tableName,
+      fields: input.fields,
+    });
+    if (!parsed.success) throw new FeishuCliError('invalid_input', false);
+    const spec = parsed.data;
+    const folderArgs = spec.folderUrl
+      ? ['--folder-token', documentReference(spec.folderUrl, 'drive/folder').id]
+      : [];
+    const fields = JSON.stringify(spec.fields);
+    await this.authorize(input, FEISHU_BASE_CREATE_SCOPES);
+    await input.beforeDispatch?.();
+    await this.authorize(input, FEISHU_BASE_CREATE_SCOPES);
+    input.assertDispatch?.();
+    const envelope = await this.dispatch(
+      {
+        args: [
+          `--profile=${input.profile}`,
+          'base',
+          '+base-create',
+          '--as',
+          'user',
+          '--format',
+          'json',
+          '--name',
+          spec.baseName,
+          ...folderArgs,
+          '--time-zone',
+          'Asia/Shanghai',
+          '--table-name',
+          spec.tableName,
+          '--fields',
+          fields,
+        ],
+      },
+      true,
+    );
+    return baseWriteReceipt(envelope, spec);
   }
 
   async append(input: FeishuAppendInput): Promise<FeishuWriteResult> {
@@ -377,7 +606,7 @@ export class FeishuCli {
     try {
       const probe = await this.runner({ args: ['--version'], ...(signal ? { signal } : {}) });
       version = /^lark-cli version (\d+\.\d+\.\d+)\s*$/u.exec(probe.stdout)?.[1];
-      if (probe.exitCode !== 0 || version !== '1.0.92')
+      if (probe.exitCode !== 0 || version !== FEISHU_CLI_VERSION)
         throw new FeishuCliError('unsupported_version', false);
       const result = await this.runner({
         args: [`--profile=${profile}`, 'auth', 'status', '--json', '--verify'],

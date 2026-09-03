@@ -1247,6 +1247,7 @@ function retainedConnectorBindings(
       binding.connectorId !== selection.connectorId ||
       binding.connectionRevision !== selection.connectionRevision ||
       binding.createFolderUrl !== selection.createFolderUrl ||
+      binding.createBaseFolderUrl !== selection.createBaseFolderUrl ||
       binding.documents.length !== selection.documents.length ||
       binding.documents.some(
         (document, index) =>

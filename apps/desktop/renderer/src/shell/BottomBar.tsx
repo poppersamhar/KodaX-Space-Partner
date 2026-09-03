@@ -2,7 +2,7 @@
 // Composer footer: chips, textarea, attachments, mode controls, and send/stop.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUp, FileText, Folder, Plus, X } from 'lucide-react';
+import { ArrowUp, FileOutput, FileText, Folder, Plus, X } from 'lucide-react';
 import {
   MAX_SOURCE_IMAGE_BYTES,
   type ChannelInput,
@@ -20,6 +20,7 @@ import { ModeSelector } from './ModeSelector.js';
 import { ContextWindowIndicator } from './ContextWindowIndicator.js';
 import { QueueIndicator } from './QueueIndicator.js';
 import { AttachMenu } from './AttachMenu.js';
+import { PartnerAttachMenu } from './PartnerAttachMenu.js';
 import { AgentPicker } from './AgentPicker.js';
 import { AtPathPopover } from './AtPathPopover.js';
 import { SlashCommandPopover, type SlashPickerItem } from './SlashCommandPopover.js';
@@ -89,16 +90,23 @@ import {
   clearPartnerPendingSources,
   readPartnerPendingSources,
 } from '../features/partner/partnerWorkbench.js';
-import {
-  requestPartnerExpertManagement,
-  usePartnerExpert,
-} from '../features/extensions/PartnerExpertProvider.js';
+import { usePartnerExpert } from '../features/extensions/PartnerExpertProvider.js';
 import { PartnerExpertChip } from '../features/extensions/PartnerExpertChip.js';
+import { PartnerExpertCapabilityBar } from '../features/extensions/PartnerExpertCapabilityBar.js';
+import { PartnerExpertMenuContent } from '../features/extensions/PartnerExpertMenuContent.js';
 import type { PartnerExpertDraftCapture } from '../features/extensions/partnerExpertBinding.js';
 import { usePartnerConnectors } from '../features/extensions/PartnerConnectorProvider.js';
-import { PartnerConnectorMenuContent } from '../features/extensions/PartnerConnectorChips.js';
+import {
+  PartnerConnectorChips,
+  PartnerConnectorMenuContent,
+} from '../features/extensions/PartnerConnectorChips.js';
 import type { PartnerConnectorDraftCapture } from '../features/extensions/partnerConnectorBinding.js';
 import { acceptPartnerCreatedDraft } from '../features/extensions/partnerDraftCreation.js';
+import {
+  INSERT_PARTNER_SKILL_DRAFT_EVENT,
+  partnerSkillDraftTextForSurface,
+  type InsertPartnerSkillDraftDetail,
+} from '../features/partner/partnerSkillDraft.js';
 import { startNewConversation } from '../store/newConversation.js';
 import { applyPartnerDeliveryInstruction } from '../features/partner/partnerSceneTemplates.js';
 
@@ -690,6 +698,16 @@ export function BottomBar(): JSX.Element {
     window.addEventListener('kodax-space.focus-textarea', onFocus);
     return () => window.removeEventListener('kodax-space.focus-textarea', onFocus);
   }, []);
+
+  useEffect(() => {
+    const onInsertSkillDraft = (event: Event): void => {
+      const detail = (event as CustomEvent<InsertPartnerSkillDraftDetail>).detail;
+      const text = partnerSkillDraftTextForSurface(currentSurface, detail?.text ?? '');
+      if (text) insertAtCaret(text);
+    };
+    window.addEventListener(INSERT_PARTNER_SKILL_DRAFT_EVENT, onInsertSkillDraft);
+    return () => window.removeEventListener(INSERT_PARTNER_SKILL_DRAFT_EVENT, onInsertSkillDraft);
+  }, [currentSurface, insertAtCaret]);
 
   useEffect(() => {
     const previous = partnerDraftScopeRef.current;
@@ -2593,14 +2611,20 @@ export function BottomBar(): JSX.Element {
           onMouseDownCapture={(e) => focusComposerFromContainer(e.target)}
           className={[
             'glass lift rounded-2xl border bg-surface-2 px-3 pt-2 pb-2 space-y-1.5 transition-colors',
+            currentSurface === 'partner' ? 'partner-composer-panel' : '',
             draggingFiles
               ? 'border-accent/70 bg-accent/5'
               : 'border-border-default focus-within:border-accent/50',
           ].join(' ')}
         >
-          <ChipBar />
-          {currentSurface === 'partner' && <PartnerExpertChip running={isStreaming} />}
-
+          <div data-testid="composer-context-toolbar" className="flex items-center gap-1.5">
+            <ChipBar />
+            {currentSurface === 'partner' && <PartnerConnectorChips />}
+            {currentSurface === 'partner' && <PartnerExpertChip running={isStreaming} />}
+          </div>
+          {currentSurface === 'partner' && (
+            <PartnerExpertCapabilityBar onInsertDraft={insertAtCaret} />
+          )}
           {(pendingImages.length > 0 || pendingFileRefs.length > 0 || imageErr) && (
             <div className="space-y-1">
               {pendingImages.length > 0 && (
@@ -2776,9 +2800,17 @@ export function BottomBar(): JSX.Element {
 
           <div
             data-testid="composer-footer-toolbar"
-            className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]"
+            className={[
+              'flex min-w-0 flex-wrap items-center gap-2 text-[11px]',
+              currentSurface === 'partner' ? 'partner-composer-footer' : '',
+            ].join(' ')}
           >
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div
+              className={[
+                'flex min-w-0 flex-wrap items-center gap-2',
+                currentSurface === 'partner' ? 'partner-composer-footer__primary' : '',
+              ].join(' ')}
+            >
               <div className="relative">
                 <input
                   ref={fileInputRef}
@@ -2803,37 +2835,55 @@ export function BottomBar(): JSX.Element {
                 >
                   <Plus className="h-4 w-4" />
                 </button>
-                <AttachMenu
-                  open={attachOpen}
-                  onClose={() => setAttachOpen(false)}
-                  onAddFiles={() => {
-                    const input = fileInputRef.current;
-                    if (!input) return;
-                    input.value = '';
-                    input.click();
-                  }}
-                  onAddFolder={() => startAttachmentOperation(attachFolder)}
-                  onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
-                  partnerConnectorContent={
-                    currentSurface === 'partner' ? (
+                {currentSurface === 'partner' ? (
+                  <PartnerAttachMenu
+                    open={attachOpen}
+                    onClose={() => setAttachOpen(false)}
+                    onAddFiles={() => {
+                      const input = fileInputRef.current;
+                      if (!input) return;
+                      input.value = '';
+                      input.click();
+                    }}
+                    onAddFolder={() => startAttachmentOperation(attachFolder)}
+                    onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
+                    partnerConnectorContent={
                       <PartnerConnectorMenuContent
                         onClose={() => setAttachOpen(false)}
                         showHeading={false}
                       />
-                    ) : undefined
-                  }
-                  onOpenPartnerExperts={
-                    currentSurface === 'partner' && partnerExpert
-                      ? () => requestPartnerExpertManagement(partnerExpert.snapshot.context)
-                      : undefined
-                  }
-                />
+                    }
+                    partnerExpertContent={
+                      <PartnerExpertMenuContent onClose={() => setAttachOpen(false)} />
+                    }
+                  />
+                ) : (
+                  <AttachMenu
+                    open={attachOpen}
+                    onClose={() => setAttachOpen(false)}
+                    onAddFiles={() => {
+                      const input = fileInputRef.current;
+                      if (!input) return;
+                      input.value = '';
+                      input.click();
+                    }}
+                    onAddFolder={() => startAttachmentOperation(attachFolder)}
+                    onInsertText={(text) => setPrompt((p) => (p ? `${p} ${text}` : text))}
+                  />
+                )}
               </div>
               {currentSurface !== 'partner' && <AgentPicker insertAtCaret={insertAtCaret} />}
               <ModeSelector />
               {currentSurface === 'partner' && (
-                <label className="inline-flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-1.5 text-[11px] text-fg-muted">
-                  <span>{t('partner.deliveryFormat.label')}</span>
+                <label className="partner-delivery-selector relative inline-flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-1.5 text-[11px] text-fg-muted transition-[width,padding]">
+                  <FileOutput
+                    className="partner-delivery-selector__icon hidden h-3.5 w-3.5 shrink-0"
+                    strokeWidth={1.8}
+                    aria-hidden
+                  />
+                  <span className="partner-delivery-selector__label">
+                    {t('partner.deliveryFormat.label')}
+                  </span>
                   <select
                     value={partnerDeliveryFormat}
                     onChange={(event) =>
@@ -2841,7 +2891,7 @@ export function BottomBar(): JSX.Element {
                         event.currentTarget.value as PartnerDeliveryFormat,
                       )
                     }
-                    className="max-w-24 bg-transparent text-fg-secondary outline-none"
+                    className="partner-delivery-selector__select max-w-24 bg-transparent text-fg-secondary outline-none"
                     aria-label={t('partner.deliveryFormat.label')}
                   >
                     {PARTNER_DELIVERY_FORMATS.map((option) => (
@@ -2854,7 +2904,12 @@ export function BottomBar(): JSX.Element {
               )}
               {currentSurface !== 'partner' && <AgentModeSelector />}
             </div>
-            <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
+            <div
+              className={[
+                'ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2',
+                currentSurface === 'partner' ? 'partner-composer-footer__secondary' : '',
+              ].join(' ')}
+            >
               <ContextWindowIndicator
                 compacting={isCompacting}
                 attentionOnly={currentSurface === 'partner'}

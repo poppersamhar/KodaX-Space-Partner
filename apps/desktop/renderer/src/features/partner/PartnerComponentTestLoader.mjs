@@ -1,12 +1,15 @@
 const stubs = new Map([
   ['FilesPanel', 'FilesPanel'],
   ['ArtifactPanel', 'ArtifactPanel'],
-  ['PartnerBrowserPanel', 'PartnerBrowserPanel'],
   ['FileViewer', 'FileViewer'],
   ['SourcesPanel', 'SourcesPanel'],
   ['PartnerContextRail', 'PartnerContextRail'],
   ['PartnerConversation', 'PartnerConversation'],
   ['PartnerEvidenceDetail', 'PartnerEvidenceDetail'],
+  ['PartnerExpertDetails', 'PartnerExpertDetails'],
+  ['PartnerConnectorDetails', 'PartnerConnectorDetails'],
+  ['PartnerCollaborationPanel', 'PartnerCollaborationPanel'],
+  ['PartnerSkillDetails', 'PartnerSkillDetails'],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {

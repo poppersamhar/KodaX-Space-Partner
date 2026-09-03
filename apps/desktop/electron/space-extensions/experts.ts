@@ -68,17 +68,28 @@ export class SpaceExpertCatalog {
         (entry) => entry.expert.id === input.expertId && entry.deletedAt === undefined,
       );
       let basedOn = user?.basedOn;
+      let base: SpaceExpertDefinitionT | undefined;
       if (input.expertId !== undefined) {
-        const base =
-          user?.expert ?? manifest.experts.find((expert) => expert.id === input.expertId);
+        base = user?.expert ?? manifest.experts.find((expert) => expert.id === input.expertId);
         if (!base) throw new Error('The selected expert is no longer available in this extension');
         if (base.revision !== input.expectedRevision)
           throw new Error('Expert revision changed; refresh before saving');
         if (!user)
           basedOn = { extensionId: manifest.id, expertId: base.id, revision: base.revision };
       }
+      const { category, ...values } = input.values;
+      const nextType = values.expertType ?? base?.expertType;
       const expert = spaceExpertDefinitionSchema.parse({
-        ...input.values,
+        ...(base?.expertType === undefined ? {} : { expertType: base.expertType }),
+        ...(category === undefined && base?.category !== undefined
+          ? { category: base.category }
+          : {}),
+        ...(base?.listingType === undefined ? {} : { listingType: base.listingType }),
+        ...(base?.capabilityGuide !== undefined && nextType === 'platform'
+          ? { capabilityGuide: base.capabilityGuide }
+          : {}),
+        ...values,
+        ...(typeof category === 'string' ? { category } : {}),
         id: user?.expert.id ?? `user.${randomUUID()}`,
         revision: user ? user.expert.revision + 1 : 1,
       });

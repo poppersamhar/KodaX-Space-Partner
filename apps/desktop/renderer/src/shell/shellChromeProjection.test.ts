@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { projectShellChrome } from './shellChromeProjection.js';
 
-test('Partner hides unsupported and placeholder shell chrome', () => {
+test('Partner keeps the project switcher while hiding unsupported and placeholder shell chrome', () => {
   assert.deepEqual(projectShellChrome('partner'), {
     showWorkflowNavigation: false,
     showFutureFeatures: false,
     showLocalEnvironment: false,
     showPlaceholderBranch: false,
-    showProjectSwitcher: false,
+    showProjectSwitcher: true,
     showRepositoryIntelligence: false,
   });
 });

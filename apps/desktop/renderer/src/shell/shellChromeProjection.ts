@@ -16,7 +16,7 @@ export function projectShellChrome(surface: Surface): ShellChromeProjection {
     showFutureFeatures: showCoderChrome,
     showLocalEnvironment: showCoderChrome,
     showPlaceholderBranch: showCoderChrome,
-    showProjectSwitcher: showCoderChrome,
+    showProjectSwitcher: true,
     showRepositoryIntelligence: showCoderChrome,
   };
 }

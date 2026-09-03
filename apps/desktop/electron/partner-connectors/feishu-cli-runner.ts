@@ -18,16 +18,16 @@ export type FeishuCliRunner = (request: FeishuCliRequest) => Promise<FeishuCliRe
 const ERROR_MESSAGES = {
   cancelled: '飞书操作已取消。',
   invalid_input: '飞书连接器参数无效。',
-  cli_missing: '未找到飞书 CLI，请先安装官方 lark-cli。',
-  unsupported_version: '请安装飞书官方 CLI 1.0.92。',
-  not_connected: '飞书用户身份未连接或验证失败，请检查所选 CLI 配置。',
+  cli_missing: '飞书连接组件不可用，请更新或重新安装 KodaX Space。',
+  unsupported_version: '飞书连接组件版本不兼容，请更新 KodaX Space。',
+  not_connected: '飞书账号未连接或验证失败，请重新连接。',
   identity_changed: '飞书账户已改变，请重新连接后再操作。',
-  missing_scope: '飞书账户缺少本次文档操作所需权限。',
+  missing_scope: '飞书账户缺少本次操作所需权限。',
   revision_changed: '飞书文档版本已改变，请重新读取并审核修改。',
-  invalid_response: '飞书返回了无法验证的结果，请检查文档后再操作。',
-  command_failed: '飞书 CLI 操作失败，请检查连接状态。',
-  timeout: '飞书 CLI 操作超时，请先核对文档状态，不要重复提交。',
-  output_limit: '飞书 CLI 返回内容超过安全上限。',
+  invalid_response: '飞书返回了无法验证的结果，请检查资源后再操作。',
+  command_failed: '飞书操作失败，请检查连接状态。',
+  timeout: '飞书操作超时，请先核对资源状态，不要重复提交。',
+  output_limit: '飞书返回内容超过安全上限。',
 } as const;
 
 export type FeishuCliErrorCode = keyof typeof ERROR_MESSAGES;
@@ -67,11 +67,15 @@ export function createSafeFeishuEnvironment(source: NodeJS.ProcessEnv): NodeJS.P
     'WINDIR',
     'PATHEXT',
   ]);
-  return Object.fromEntries(
-    Object.entries(source).filter(
-      ([key, value]) => allowed.has(key.toUpperCase()) && value !== undefined,
+  return {
+    ...Object.fromEntries(
+      Object.entries(source).filter(
+        ([key, value]) => allowed.has(key.toUpperCase()) && value !== undefined,
+      ),
     ),
-  );
+    LARKSUITE_CLI_NO_UPDATE_NOTIFIER: '1',
+    LARKSUITE_CLI_NO_SKILLS_NOTIFIER: '1',
+  };
 }
 
 /** Trusted host/test seam only: neither executable nor env can be supplied by a plugin frame. */

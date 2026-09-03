@@ -6,12 +6,12 @@ import {
   type PartnerExtensionActionsOptions,
 } from './partnerExtensionActions.js';
 
-const values: SpaceExpertDraftT = {
+const values = {
   name: 'My editor',
   description: 'Writing support',
   prompt: 'Help me edit.',
   starterTasks: ['Review this outline'],
-};
+} satisfies SpaceExpertDraftT;
 const expert: PartnerExpertSnapshotT = {
   extensionId: 'library',
   extensionVersion: '1.0.0',

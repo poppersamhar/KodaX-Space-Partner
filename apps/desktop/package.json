@@ -1,6 +1,6 @@
 {
   "name": "@kodax-space/desktop",
-  "version": "0.1.45",
+  "version": "0.1.61-p.1",
   "description": "KodaX Space desktop app — Electron main + Vite renderer",
   "private": true,
   "type": "module",
@@ -40,6 +40,8 @@
     "recharts": "^3.8.1",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "yauzl": "^2.10.0",
     "zustand": "^5.0.2"

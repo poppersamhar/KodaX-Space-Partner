@@ -1,19 +1,35 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PartnerRemoteProposalT, PartnerRemoteSourceT } from '@kodax-space/space-ipc-schema';
+import {
+  FEISHU_MY_LIBRARY_TARGET,
+  type PartnerRemoteProposalT,
+  type PartnerRemoteSourceT,
+} from '@kodax-space/space-ipc-schema';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
 import { useSurfaceStore } from '../../store/surface.js';
 import { requestConfirm } from '../../store/confirmStore.js';
-import { openExternalUrl } from '../../lib/openPath.js';
 import { invokeExtensionHost } from './SpaceExtensionsProvider.js';
 import { usePartnerRemoteRecords } from './usePartnerRemoteRecords.js';
 import { approveRemoteProposal } from './partnerRemoteActions.js';
+import type { PartnerDetailOpenTarget } from '../partner/partnerDetailWorkspace.js';
+import {
+  collectPartnerRemoteResultEntries,
+  partnerDetailTargetForRemoteResult,
+} from './partnerRemoteResults.js';
 
 const buttonClass =
   'rounded-md border border-border-default px-2.5 py-1.5 text-xs hover:bg-hover-bg disabled:opacity-40';
 type Kind = 'sources' | 'pendingReview' | 'results';
+const remoteTargetLabel = (target: string, personalSpaceLabel: string): string =>
+  target === FEISHU_MY_LIBRARY_TARGET ? personalSpaceLabel : target;
 /** Local source/proposal/delivery contracts remain local. Remote records have their own details. */
-export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Element | null {
+export function PartnerRemoteRecords({
+  kind,
+  onOpenDetail,
+}: {
+  readonly kind: Kind;
+  readonly onOpenDetail?: (target: PartnerDetailOpenTarget) => void;
+}): JSX.Element | null {
   const { t } = useI18n();
   const projectRoot = useAppStore((state) => state.currentProjectPath);
   const sessionId = useAppStore((state) => state.currentSessionId);
@@ -31,13 +47,14 @@ export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Ele
       epoch.current += 1;
     };
   }, [projectRoot, sessionId, kind]);
-  const entries =
+  const remoteEntries =
     kind === 'sources'
       ? records.sources
       : kind === 'pendingReview'
-        ? records.proposals
-        : records.receipts;
-  if (!entries.length && !loadError) return null;
+        ? records.proposals.filter((proposal) => proposal.operation === 'append')
+        : [];
+  const resultEntries = kind === 'results' ? collectPartnerRemoteResultEntries(records) : [];
+  if (!remoteEntries.length && !resultEntries.length && !loadError) return null;
   const run = async (action: (isActive: () => boolean) => Promise<void>): Promise<void> => {
     if (busy || !projectRoot || !sessionId) return;
     const captured = epoch.current;
@@ -78,7 +95,7 @@ export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Ele
         confirm: async (current) =>
           requestConfirm({
             title: t('connectors.approve'),
-            message: `${t('connectors.approveConfirm')}\n${current.operation === 'create' ? t('connectors.create') : t('connectors.append')}\n${current.targetUrl}\n${current.title}\nSHA-256: ${current.contentHash}`,
+            message: `${t('connectors.approveConfirm')}\n${t('connectors.append')}\n${remoteTargetLabel(current.targetUrl, t('connectors.personalSpace'))}\n${current.title}\nSHA-256: ${current.contentHash}`,
             danger: true,
           }),
         apply: async () =>
@@ -95,7 +112,8 @@ export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Ele
       }
     });
   };
-  const proposal = detail && 'operation' in detail ? detail : null;
+  const proposal =
+    detail && 'operation' in detail && detail.operation === 'append' ? detail : null;
   return (
     <section
       className="shrink-0 space-y-3 border-b border-border-default p-3 text-xs"
@@ -107,7 +125,7 @@ export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Ele
             ? 'connectors.remoteSources'
             : kind === 'pendingReview'
               ? 'connectors.remoteReviews'
-              : 'connectors.remoteReceipts',
+              : 'partner.taskCards.artifacts',
         )}
       </h3>
       {(error || loadError) && (
@@ -115,30 +133,34 @@ export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Ele
           {error ?? loadError}
         </p>
       )}
-      <div className="max-h-44 space-y-2 overflow-y-auto">
-        {entries.map((entry) => (
-          <div key={entry.id} className="rounded-md border border-border-default p-2">
-            <p className="break-words font-medium">{entry.title}</p>
-            {'status' in entry && (
-              <p className="mt-1 text-fg-muted">{t(`connectors.${entry.status}`)}</p>
-            )}
-            {'completedAt' in entry ? (
-              <>
-                <p className="my-1 break-all text-fg-muted">{entry.url}</p>
-                <p className="text-fg-muted">
-                  {entry.completedAt} · r{entry.revision}
-                </p>
-                <button
-                  className={`${buttonClass} mt-2`}
-                  type="button"
-                  onClick={() => {
-                    void openExternalUrl(entry.url);
-                  }}
-                >
-                  {t('connectors.view')}
-                </button>
-              </>
-            ) : (
+      {kind === 'results' ? (
+        <div className="max-h-72 space-y-2 overflow-y-auto">
+          {resultEntries.map((entry) => (
+            <div key={`${entry.kind}:${entry.id}`} className="rounded-md border border-border-default p-2">
+              <p className="break-words font-medium">{entry.title}</p>
+              <p className="my-1 break-all text-fg-muted">{entry.url}</p>
+              <p className="text-fg-muted">
+                {entry.completedAt} · r{entry.revision}
+              </p>
+              <button
+                className={`${buttonClass} mt-2`}
+                type="button"
+                onClick={() => onOpenDetail?.(partnerDetailTargetForRemoteResult(entry))}
+                disabled={!onOpenDetail}
+              >
+                {t('connectors.view')}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="max-h-44 space-y-2 overflow-y-auto">
+          {remoteEntries.map((entry) => (
+            <div key={entry.id} className="rounded-md border border-border-default p-2">
+              <p className="break-words font-medium">{entry.title}</p>
+              {'status' in entry && (
+                <p className="mt-1 text-fg-muted">{t(`connectors.${entry.status}`)}</p>
+              )}
               <button
                 type="button"
                 className={`${buttonClass} mt-2`}
@@ -147,19 +169,22 @@ export function PartnerRemoteRecords({ kind }: { readonly kind: Kind }): JSX.Ele
               >
                 {t('connectors.view')}
               </button>
-            )}
-          </div>
-        ))}
-      </div>
+            </div>
+          ))}
+        </div>
+      )}
       {detail && (
         <div className="space-y-2 rounded-md border border-border-default bg-surface-2 p-3">
           <h4 className="font-medium">{detail.title}</h4>
-          <p className="break-all">{'targetUrl' in detail ? detail.targetUrl : detail.url}</p>
+          <p className="break-all">
+            {'targetUrl' in detail
+              ? remoteTargetLabel(detail.targetUrl, t('connectors.personalSpace'))
+              : detail.url}
+          </p>
           {proposal && (
             <>
               <p>
-                {t('connectors.operation')}:{' '}
-                {t(proposal.operation === 'create' ? 'connectors.create' : 'connectors.append')}
+                {t('connectors.operation')}: {t('connectors.append')}
               </p>
               <p>{proposal.connectionId}</p>
               <p>{t(`connectors.${proposal.status}`)}</p>

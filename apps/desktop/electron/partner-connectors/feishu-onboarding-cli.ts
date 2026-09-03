@@ -1,12 +1,20 @@
 import { existsSync } from 'node:fs';
-import { createFeishuCliRunner, type FeishuCliRunner } from './feishu-cli-runner.js';
+import {
+  createFeishuCliRunner,
+  FeishuCliError,
+  type FeishuCliRunner,
+} from './feishu-cli-runner.js';
 import { createFeishuCliInstaller } from './feishu-cli-install.js';
 import {
   createFeishuAuthProcess,
   FeishuOnboardingError,
   type FeishuAuthProcess,
 } from './feishu-auth-process.js';
+import { FEISHU_ONBOARDING_SCOPES } from './feishu-scopes.js';
+import { isCompatibleFeishuCliVersion } from './feishu-cli-release.js';
 export { FeishuOnboardingError } from './feishu-auth-process.js';
+
+const NEVER_ABORTED_SIGNAL = new AbortController().signal;
 
 export interface FeishuOnboardingProgress {
   phase: 'preparing' | 'installing' | 'waiting_app' | 'waiting_authorization' | 'verifying';
@@ -19,8 +27,6 @@ export interface FeishuOnboardingInput {
   signal: AbortSignal;
   onProgress: (event: FeishuOnboardingProgress) => void;
 }
-
-const SCOPES = ['docx:document:readonly', 'docx:document:create', 'docx:document:write_only'];
 
 /** Only generated Feishu onboarding pages may be handed to the external browser. */
 export function isFeishuOnboardingAuthorizationUrl(value: unknown): value is string {
@@ -70,10 +76,29 @@ function active(signal: AbortSignal): void {
   if (signal.aborted) throw new FeishuOnboardingError('cancelled');
 }
 
+async function awaitWithSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  active(signal);
+  return new Promise<T>((resolve, reject) => {
+    const cancelled = () => reject(new FeishuOnboardingError('cancelled'));
+    signal.addEventListener('abort', cancelled, { once: true });
+    void promise.then(
+      (value) => {
+        signal.removeEventListener('abort', cancelled);
+        if (signal.aborted) cancelled();
+        else resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', cancelled);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function compatible(run: FeishuCliRunner, signal: AbortSignal): Promise<boolean> {
   try {
     const result = await run({ args: ['--version'], signal });
-    return result.exitCode === 0 && /^lark-cli version 1\.0\.92\s*$/u.test(result.stdout);
+    return result.exitCode === 0 && isCompatibleFeishuCliVersion(result.stdout);
   } catch {
     return false;
   }
@@ -206,7 +231,7 @@ async function authorizeUser(run: FeishuAuthProcess, input: FeishuOnboardingInpu
       complete = true;
       if (
         value.missing.length ||
-        SCOPES.some((scope) => !(value.granted as unknown[]).includes(scope))
+        FEISHU_ONBOARDING_SCOPES.some((scope) => !(value.granted as unknown[]).includes(scope))
       )
         failure = new FeishuOnboardingError('missing_permissions');
     } else if (value.event === 'authorization_failed')
@@ -218,7 +243,14 @@ async function authorizeUser(run: FeishuAuthProcess, input: FeishuOnboardingInpu
     else throw new FeishuOnboardingError('invalid_response');
   };
   const result = await run({
-    args: [`--profile=${input.profile}`, 'auth', 'login', '--json', '--scope', SCOPES.join(' ')],
+    args: [
+      `--profile=${input.profile}`,
+      'auth',
+      'login',
+      '--json',
+      '--scope',
+      FEISHU_ONBOARDING_SCOPES.join(' '),
+    ],
     signal: input.signal,
     timeoutMs: 630000,
     onOutput: (stream, chunk) => {
@@ -238,10 +270,16 @@ async function authorizeUser(run: FeishuAuthProcess, input: FeishuOnboardingInpu
 
 export interface FeishuOnboardingCliOptions {
   root: string;
+  /** Trusted, checksum-pinned archive shipped beside app.asar. */
+  bundledArchive?: string;
   env?: NodeJS.ProcessEnv;
   runnerFactory?: (executable: string) => FeishuCliRunner;
   authProcessFactory?: (executable: string) => FeishuAuthProcess;
-  installer?: ReturnType<typeof createFeishuCliInstaller>;
+  installer?: {
+    executable: string;
+    install: (signal: AbortSignal) => Promise<string>;
+    installBundled?: (archive: string, signal: AbortSignal) => Promise<string>;
+  };
 }
 
 /** Host-only dependencies are injectable; no caller-supplied shell, URL or scopes enter run. */
@@ -253,17 +291,101 @@ export function createFeishuOnboardingCli(options: FeishuOnboardingCliOptions): 
   const installer = options.installer ?? createFeishuCliInstaller({ root: options.root });
   const privatePath = installer.executable;
   let installedPrivate = false;
+  let managedReady = false;
+  let managedPreparation:
+    | {
+        readonly controller: AbortController;
+        readonly promise: Promise<string>;
+        waiters: number;
+        settled: boolean;
+      }
+    | undefined;
   const claimedProfiles = new Set<string>();
-  const executable = () =>
-    source.KODAX_SPACE_FEISHU_CLI ||
-    (installedPrivate || existsSync(privatePath) ? privatePath : 'lark-cli');
+  const executable = () => {
+    // A packaged/build-prepared bundle is the authority for this adapter. Never
+    // let PATH or a process environment override replace the checksum-locked
+    // Space-managed component, even when that external binary prints the same
+    // version string.
+    if (options.bundledArchive) return privatePath;
+    return (
+      source.KODAX_SPACE_FEISHU_CLI ||
+      (installedPrivate || existsSync(privatePath) ? privatePath : 'lark-cli')
+    );
+  };
   const runnerFactory =
     options.runnerFactory ?? ((file) => createFeishuCliRunner({ executable: file, env: source }));
   const authFactory =
     options.authProcessFactory ??
     ((file) => createFeishuAuthProcess({ executable: file, env: source }));
+  const ensureManaged = async (signal: AbortSignal): Promise<string> => {
+    if (!options.bundledArchive) return executable();
+    if (!installer.installBundled) throw new FeishuOnboardingError('component_unavailable');
+    if (managedReady) return privatePath;
+    if (managedPreparation?.controller.signal.aborted) {
+      const abandoned = managedPreparation;
+      await abandoned.promise.catch(() => undefined);
+      active(signal);
+      if (managedPreparation === abandoned) managedPreparation = undefined;
+    }
+    if (!managedPreparation) {
+      const controller = new AbortController();
+      const preparation = {
+        controller,
+        promise: installer.installBundled(options.bundledArchive, controller.signal),
+        waiters: 0,
+        settled: false,
+      };
+      managedPreparation = preparation;
+      void preparation.promise.then(
+        () => {
+          preparation.settled = true;
+          managedReady = true;
+          if (managedPreparation === preparation) managedPreparation = undefined;
+        },
+        () => {
+          preparation.settled = true;
+          if (managedPreparation === preparation) managedPreparation = undefined;
+        },
+      );
+    }
+    const preparation = managedPreparation;
+    preparation.waiters++;
+    try {
+      return await awaitWithSignal(preparation.promise, signal);
+    } finally {
+      preparation.waiters--;
+      if (!preparation.settled && preparation.waiters === 0) preparation.controller.abort();
+    }
+  };
+  const managedRunner: FeishuCliRunner = async (request) => {
+    const signal = request.signal ?? NEVER_ABORTED_SIGNAL;
+    const dispatch = async () => runnerFactory(await ensureManaged(signal))(request);
+    try {
+      const response = await dispatch();
+      if (
+        options.bundledArchive &&
+        request.args.length === 1 &&
+        request.args[0] === '--version' &&
+        (response.exitCode !== 0 || !isCompatibleFeishuCliVersion(response.stdout))
+      ) {
+        managedReady = false;
+        return dispatch();
+      }
+      return response;
+    } catch (error) {
+      if (
+        !options.bundledArchive ||
+        !(error instanceof FeishuCliError) ||
+        error.dispatched ||
+        !['cli_missing', 'command_failed'].includes(error.code)
+      )
+        throw error;
+      managedReady = false;
+      return dispatch();
+    }
+  };
   return {
-    runner: (request) => runnerFactory(executable())(request),
+    runner: managedRunner,
     run: async (input) => {
       try {
         active(input.signal);
@@ -275,28 +397,43 @@ export function createFeishuOnboardingCli(options: FeishuOnboardingCliOptions): 
           throw new FeishuOnboardingError('invalid_response');
         }
         input.onProgress({ phase: 'preparing' });
-        const ready = await compatible(runnerFactory(executable()), input.signal);
-        active(input.signal);
-        if (!ready) {
-          if (source.KODAX_SPACE_FEISHU_CLI)
-            throw new FeishuOnboardingError('authorization_failed');
-          if (!input.installCli) throw new FeishuOnboardingError('needs_install');
+        let selectedExecutable = executable();
+        if (options.bundledArchive) {
           input.onProgress({ phase: 'installing' });
-          await installer.install(input.signal);
-          installedPrivate = true;
-          if (!(await compatible(runnerFactory(executable()), input.signal)))
-            throw new FeishuOnboardingError('installation_failed');
+          selectedExecutable = await ensureManaged(input.signal);
+          if (!(await compatible(runnerFactory(selectedExecutable), input.signal))) {
+            managedReady = false;
+            selectedExecutable = await ensureManaged(input.signal);
+            if (!(await compatible(runnerFactory(selectedExecutable), input.signal)))
+              throw new FeishuOnboardingError('installation_failed');
+          }
+        } else {
+          const ready = await compatible(runnerFactory(selectedExecutable), input.signal);
+          active(input.signal);
+          if (!ready) {
+            if (source.KODAX_SPACE_FEISHU_CLI)
+              throw new FeishuOnboardingError('authorization_failed');
+            input.onProgress({ phase: 'installing' });
+            if (!input.installCli) throw new FeishuOnboardingError('needs_install');
+            await installer.install(input.signal);
+            installedPrivate = true;
+            selectedExecutable = privatePath;
+            if (!(await compatible(runnerFactory(selectedExecutable), input.signal)))
+              throw new FeishuOnboardingError('installation_failed');
+          }
         }
         active(input.signal);
-        await requireUnusedProfile(runnerFactory(executable()), input.profile, input.signal);
+        const run = runnerFactory(selectedExecutable);
+        const auth = authFactory(selectedExecutable);
+        await requireUnusedProfile(run, input.profile, input.signal);
         active(input.signal);
         if (claimedProfiles.has(input.profile)) throw new FeishuOnboardingError('invalid_response');
         claimedProfiles.add(input.profile);
-        const appId = await createApp(authFactory(executable()), input);
-        await requireCreatedProfile(runnerFactory(executable()), input, appId);
+        const appId = await createApp(auth, input);
+        await requireCreatedProfile(run, input, appId);
         active(input.signal);
-        await authorizeUser(authFactory(executable()), input);
-        await requireCreatedProfile(runnerFactory(executable()), input, appId);
+        await authorizeUser(auth, input);
+        await requireCreatedProfile(run, input, appId);
         active(input.signal);
         input.onProgress({ phase: 'verifying' });
       } catch (error) {

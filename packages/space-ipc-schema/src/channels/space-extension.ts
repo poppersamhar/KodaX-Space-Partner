@@ -15,10 +15,13 @@ export const spaceExtensionIdSchema = z
   .max(96)
   .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/);
 
+export const spaceExtensionHostCapabilitySchema = z.enum(['partnerNativeDocumentDeliveryV1']);
+export type SpaceExtensionHostCapabilityT = z.infer<typeof spaceExtensionHostCapabilitySchema>;
+
 export const spaceExtensionManifestSchema = z
   .object({
     formatVersion: z.literal(1),
-    hostApiVersion: z.literal(1),
+    hostApiVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
     id: spaceExtensionIdSchema,
     name: z.string().trim().min(1).max(80),
     description: z.string().max(280),
@@ -34,15 +37,71 @@ export const spaceExtensionManifestSchema = z
       .strict(),
     // Capability entries are admitted as each implemented host contract is added.
     // Never accept arbitrary executable declarations or a second Skill installer.
+    requiredHostCapabilities: z.array(spaceExtensionHostCapabilitySchema).max(16).default([]),
     experts: z.array(spaceExpertDefinitionSchema).max(128).default([]),
     connectors: z.array(spaceConnectorDefinitionSchema).max(64).default([]),
   })
   .strict()
   .refine(
     (manifest) =>
+      manifest.hostApiVersion >= 2 ||
+      manifest.experts.every(
+        (expert) =>
+          expert.expertType === undefined &&
+          expert.category === undefined &&
+          expert.listingType === undefined,
+      ),
+    {
+      message: 'Expert catalog taxonomy requires host API version 2',
+      path: ['hostApiVersion'],
+    },
+  )
+  .refine(
+    (manifest) =>
+      manifest.hostApiVersion >= 3 ||
+      manifest.experts.every((expert) => expert.capabilityGuide === undefined),
+    {
+      message: 'Expert capability guides require host API version 3',
+      path: ['hostApiVersion'],
+    },
+  )
+  .refine(
+    (manifest) => manifest.requiredHostCapabilities.length === 0 || manifest.hostApiVersion >= 4,
+    {
+      message: 'Host capabilities require host API version 4',
+      path: ['hostApiVersion'],
+    },
+  )
+  .refine(
+    (manifest) =>
+      new Set(manifest.requiredHostCapabilities).size === manifest.requiredHostCapabilities.length,
+    {
+      message: 'Host capabilities must be unique',
+      path: ['requiredHostCapabilities'],
+    },
+  )
+  .refine(
+    (manifest) =>
       new Set(manifest.experts.map((expert) => expert.id)).size === manifest.experts.length,
     {
       message: 'Expert IDs must be unique within a Space Extension',
+      path: ['experts'],
+    },
+  )
+  .refine(
+    (manifest) => {
+      const connectorIds = new Set(manifest.connectors.map((connector) => connector.id));
+      return manifest.experts.every(
+        (expert) =>
+          expert.capabilityGuide?.groups.every((group) =>
+            group.actions.every((action) =>
+              action.requiredConnectorIds.every((connectorId) => connectorIds.has(connectorId)),
+            ),
+          ) ?? true,
+      );
+    },
+    {
+      message: 'Expert capability guides can only reference connectors in the same extension',
       path: ['experts'],
     },
   )
