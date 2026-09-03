@@ -5,12 +5,12 @@
 // 把它们删/改了，TypeScript 不会报（ambient 覆盖了真实推导）。startup probe 拦住这种漂移。
 //
 // 已覆盖的 surface:
-//   @kodax-ai/kodax/coding       runKodaX / runManagedTask / createAutoModeToolGuardrail / loadAutoRules /
+//   @kodax-ai/kodax/coding       runKodaX / runManagedTask / createAutoModeToolGuardrail /
 //                                formatAgentsForPrompt / getKodaxGlobalDir /
 //                                getRegisteredToolDefinition / getBuiltinRegisteredToolDefinition /
-//                                resolveProvider / parseSandboxEnvironmentPass
+//                                resolveProvider
 //   @kodax-ai/kodax/skills       SkillRegistry (skill/registry.ts 自己也 probe，这里重复防御)
-//   @kodax-ai/kodax/llm          verifyProviderCredential (FEATURE_216 — 测连接)
+//   @kodax-ai/kodax/llm          getProvider().verifyCredential() (FEATURE_216 — 测连接)
 //   @kodax-ai/kodax/a2a          authenticated A2A config/server/task-migration public surface
 //
 // **静态 import 改 dynamic**：SDK subpath exports 只声明 "import" 条件（ESM），CJS-built
@@ -28,12 +28,18 @@ export type SandboxSdkCapability =
   | { readonly status: 'unprobed' }
   | {
       readonly status: 'available';
-      readonly version: 5;
+      readonly version: 11;
       readonly asrtVersion: string;
       readonly backend:
-        'windows-restricted-user' | 'macos-seatbelt' | 'linux-bubblewrap' | 'unsupported';
+        | 'windows-restricted-user'
+        | 'macos-seatbelt'
+        | 'linux-bubblewrap'
+        | 'unsupported';
       readonly unavailableBehavior: 'structured-no-execution';
       readonly setupMayElevate: boolean;
+      readonly trustedTextAuthority: 'host-transaction';
+      readonly windowsShellAuthority: 'native-token-job-v2';
+      readonly commandLifetimeFilesystemLease: false;
       readonly readiness: 'checking' | 'ready' | 'setup-required' | 'unavailable';
       readonly diagnosticCount: number;
     };
@@ -133,7 +139,7 @@ export function inspectSandboxModule(
   for (const control of ['filesystem', 'network', 'environment', 'timeout', 'output']) {
     if (!controls.includes(control)) failures.push(`sandbox controls missing ${control}`);
   }
-  if (capability.version !== 5) failures.push('sandbox capability version expected 5');
+  if (capability.version !== 11) failures.push('sandbox capability version expected 11');
   if (capability.asrtVersion !== asrtVersion) {
     failures.push('sandbox capability ASRT version does not match KODAX_ASRT_VERSION');
   }
@@ -148,6 +154,15 @@ export function inspectSandboxModule(
   }
   if (capability.permissionFallback !== 'normal-permission-policy') {
     failures.push('sandbox permissionFallback expected normal-permission-policy');
+  }
+  if (capability.trustedTextAuthority !== 'host-transaction') {
+    failures.push('sandbox trustedTextAuthority expected host-transaction');
+  }
+  if (capability.windowsShellAuthority !== 'native-token-job-v2') {
+    failures.push('sandbox windowsShellAuthority expected native-token-job-v2');
+  }
+  if (capability.commandLifetimeFilesystemLease !== false) {
+    failures.push('sandbox commandLifetimeFilesystemLease expected false');
   }
   const backend = capability.backend;
   if (
@@ -165,11 +180,14 @@ export function inspectSandboxModule(
 
   return {
     status: 'available',
-    version: 5,
+    version: 11,
     asrtVersion: asrtVersion as string,
     backend: backend as Extract<SandboxSdkCapability, { status: 'available' }>['backend'],
     unavailableBehavior: 'structured-no-execution',
     setupMayElevate: capability.setupMayElevate as boolean,
+    trustedTextAuthority: 'host-transaction',
+    windowsShellAuthority: 'native-token-job-v2',
+    commandLifetimeFilesystemLease: false,
     readiness: 'checking',
     diagnosticCount: 0,
   };
@@ -200,11 +218,17 @@ export function projectSandboxDoctorResult(
 
 export function updateSandboxSdkDoctorResult(
   reportedCapability: {
-    readonly version: 5;
+    readonly version: 11;
     readonly asrtVersion: string;
     readonly backend:
-      'windows-restricted-user' | 'macos-seatbelt' | 'linux-bubblewrap' | 'unsupported';
+      | 'windows-restricted-user'
+      | 'macos-seatbelt'
+      | 'linux-bubblewrap'
+      | 'unsupported';
     readonly setupMayElevate: boolean;
+    readonly trustedTextAuthority: 'host-transaction';
+    readonly windowsShellAuthority: 'native-token-job-v2';
+    readonly commandLifetimeFilesystemLease: false;
   },
   doctorValue: unknown,
 ): SandboxSdkCapability {
@@ -215,7 +239,11 @@ export function updateSandboxSdkDoctorResult(
     reportedCapability.version !== sandboxCapability.version ||
     reportedCapability.asrtVersion !== sandboxCapability.asrtVersion ||
     reportedCapability.backend !== sandboxCapability.backend ||
-    reportedCapability.setupMayElevate !== sandboxCapability.setupMayElevate
+    reportedCapability.setupMayElevate !== sandboxCapability.setupMayElevate ||
+    reportedCapability.trustedTextAuthority !== sandboxCapability.trustedTextAuthority ||
+    reportedCapability.windowsShellAuthority !== sandboxCapability.windowsShellAuthority ||
+    reportedCapability.commandLifetimeFilesystemLease !==
+      sandboxCapability.commandLifetimeFilesystemLease
   ) {
     throw new Error('sandbox capability changed after startup shape negotiation');
   }
@@ -272,8 +300,6 @@ export async function probeKodaxSdk(): Promise<void> {
     ['getKodaxGlobalDir', 'function', codingModule.getKodaxGlobalDir],
     ['getRegisteredToolDefinition', 'function', codingModule.getRegisteredToolDefinition],
     ['isToolNetworkRead', 'function', codingModule.isToolNetworkRead],
-    ['loadAutoRules', 'function', codingModule.loadAutoRules],
-    ['parseSandboxEnvironmentPass', 'function', codingModule.parseSandboxEnvironmentPass],
     ['resolveProvider', 'function', codingModule.resolveProvider],
   ];
   for (const [name, kind, value] of codingChecks) {
@@ -291,7 +317,7 @@ export async function probeKodaxSdk(): Promise<void> {
     );
   }
 
-  // /llm：测连接走 verifyProviderCredential（FEATURE_216）。
+  // /llm：测连接走 Provider instance verifyCredential（FEATURE_216）。
   // v0.1.4 修复：之前作 hard failure 抛错，但 npm-published @kodax-ai/kodax@0.7.45
   // 还没合 FEATURE_216 commit（本地 `npm run link:kodax` 时有，CI npm install 时没有）。
   // 让 release pipeline 全平台死。降级成 console.warn — 缺失时 test-connection.ts
@@ -302,9 +328,18 @@ export async function probeKodaxSdk(): Promise<void> {
       `@kodax-ai/kodax/llm.resolveModelCapabilities: expected function, got ${typeof llmModule.resolveModelCapabilities}`,
     );
   }
-  if (typeof llmModule.verifyProviderCredential !== 'function') {
+  let providerVerifierAvailable = false;
+  if (typeof llmModule.getProvider === 'function') {
+    try {
+      providerVerifierAvailable =
+        typeof llmModule.getProvider('anthropic').verifyCredential === 'function';
+    } catch {
+      providerVerifierAvailable = false;
+    }
+  }
+  if (!providerVerifierAvailable) {
     console.warn(
-      '[kodax-sdk-probe] @kodax-ai/kodax/llm.verifyProviderCredential not present in this SDK build. ' +
+      '[kodax-sdk-probe] @kodax-ai/kodax/llm getProvider().verifyCredential() is not available in this SDK build. ' +
         'Provider connection test will be disabled until the SDK is upgraded.',
     );
   }

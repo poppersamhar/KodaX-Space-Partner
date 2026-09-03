@@ -24,17 +24,15 @@ test('SessionRuntimeStore merges partial runtime patches', async () => {
     model: 'glm-5.2',
     thinking: true,
     permissionMode: 'auto',
-    autoModeEngine: 'rules',
   });
-  await store.set('s_runtime-1', { reasoningMode: 'deep', agentMode: 'sa' });
+  await store.set('s_runtime-1', { reasoningMode: 'ultra', agentMode: 'sa' });
 
   assert.deepEqual(await store.read('s_runtime-1'), {
     provider: 'zhipu-coding',
     model: 'glm-5.2',
     thinking: true,
     permissionMode: 'auto',
-    autoModeEngine: 'rules',
-    reasoningMode: 'deep',
+    reasoningMode: 'ultra',
     agentMode: 'sa',
   });
 });
@@ -91,6 +89,66 @@ test('SessionRuntimeStore migrates the retired persisted ama-workflow alias to A
   });
 });
 
+test('legacy Auto migration preserves full access and Partner snapshots', async () => {
+  const runtimeDir = path.join(tmpDir, 'runtime');
+  const sessionId = 's_legacy-partner-auto';
+  const updatedAt = '2026-07-18T00:00:00.000Z';
+  const partnerExpert = {
+    extensionId: 'partner.library',
+    extensionVersion: '1.0.0',
+    expert: {
+      id: 'writing-guide',
+      revision: 2,
+      name: 'Writing guide',
+      description: 'Keeps the selected Partner role stable',
+      prompt: 'Preserve evidence and the requested output format.',
+      starterTasks: [],
+    },
+  };
+  const partnerConnectors = [
+    {
+      extensionId: 'kodax.partner-library',
+      connectorId: 'feishu',
+      connectionId: '11111111-1111-4111-8111-111111111111',
+      connectionRevision: 3,
+      name: 'Feishu',
+      accountLabel: 'QA account',
+      documents: [{ url: 'https://example.feishu.cn/docx/Allowed', access: 'append' as const }],
+    },
+  ];
+  await fs.mkdir(runtimeDir, { recursive: true });
+  await fs.writeFile(
+    path.join(runtimeDir, `${sessionId}.json`),
+    JSON.stringify({
+      version: 1,
+      sessionId,
+      permissionMode: 'full-access',
+      autoModeEngine: 'rules',
+      partnerExpert,
+      partnerConnectors,
+      updatedAt,
+    }),
+    'utf-8',
+  );
+
+  const expectedSettings = {
+    permissionMode: 'full-access',
+    partnerExpert,
+    partnerConnectors,
+  } as const;
+  assert.deepEqual(await store.read(sessionId), expectedSettings);
+  const migrated = JSON.parse(
+    await fs.readFile(path.join(runtimeDir, `${sessionId}.json`), 'utf-8'),
+  ) as Record<string, unknown>;
+  assert.deepEqual(migrated, {
+    version: 1,
+    sessionId,
+    ...expectedSettings,
+    updatedAt,
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(migrated, 'autoModeEngine'), false);
+});
+
 test('SessionRuntimeStore preserves malformed and schema-invalid bytes on update', async () => {
   const runtimeDir = path.join(tmpDir, 'runtime');
   await fs.mkdir(runtimeDir, { recursive: true });
@@ -143,15 +201,15 @@ test('SessionRuntimeStore ignores unsafe session ids', async () => {
 test('SessionRuntimeStore serializes concurrent partial runtime writes', async () => {
   await Promise.all([
     store.set('s_runtime-concurrent', { permissionMode: 'auto' }),
-    store.set('s_runtime-concurrent', { autoModeEngine: 'rules' }),
-    store.set('s_runtime-concurrent', { reasoningMode: 'deep' }),
+    store.set('s_runtime-concurrent', { thinking: true }),
+    store.set('s_runtime-concurrent', { reasoningMode: 'max' }),
     store.set('s_runtime-concurrent', { agentMode: 'sa' }),
   ]);
 
   assert.deepEqual(await store.read('s_runtime-concurrent'), {
     permissionMode: 'auto',
-    autoModeEngine: 'rules',
-    reasoningMode: 'deep',
+    thinking: true,
+    reasoningMode: 'max',
     agentMode: 'sa',
   });
 });

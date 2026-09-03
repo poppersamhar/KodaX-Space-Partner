@@ -6,6 +6,10 @@
 
 > 当前发布精确锁定 KodaX `0.7.95`，要求 `conversationHistory:2`、`runtimeExitSettlement:2` 与 `sandboxRuntime:5`。同一 boot 的临时 `unconfirmed-owner` 会自动重试；Space 不要求用户删除标记，且只在缺少安全证明时阻断有竞争风险的 sandbox/owner 操作。
 >
+> 当前源码候选为 Space `0.1.46-alpha.3`，精确锁定 KodaX `0.7.96-alpha.7`，并要求 `sandboxRuntime:11`、`runtimeAutoModeGuardrail:5`、`sharedSessionSettings:2`、`providerCredentialBroker:2` 与 `effectiveConfig:1`。
+> Windows 既有安装首次迁移可能需要用户在 Settings → Runtime 明确执行一次 Sandbox Setup；
+> 普通启动、Refresh 和工具调用不会隐式提升权限。正式发布版的 0.7.95 说明保留为历史事实。
+>
 > 已发布产品基线：KodaX Space [`v0.1.45`](https://github.com/icetomoyo/KodaX-Space/releases/tag/v0.1.45)（package `0.1.45`）/ npm 正式发布的精确 KodaX `0.7.95`。ask_user 与 guardrail 授权以对话流内的聚焦提问卡呈现：全部待答卡并存可答，composer 上方有带计数与定位闪光的召回停靠条，队首卡支持 1-9/Enter/Esc 键盘操作，对话历史保持可滚动。
 >
 > 上一代已发布基线 `v0.1.44` 使用精确 Registry KodaX `0.7.93`，要求 `sandboxRuntime:4`、
@@ -17,7 +21,7 @@
 > 旧能力 SDK/daemon 会 fail closed，不能继续执行 Coder。Runtime 的合法排队等待、
 > canonical replacement 和提交后维护失败会保持不同的可诊断事实。
 >
-> 更新日期：2026-08-24
+> 更新日期：2026-08-28
 >
 > 如果你的界面与本文不同，请先在 Settings → License/版本信息中确认构建版本。
 > 本手册对应 `v0.1.45` 正式发布产物；历史安装包的界面与行为可能不同。
@@ -258,11 +262,29 @@ flowchart LR
 
 多个受信任的 KodaX 客户端可以观察同一 Coder 会话；Space 会同步 provider/model/effort/mode 等共享设置，并通过 Runtime 处理权限 grant、AskUser、队列、Workflow 观察/暂停/恢复/停止、Learning Center 命令、MCP 工具发现/reload 和已配置 External Agent 的 Actor/Turn。当前发布版要求 `conversationHistory:2`、`runtimeExitSettlement:2`、`sandboxRuntime:5`、`crashOutcomeModel:2`、`daemonOrphanExit:1`、`managedRunDurability:1`、`actorSettlementConvergence:2`、`sessionEventJournal:1`、`liveOutputSegments:1`、`integrationConfigResilience:1`、`runtimeAutoModeGuardrail:4`、`skillLearningLoop:1`、`interruptInput:1`、`actorControlPlane:1`、`contextCompaction:3`、`transcriptPaging:1` 与 `transcriptSearch:1`；Runtime 不可用或能力不足时 Coder fail closed，不会在背后重放到 inline owner。`conversationHistory:2` 下 Space 只消费 SDK 返回的 canonical conversation 顺序与稳定身份，不按时间戳重排、不按正文猜测去重；`sandboxRuntime:5` 的过期 coordinator ticket 与已记录释放事实收敛由 SDK 独占，普通权限执行仍须取得同一个 filesystem-effect fence；`crashOutcomeModel:2` 要求 canonical Session 提交先于 managed terminal。Space 不删除锁、不按错误文本选择 native shell，也不把 Stop unknown 强制改成 idle。Partner 不受 daemon 可用性影响。
 
-Daemon 模式还会核对 daemon 的实际能力，而不只看已经安装的 npm 包版本：缺少上述契约的长驻 daemon 会被拒绝并提示安全重启。`sandboxRuntime:5` 在 v3 containment/termination-proof 与 v4 过期票据收敛的基础上，把同一 Windows boot 内暂时无法证明的 unconfirmed-owner 交给 SDK 后台自动重试，并只在精确 SID 探针证明 sandbox 账号空闲后清除残留；只有 stale 且不持有精确 coordinator lock 的票据可恢复，精确 active lock 与结果未知的进程树继续 fail closed。`sessionEventJournal:1` 让每个 observation 使用 `(sessionId, journalEpoch, seq)` cursor，Space 在 epoch 改变时重置水位，绝不跨 Session 比较 seq。`daemonOrphanExit:1` 只在当前 host 确实启用了孤儿回收策略时出现，不能由语义版本号替代。compaction v3 会先耐久化精确 pre-compaction lineage，再缩减活动上下文；Runtime 会复用精确 checkpoint/恢复指引字节，并在命令式手动压缩前把精确 flat Session history 对齐进 lineage，使 compaction entry、first-kept pointer 与压缩后附件留在同一 active path，同时继续读取旧的无后缀 checkpoint。Space 使用 revision-bound page/chunk/search 恢复可见历史，root 与持久 child 的历史保持隔离。Coder Session 使用 KodaX 的公开 `resolveAutoModeSettings()` 解析 `engine`、classifier model、timeout 与 `speculativeWindowMs`，并把缺失值写入可修订的 Runtime 设置；`0` 是有效的 speculative window 值。未显式配置时，KodaX 0.7.95 使用首次 `45000ms`、一次重试 `90000ms`。底部会直接显示 `Auto[LLM]` 或 `Auto[RULES]`；快速连续切换按最后一次动作收敛。只有用户手动选择或持久化选择的 `Auto[RULES]` 才保持粘性，并需用 `/auto-engine llm` 显式切回。Auto v4 的 classifier 超时、Provider 错误或输出契约错误会立即重试一次；仍失败时仅对当前工具调用采用 Accept-edits 兼容回退，`engine` 继续是 `llm`，不会静默切到 Rules。Agent Home/root 控制面破坏不可授权。Runtime Shell 先尝试 sandbox；containment 无法准备且可证明命令未启动时，已授权命令按普通权限策略执行；该路径仍需共享 effect fence，不会重放命令或再次调用 classifier。Auto[rules] 会对工作区内可完整建模的编辑直接放行，对工作区外、受保护、动态或无法完整建模的效果继续请求确认；Auto[LLM] 中合法的 `decision=allow|ask` 是单次调用的最终权限决策，Space 不再用静态危险模式二次覆盖。项目内编辑、删除、移动、Git stash 及正常的全局依赖安装/卸载/升级/重装，不会仅因“是写动作”而确认；只有明确读取密钥、令牌或凭据存储，或者正常工作区域外有具体证据会破坏系统稳定性、导致其他软件不可用的异常写入，才应请求确认。Auto[LLM] 缺失 classifier model 时不请求 Provider，并走同一有界的当前调用回退，不改变 engine。输入 `/auto-denials` 可以查看当前 Runtime 版本、classifier model、timeout、speculative window 及不含提示正文的 classifier 时序/终止阶段。
+Daemon 模式还会核对 daemon 的实际能力，而不只看已经安装的 npm 包版本：缺少必需契约的长驻 daemon 会被拒绝并提示安全重启。当前源码要求 `sandboxRuntime:11`、`runtimeAutoModeGuardrail:5` 与 `sharedSessionSettings:2`。Alpha.6/alpha.7 的 Windows native host 使用 protocol/setup generation 10：宽 profile ACL 只在显式 setup 中收敛，逐命令 Temp 相互隔离，64 端口范围支持最多 32 个精确网络 authority，explicit doctor/setup 必须证明一次无副作用的 target start/exit。空闲旧 daemon 可安全替换，繁忙、未知或更新版本保持不动。`sessionEventJournal:1` 仍按 `(sessionId, journalEpoch, seq)` 隔离 observation；compaction v3 与 revision-bound page/chunk/search 继续保护 root/child 历史边界。
+
+权限档位统一为 Plan、Edits、Auto[LLM]、Full Access。旧 `auto-in-project`、Auto Rules、engine、timeout 和 speculative window 只作为迁移输入，归一为 Auto[LLM] 后不再持久化或暴露。Auto 先尝试 sandbox；只有可证明命令尚未启动的宿主边界才进入 Exec Policy 与固定 LLM reviewer，已启动或结果不确定的命令绝不重放。Full Access 跳过 sandbox 与 Auto review，直接在宿主执行，但管理员和用户 Exec Policy 仍然生效。沙箱默认继承宿主环境，固定执行控制变量继续禁止；旧 `sandbox.envPass` 已失效，Space 不再编辑或投影它。
+
+沙箱 readiness 请在 Settings → Runtime 中刷新，或在宿主终端直接运行 `kodax sandbox doctor`。不要要求 Agent 通过 Bash 工具运行该命令：Windows 受限账号按设计不能读取宿主持有的 ASRT 控制状态，嵌套 doctor 会产生误导结果。Space 不会在普通启动、后台检查或工具执行期间自动提升权限；只有用户明确点击并确认 Sandbox Setup 时才调用 activation，随后由真实 target-start probe 验证完成状态。
 
 如果 daemon 启动时发现 inline owner，Space 不删除 `~/.kodax` 试图恢复；它把可读的 owner 状态交给 KodaX 的原子 daemon-enable reconciliation。只有 SDK 证明 owner 已废弃时才允许恢复，活动、不可读或不可验证 owner 继续 fail closed。Space 关闭时保留 inline owner handle，短暂 close 失败会重试；重试耗尽会报告清理错误，而不是把 ownership fence 静默遗留。
 
-> **历史 v0.1.38/v0.1.39 说明**：本节此前任何“未配置时 classifier timeout 为 `30000ms`”的表述均已失效。KodaX 0.7.84/0.7.85 在未显式配置 timeout 时使用首次 `45000ms`、一次重试 `90000ms`；v0.1.43 使用 KodaX 0.7.92，Space 只转发用户显式配置的值。
+> **历史 v0.1.38-v0.1.45 说明**：旧版 classifier timeout/engine/window 配置不再适用于当前源码。KodaX 0.7.96 使用固定的 90 秒 reviewer deadline 和一次 180 秒重试；Space 不再暴露或转发这些旧设置。
+
+### Runtime 失败详情
+
+当前源码候选继续接入 KodaX 0.7.96-alpha.7 的凭据安全
+`RuntimeFailureDetail`。真实 Run 失败时，错误条优先显示 SDK 固定且有界的
+`safeMessage`；展开“Runtime 失败详情”可以查看稳定 KodaX 错误码、失败阶段、
+Run/Request ID、HTTP 状态、上游短错误码、建议等待时间和上下文容量数据（仅在
+SDK 提供时显示）。Space 根据稳定的 `providerErrorCode` 决定打开 Provider 设置、
+切换模型、检查网络或重试；连接旧 daemon 时继续使用 `failureKind` 和通用终态文案。
+
+这些详情不会包含 API key、Authorization/Cookie、请求或响应正文、prompt、完整
+URL、本地路径、headers、stack 或原始 Error。测试连接成功只证明验证接口可用，
+不等于实际模型、对话 endpoint、streaming、tool-call/reasoning 格式及 daemon
+Provider catalog 全部兼容；真实 Run 的错误条和诊断导出才是对应 Run 的权威信息。
 
 ### Provider recovery 与 Ctrl+R transcript 一致性
 
@@ -398,14 +420,16 @@ Settings 有四个主标签：Preferences、Providers、Runtime、License。
 
 ### Provider
 
-内置 Provider 和自定义 OpenAI-compatible/Anthropic-compatible Provider 都从 Providers 管理。环境变量也可提供凭据；UI 会尽量说明凭据来源。自定义 Provider 的 Base URL、协议和模型名必须与服务端实际兼容。
+内置 Provider 和自定义 OpenAI-compatible/Anthropic-compatible Provider 都从 Providers 管理。环境变量也可提供凭据；UI 会尽量说明凭据来源。自定义 Provider 的 Base URL、协议和模型名必须与服务端实际兼容。如果端点模型确实支持视觉输入，可显式勾选“启用图片输入”；KodaX 会据此放行并转发图片 Artifact，但不会替你验证上游模型的真实视觉能力，纯文本模型不要启用。
+
+当前版本还会从 KodaX 目录展示 DeepSeek 的视觉专用模型 `deepseek-v4-flash-vision-exp`，以及 `zhipu`、`zhipu-coding`、`zai-coding` 三条路由上的多模态 `glm-5.3-flash`。DeepSeek 的 `deepseek-v4-flash` / `deepseek-v4-pro` 仍是纯文本；GLM Flash 的目录元数据为 1M 上下文、131072 最大输出且不能关闭思考。已有默认模型不因此改变。
 
 KodaX 0.7.77 会为确认兼容的内置 Provider 建立稳定的提示词缓存路由：同一逻辑 Session 在连续 run、retry、fallback、resume 和 compaction 后保持稳定，子 Agent 按其规范路径隔离。自定义兼容端点默认不启用；只有确认网关接受相应协议字段时，才在 Provider 表单勾选“启用稳定的提示词缓存路由”。严格兼容网关可能拒绝未知字段，因此这个开关不会自动推断。
 
 ### Model 与 Reasoning Effort
 
 - 会话可覆盖 Provider 和 Model。
-- Effort 使用 `off / auto / quick / balanced / deep` 的 Space 抽象，再映射到模型支持的参数。
+- Effort 选项由当前 Provider/Model 的 KodaX reasoning profile 决定，UI 按 SDK 声明顺序展示可用档位；`quick / balanced / deep` 仅作为旧版兼容别名。
 - `Ctrl+Shift+E` 打开/循环可用 effort；`Ctrl+T` 保留为旧式循环快捷键。
 - Thinking 是模型输出行为，不等于 Effort。
 
@@ -670,7 +694,7 @@ flowchart TD
 | Terminal 找不到命令         | Settings → Preferences → Terminal Shell；确认所选 shell 的登录环境包含该命令                                |
 | Partner 没有浏览器/邮件发送 | 当前未交付，不是配置错误                                                                                    |
 | External Agent 不可选       | Reference 注册需 enabled 且 preflight 通过；真实网络适配器尚未交付                                          |
-| External Agent 任务区报错   | 无历史任务应显示空态；真正读取失败可点“重试”，主 Run 结果不因此变成失败                                    |
+| External Agent 任务区报错   | 无历史任务应显示空态；真正读取失败可点“重试”，主 Run 结果不因此变成失败                                     |
 | Quick Ask 不能打开          | 先打开项目；使用 `Mod+K`，不要与命令面板混淆                                                                |
 | 语言切换后仍有英文          | 模型输出、工具日志、文件内容和第三方数据不会被强制翻译                                                      |
 | UI 白屏或状态异常           | 记录版本、打开 DevTools、查看 `~/.kodax/space/logs`，不要直接删除整个 `~/.kodax`                            |

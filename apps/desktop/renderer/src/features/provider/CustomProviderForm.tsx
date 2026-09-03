@@ -66,7 +66,11 @@ function reasoningDefaultOf(reasoning: CustomProviderReasoning | undefined): str
 }
 
 /** Build the SDK friendly reasoning declaration from the form fields (undefined = not declared). */
-function buildReasoning(none: boolean, effortsCsv: string, defaultEffort: string): CustomProviderReasoning | undefined {
+function buildReasoning(
+  none: boolean,
+  effortsCsv: string,
+  defaultEffort: string,
+): CustomProviderReasoning | undefined {
   if (none) return 'none';
   const efforts = effortsCsv
     .split(',')
@@ -132,6 +136,8 @@ const FIELD_IDS = {
   skipBaseUrlValidationHint: 'custom-provider-skip-base-url-validation-hint',
   promptCacheAffinity: 'custom-provider-prompt-cache-affinity',
   promptCacheAffinityHint: 'custom-provider-prompt-cache-affinity-hint',
+  imageInput: 'custom-provider-image-input',
+  imageInputHint: 'custom-provider-image-input-hint',
   credentialModeLabel: 'custom-provider-credential-mode-label',
   credentialModeHint: 'custom-provider-credential-mode-hint',
   apiKeyEnv: 'custom-provider-api-key-env',
@@ -173,6 +179,7 @@ export function CustomProviderForm({
   const [promptCacheAffinity, setPromptCacheAffinity] = useState(
     provider?.promptCacheAffinity ?? false,
   );
+  const [imageInput, setImageInput] = useState(provider?.imageInput ?? false);
   const [apiKeyEnv, setApiKeyEnv] = useState(provider?.apiKeyEnv ?? '');
   const [defaultModel, setDefaultModel] = useState(provider?.defaultModel ?? '');
   const [contextWindow, setContextWindow] = useState(
@@ -180,7 +187,9 @@ export function CustomProviderForm({
   );
   const [modelsCsv, setModelsCsv] = useState(initialModelsCsv);
   const [reasoningNone, setReasoningNone] = useState(provider?.reasoning === 'none');
-  const [reasoningEfforts, setReasoningEfforts] = useState(reasoningEffortsCsv(provider?.reasoning));
+  const [reasoningEfforts, setReasoningEfforts] = useState(
+    reasoningEffortsCsv(provider?.reasoning),
+  );
   const [reasoningDefault, setReasoningDefault] = useState(reasoningDefaultOf(provider?.reasoning));
   const [apiKey, setApiKey] = useState('');
   const [revealKey, setRevealKey] = useState(false);
@@ -231,6 +240,7 @@ export function CustomProviderForm({
         defaultModel: trimmedDefaultModel,
         models,
         promptCacheAffinity: promptCacheAffinity ? true : undefined,
+        imageInput: imageInput ? true : undefined,
         ...(parsedContextWindow !== undefined ? { contextWindow: parsedContextWindow } : {}),
         ...(reasoning !== undefined ? { reasoning } : {}),
       };
@@ -504,6 +514,32 @@ export function CustomProviderForm({
           </span>
         </label>
 
+        <label
+          htmlFor={FIELD_IDS.imageInput}
+          className="flex cursor-pointer items-start gap-3 rounded-lg border border-info/35 bg-info/10 px-3 py-3 lg:col-span-2"
+        >
+          <input
+            id={FIELD_IDS.imageInput}
+            type="checkbox"
+            checked={imageInput}
+            onChange={(e) => setImageInput(e.target.checked)}
+            className="mt-1 h-4 w-4 accent-info"
+            disabled={formLocked}
+            aria-describedby={FIELD_IDS.imageInputHint}
+          />
+          <span className="min-w-0">
+            <span className="block text-xs font-medium text-fg-primary">
+              {t('customProvider.imageInput.title')}
+            </span>
+            <span
+              id={FIELD_IDS.imageInputHint}
+              className="mt-0.5 block text-[11px] leading-5 text-fg-muted"
+            >
+              {t('customProvider.imageInput.description')}
+            </span>
+          </span>
+        </label>
+
         <Field
           label={t('customProvider.credentialMode.label')}
           hint={t('customProvider.credentialMode.hint')}
@@ -645,7 +681,7 @@ export function CustomProviderForm({
                 type="text"
                 value={reasoningEfforts}
                 onChange={(e) => setReasoningEfforts(e.target.value)}
-                placeholder="off, low, medium, high"
+                placeholder="off, low, medium, high, xhigh, max"
                 className={`${inputClass} font-mono`}
                 disabled={formLocked}
                 aria-label={t('customProvider.reasoning.efforts.label')}

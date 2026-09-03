@@ -23,6 +23,9 @@ import { _resetDataPathsCacheForTesting, getKodaxDir } from '../kodax/data-paths
 import { permissionBroker } from '../permission/broker.js';
 import { askUserBroker } from '../permission/ask-user-broker.js';
 import { installSessionStoreMock, type MockSessionState } from './_helpers/session-store-mock.js';
+import { setSessionStoreImpl } from '../kodax/session-store.js';
+import { _resetMemoryStoreForTesting, setKey } from '../providers/keychain.js';
+import { getScopedProviderCredential } from '@kodax-ai/kodax/llm';
 
 // Stub webContents：捕获所有 session.event payload 到数组里
 type CapturedSend = { channel: string; payload: unknown };
@@ -60,6 +63,7 @@ afterEach(async () => {
   await kodaxHost.disposeAll();
   setRendererTarget(() => null);
   mockState.reset();
+  _resetMemoryStoreForTesting();
 });
 
 function getEvents(): readonly SessionEvent[] {
@@ -85,6 +89,205 @@ test('createSession: returns sessionId starting with "s_" + createdAt timestamp'
   assert.match(result.sessionId, /^s_/);
   assert.ok(result.createdAt > 0);
   assert.equal(kodaxHost.get(result.sessionId)?.sessionId, result.sessionId);
+});
+
+test('embedded manual compact receives the exact Space keychain credential', async () => {
+  _resetMemoryStoreForTesting();
+  await setKey('anthropic', 'compact-credential');
+  let scopedCredential: string | undefined;
+  setSessionStoreImpl({
+    listSessions: async () => [],
+    forkSession: async () => null,
+    rewindSession: async () => null,
+    deleteSession: async () => ({ ok: true }),
+    loadSession: async () => null,
+    watchSessions: () => ({ close: () => undefined }),
+    compactSession: async () => {
+      scopedCredential = getScopedProviderCredential('anthropic');
+      return {
+        compacted: true,
+        tokensBefore: 100,
+        tokensAfter: 40,
+        messages: [],
+      };
+    },
+  });
+  const { sessionId } = kodaxHost.createSession({
+    projectRoot: '/r',
+    provider: 'anthropic',
+    surface: 'partner',
+  });
+
+  const result = await kodaxHost.requestCompact(sessionId);
+
+  assert.equal(result.compacted, true);
+  assert.equal(scopedCredential, 'compact-credential');
+});
+
+test('daemon manual compact delegates Space keychain credentials to the Runtime adapter', async (t) => {
+  _resetMemoryStoreForTesting();
+  const originalEnv = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  await setKey('anthropic', 'compact-credential');
+  let compactInput: unknown;
+  const adapter = runtimeHostAdapter as unknown as {
+    compactSession(input: unknown): Promise<{
+      compacted: boolean;
+      tokensBefore: number;
+      tokensAfter: number;
+    }>;
+  };
+  const originalCompactSession = adapter.compactSession;
+  adapter.compactSession = async (input) => {
+    compactInput = input;
+    return { compacted: true, tokensBefore: 100, tokensAfter: 40 };
+  };
+  t.after(() => {
+    adapter.compactSession = originalCompactSession;
+    if (originalEnv === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalEnv;
+  });
+  const { sessionId } = kodaxHost.createSession({
+    projectRoot: '/r',
+    provider: 'anthropic',
+    surface: 'code',
+  });
+
+  const result = await kodaxHost.requestCompact(sessionId);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compacted, true);
+  assert.deepEqual(compactInput, {
+    sessionId,
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-6',
+  });
+});
+
+test('daemon manual compact surfaces a missing exact credential from the Runtime adapter', async (t) => {
+  _resetMemoryStoreForTesting();
+  const originalEnv = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const adapter = runtimeHostAdapter as unknown as {
+    compactSession(input: unknown): Promise<never>;
+  };
+  const originalCompactSession = adapter.compactSession;
+  adapter.compactSession = async () => {
+    throw new Error('Provider "anthropic" has no exact Space credential');
+  };
+  t.after(() => {
+    adapter.compactSession = originalCompactSession;
+    if (originalEnv === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalEnv;
+  });
+  const { sessionId } = kodaxHost.createSession({
+    projectRoot: '/r',
+    provider: 'anthropic',
+    surface: 'code',
+  });
+
+  const result = await kodaxHost.requestCompact(sessionId);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compacted, false);
+  assert.match(result.reason ?? '', /no exact Space credential/i);
+});
+
+test('daemon manual compact delegates when the Space process has an external credential', async (t) => {
+  _resetMemoryStoreForTesting();
+  const originalEnv = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = 'external-compact-credential';
+  let compactCalled = false;
+  const adapter = runtimeHostAdapter as unknown as {
+    hasReadyRuntime(): boolean;
+    compactSession(input: unknown): Promise<{
+      compacted: boolean;
+      tokensBefore: number;
+      tokensAfter: number;
+    }>;
+  };
+  const originals = {
+    hasReadyRuntime: adapter.hasReadyRuntime,
+    compactSession: adapter.compactSession,
+  };
+  adapter.hasReadyRuntime = () => true;
+  adapter.compactSession = async () => {
+    compactCalled = true;
+    return { compacted: true, tokensBefore: 100, tokensAfter: 40 };
+  };
+  t.after(() => {
+    Object.assign(adapter, originals);
+    if (originalEnv === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalEnv;
+  });
+  const { sessionId } = kodaxHost.createSession({
+    projectRoot: '/r',
+    provider: 'anthropic',
+    surface: 'code',
+  });
+
+  const result = await kodaxHost.requestCompact(sessionId);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compacted, true);
+  assert.equal(compactCalled, true);
+});
+
+test('Runtime-owned manual compact cannot fall back to embedded storage while Runtime reconnects', async (t) => {
+  _resetMemoryStoreForTesting();
+  let embeddedCompactCalled = false;
+  let runtimeCompactCalled = false;
+  setSessionStoreImpl({
+    listSessions: async () => [],
+    forkSession: async () => null,
+    rewindSession: async () => null,
+    deleteSession: async () => ({ ok: true }),
+    loadSession: async () => null,
+    watchSessions: () => ({ close: () => undefined }),
+    compactSession: async () => {
+      embeddedCompactCalled = true;
+      return {
+        compacted: true,
+        tokensBefore: 100,
+        tokensAfter: 40,
+        messages: [],
+      };
+    },
+  });
+  const adapter = runtimeHostAdapter as unknown as {
+    isRuntimeSelected(): boolean;
+    hasReadyRuntime(): boolean;
+    compactSession(input: unknown): Promise<{
+      compacted: boolean;
+      tokensBefore: number;
+      tokensAfter: number;
+    }>;
+  };
+  const originals = {
+    isRuntimeSelected: adapter.isRuntimeSelected,
+    hasReadyRuntime: adapter.hasReadyRuntime,
+    compactSession: adapter.compactSession,
+  };
+  adapter.isRuntimeSelected = () => true;
+  adapter.hasReadyRuntime = () => false;
+  adapter.compactSession = async () => {
+    runtimeCompactCalled = true;
+    throw new Error('Runtime unavailable while reconnecting');
+  };
+  t.after(() => Object.assign(adapter, originals));
+  const { sessionId } = kodaxHost.createSession({
+    projectRoot: '/r',
+    provider: 'anthropic',
+    surface: 'code',
+  });
+
+  const result = await kodaxHost.requestCompact(sessionId);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compacted, false);
+  assert.match(result.reason ?? '', /Runtime unavailable while reconnecting/i);
+  assert.equal(embeddedCompactCalled, false);
+  assert.equal(runtimeCompactCalled, true);
 });
 
 test('createSession accepts canonical KodaX IDs for both Coder and Partner', async () => {
@@ -219,7 +422,6 @@ test('cancel returns and emits cancelled fallback when adapter cancel never reso
       provider: opts.provider,
       reasoningMode: opts.reasoningMode,
       permissionMode: opts.permissionMode,
-      autoModeEngine: opts.autoModeEngine ?? 'llm',
       agentMode: opts.agentMode ?? 'ama',
       surface: opts.surface ?? 'code',
       createdAt: Date.now(),
@@ -259,7 +461,6 @@ test('permission requests honor the run-scoped mode after the live Session mode 
       provider: opts.provider,
       reasoningMode: opts.reasoningMode,
       permissionMode: opts.permissionMode,
-      autoModeEngine: opts.autoModeEngine ?? 'llm',
       agentMode: opts.agentMode ?? 'ama',
       surface: opts.surface ?? 'code',
       createdAt: Date.now(),

@@ -12,9 +12,8 @@ import {
 const SEED: PartnerEffectiveConfigSeed = {
   providerId: 'anthropic',
   model: 'claude-sonnet',
-  reasoningMode: 'balanced',
+  reasoningMode: 'ultra',
   permissionMode: 'accept-edits',
-  autoModeEngine: 'llm',
   agentMode: 'ama',
   toolPolicyId: 'partner-inline-v1',
 };

@@ -282,19 +282,16 @@ test('setRuntimeDefaults merges and persists runtime defaults', async () => {
   await store.setDefaultWorkspace(workspace);
 
   const first = await store.setRuntimeDefaults({
-    permissionMode: 'auto',
-    autoModeEngine: 'rules',
+    permissionMode: 'full-access',
   });
   assert.deepEqual(first.runtimeDefaults, {
-    permissionMode: 'auto',
-    autoModeEngine: 'rules',
+    permissionMode: 'full-access',
   });
 
-  const merged = await store.setRuntimeDefaults({ reasoningMode: 'deep', agentMode: 'sa' });
+  const merged = await store.setRuntimeDefaults({ reasoningMode: 'ultra', agentMode: 'sa' });
   assert.deepEqual(merged.runtimeDefaults, {
-    permissionMode: 'auto',
-    autoModeEngine: 'rules',
-    reasoningMode: 'deep',
+    permissionMode: 'full-access',
+    reasoningMode: 'ultra',
     agentMode: 'sa',
   });
 
@@ -316,7 +313,7 @@ test('load preserves valid runtime default fields when one field is invalid', as
         languageMode: 'system',
         runtimeDefaults: {
           permissionMode: 'auto',
-          reasoningMode: 'turbo',
+          reasoningMode: '../unsafe',
           agentMode: 'sa',
           extra: true,
         },
@@ -386,14 +383,12 @@ test('setRuntimeDefaults ignores invalid patch fields without dropping existing 
   await store.setRuntimeDefaults({ permissionMode: 'auto', reasoningMode: 'quick' });
 
   const next = await store.setRuntimeDefaults({
-    reasoningMode: 'turbo',
-    autoModeEngine: 'rules',
+    reasoningMode: '../unsafe',
   } as never);
 
   assert.deepEqual(next.runtimeDefaults, {
     permissionMode: 'auto',
     reasoningMode: 'quick',
-    autoModeEngine: 'rules',
   });
 });
 

@@ -45,16 +45,15 @@ const DYNAMIC_ARG_COMPLETION_COMMANDS = new Set([
 const STATIC_ARG_OPTIONS: Readonly<Record<string, readonly string[]>> = {
   'agent-mode': ['ama', 'sa', 'toggle'],
   auto: ['auto'],
-  'auto-engine': ['llm', 'rules'],
   extensions: ['status', 'refresh', 'sdk'],
   fallback: ['status', 'off'],
   goal: ['status', 'pause', 'resume', 'complete', 'blocked', 'clear', 'help', '--tokens'],
   learn: ['pending', 'ledger', 'diff', 'approve', 'reject', 'help'],
   mcp: ['status', 'refresh'],
   memory: ['inbox', 'pending', 'list', 'show', 'approve', 'reject', 'curate', 'open', 'help'],
-  mode: ['plan', 'accept-edits', 'auto'],
+  mode: ['plan', 'accept-edits', 'auto', 'full-access'],
   paste: ['list', 'show', 'help'],
-  reasoning: ['off', 'auto', 'quick', 'balanced', 'deep'],
+  reasoning: ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   recover: ['seed', 'prompt', 'candidate', 'help'],
   repointel: ['status', 'mode', 'trace', 'warm', 'endpoint', 'bin'],
   review: ['--lean', '--workflow', 'base', 'sha', 'help'],
@@ -62,7 +61,7 @@ const STATIC_ARG_OPTIONS: Readonly<Record<string, readonly string[]>> = {
   skills: ['pending', 'ledger'],
   'stall-log': ['on', 'off'],
   status: ['workspace', 'worktree', 'runtime', 'peers'],
-  thinking: ['on', 'off', 'auto', 'quick', 'balanced', 'deep'],
+  thinking: ['on', 'off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
   'verifier-log': ['on', 'off'],
 };
 

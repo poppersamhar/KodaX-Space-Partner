@@ -35,7 +35,10 @@ import type {
   SessionHistoryItem,
 } from '@kodax-space/space-ipc-schema';
 import { bufferIndexForSelectorTurn } from '../features/session/turnIndex.js';
-import { canonProjectRoot as canonProjectRootShared } from '@kodax-space/space-ipc-schema';
+import {
+  canonProjectRoot as canonProjectRootShared,
+  reasoningModeSchema,
+} from '@kodax-space/space-ipc-schema';
 import {
   type VisualQuality,
   VISUAL_QUALITY_KEY,
@@ -72,8 +75,10 @@ import {
   mergeRuntimeActivityIntoSessions,
   mergeRuntimeSettingsIntoSessions,
 } from './runtimeSessionSettings.js';
+import { selectTranscriptProjectionMergeStrategy } from './transcriptProjection.js';
 import { pushToast, useToastStore } from './toastStore.js';
 import { translateMessage } from '../i18n/I18nProvider.js';
+import { isCancelledSessionError } from '../features/session/sessionError.js';
 
 export type MascotMode = 'legacy' | 'sprite' | 'off';
 
@@ -86,6 +91,13 @@ export interface SessionCompactionOutcome {
   readonly strategy?: 'full_prefix' | 'map_reduce';
   readonly effectiveTriggerTokens?: number;
   readonly reason?: string;
+}
+
+/** Exact Runtime Run whose canonical history read started after its terminal evidence. */
+export interface SettledRuntimeHistoryRun {
+  readonly runtimeId: string;
+  readonly runId: string;
+  readonly generation: number;
 }
 
 export interface SessionTokenInfo {
@@ -807,7 +819,6 @@ interface AppState {
   pendingProviderId: string | null;
   pendingReasoningMode: SessionMeta['reasoningMode'] | null;
   pendingPermissionMode: SessionMeta['permissionMode'] | null;
-  pendingAutoModeEngine: SessionMeta['autoModeEngine'] | null;
   /** Pending agent mode (AMA / SA)。默认 'ama'；下次 session.create 时随入参传给 main。*/
   pendingAgentMode: SessionMeta['agentMode'] | null;
   /** Pending model — 用户在右下角 picker 选的 model 名 (provider.models 之一)。
@@ -973,6 +984,8 @@ interface AppState {
       readonly sourceRevision?: string;
       /** This resolved replacement is the authoritative newest canonical window. */
       readonly authoritativeNewest?: boolean;
+      /** Runs proven durable by this exact post-terminal history read. */
+      readonly settledRuntimeRuns?: readonly SettledRuntimeHistoryRun[];
       /** Daemon conversation projection status. Only an 'ambiguous' page carries proven clone
        * candidates that share logicalId and must be deduped; a resolved page never dedupes. */
       readonly conversationStatus?: 'resolved' | 'partial' | 'ambiguous';
@@ -1094,7 +1107,6 @@ interface AppState {
   setPendingProviderId(id: string | null): void;
   setPendingReasoningMode(mode: SessionMeta['reasoningMode'] | null): void;
   setPendingPermissionMode(mode: SessionMeta['permissionMode'] | null): void;
-  setPendingAutoModeEngine(engine: SessionMeta['autoModeEngine'] | null): void;
   setPendingAgentMode(mode: SessionMeta['agentMode'] | null): void;
   setPendingModel(model: string | null): void;
   /** Session UX flags — 局部状态 (alpha.1 不持久化)。toggle 形 + 合并形 set 函数。*/
@@ -1187,7 +1199,6 @@ const LS_KEY_PROJECT = 'kodax-space.currentProjectPath';
 const LS_KEY_EXPANDED_PROJECTS = 'kodax-space.expandedProjects';
 const LS_KEY_PENDING_PERMISSION = 'kodax-space.pendingPermissionMode';
 const LS_KEY_PENDING_REASONING = 'kodax-space.pendingReasoningMode';
-const LS_KEY_PENDING_AUTO_ENGINE = 'kodax-space.pendingAutoModeEngine';
 const LS_KEY_PENDING_AGENT = 'kodax-space.pendingAgentMode';
 // pendingModel 是 provider-specific 字符串 (eg "anthropic/claude-opus-4-8")，
 // 不像 mode 是封闭 enum——用宽校验：非空 + 长度上限避免 LS 被改成异常长字符串。
@@ -1203,9 +1214,7 @@ const PENDING_MODEL_MAX_LEN = 256;
 const MASCOT_MODE_VALUES = ['legacy', 'sprite', 'off'] as const;
 
 // 持久化 pending* 模式时校验合法 enum 值，避免 LS 被改成非法值后崩 (typescript 编译期没法知道)
-const PERMISSION_MODE_VALUES = ['plan', 'accept-edits', 'auto'] as const;
-const REASONING_MODE_VALUES = ['off', 'auto', 'quick', 'balanced', 'deep'] as const;
-const AUTO_MODE_ENGINE_VALUES = ['llm', 'rules'] as const;
+const PERMISSION_MODE_VALUES = ['plan', 'accept-edits', 'auto', 'full-access'] as const;
 const AGENT_MODE_VALUES = ['ama', 'sa'] as const;
 
 function readPersistedPermissionMode(): SessionMeta['permissionMode'] | null {
@@ -1216,15 +1225,8 @@ function readPersistedPermissionMode(): SessionMeta['permissionMode'] | null {
 }
 function readPersistedReasoningMode(): SessionMeta['reasoningMode'] | null {
   const v = lsGet(LS_KEY_PENDING_REASONING);
-  return v !== null && (REASONING_MODE_VALUES as readonly string[]).includes(v)
-    ? (v as SessionMeta['reasoningMode'])
-    : null;
-}
-function readPersistedAutoModeEngine(): SessionMeta['autoModeEngine'] | null {
-  const v = lsGet(LS_KEY_PENDING_AUTO_ENGINE);
-  return v !== null && (AUTO_MODE_ENGINE_VALUES as readonly string[]).includes(v)
-    ? (v as SessionMeta['autoModeEngine'])
-    : null;
+  const parsed = reasoningModeSchema.safeParse(v);
+  return parsed.success ? parsed.data : null;
 }
 function readPersistedAgentMode(): SessionMeta['agentMode'] | null {
   const v = lsGet(LS_KEY_PENDING_AGENT);
@@ -1572,6 +1574,7 @@ interface TranscriptTurnSnapshot {
   readonly terminal: boolean;
   readonly terminalTurnId?: string;
   readonly terminalRunId?: string;
+  readonly terminalRuntimeId?: string;
   readonly closed: boolean;
   readonly thinking: string;
   readonly text: string;
@@ -1960,6 +1963,7 @@ function transcriptSegmentSemantic(
   | 'terminal'
   | 'terminalTurnId'
   | 'terminalRunId'
+  | 'terminalRuntimeId'
   | 'thinking'
   | 'text'
   | 'tools'
@@ -1969,6 +1973,7 @@ function transcriptSegmentSemantic(
   let terminal = false;
   let terminalTurnId: string | undefined;
   let terminalRunId: string | undefined;
+  let terminalRuntimeId: string | undefined;
   let thinking = '';
   let text = '';
   const tools: Array<{
@@ -1996,6 +2001,11 @@ function transcriptSegmentSemantic(
       const runScopedTerminalRunId =
         'runtimeEvent' in event ? event.runtimeEvent?.runId : undefined;
       if (runScopedTerminalRunId !== undefined) terminalRunId = runScopedTerminalRunId;
+      const runScopedTerminalRuntimeId =
+        'runtimeEvent' in event ? event.runtimeEvent?.runtimeId : undefined;
+      if (runScopedTerminalRuntimeId !== undefined) {
+        terminalRuntimeId = runScopedTerminalRuntimeId;
+      }
       if (event.kind === 'session_error') {
         const error = `error:${event.error}`;
         notices.push(error);
@@ -2061,6 +2071,7 @@ function transcriptSegmentSemantic(
     terminal,
     ...(terminalTurnId !== undefined ? { terminalTurnId } : {}),
     ...(terminalRunId !== undefined ? { terminalRunId } : {}),
+    ...(terminalRuntimeId !== undefined ? { terminalRuntimeId } : {}),
     thinking,
     text,
     tools,
@@ -2097,6 +2108,56 @@ function userEntryIdentityRelation(
   const leftIds = new Set([left.entryId, ...(left.auditEntryIds ?? [])]);
   const rightIds = [right.entryId, ...(right.auditEntryIds ?? [])];
   return rightIds.some((entryId) => leftIds.has(entryId)) ? 'match' : 'conflict';
+}
+
+type TurnProjectionAuthority = 'canonical' | 'live' | 'coexist_fail_open';
+
+interface CertifiedCanonicalTranscriptAuthority {
+  readonly sourceRevision: string;
+  readonly canonicalMessageIds: ReadonlySet<string>;
+  readonly settledRuntimeRuns: readonly SettledRuntimeHistoryRun[];
+}
+
+/** Identity and persistence facts decide authority; transcript content and event order never do. */
+function decideTurnProjectionAuthority(
+  durable: TranscriptTurnSnapshot,
+  live: TranscriptTurnSnapshot,
+  authority: CertifiedCanonicalTranscriptAuthority | undefined,
+): TurnProjectionAuthority {
+  if (authority === undefined || !durable.restoredFromHistory || live.restoredFromHistory) {
+    return live.closed ? 'coexist_fail_open' : 'live';
+  }
+  if (
+    !authority.canonicalMessageIds.has(durable.messageId) ||
+    durable.canonicalIndex === undefined
+  ) {
+    return 'coexist_fail_open';
+  }
+  const entryIdentity = userEntryIdentityRelation(durable, live);
+  const exactOwner =
+    entryIdentity === 'match' ||
+    (entryIdentity !== 'conflict' &&
+      !durable.leadingPartialHistory &&
+      !durable.omittedHistoryUserOrdinal &&
+      strongTurnIdentityMatches(durable, live));
+  if (!exactOwner || !live.terminal || live.runtimeRunId === undefined) {
+    return 'coexist_fail_open';
+  }
+  if (
+    live.terminalRunId !== live.runtimeRunId ||
+    live.terminalRuntimeId === undefined ||
+    (durable.runtimeRunId !== undefined && durable.runtimeRunId !== live.runtimeRunId) ||
+    (live.terminalTurnId !== undefined &&
+      live.turnId !== undefined &&
+      live.terminalTurnId !== live.turnId)
+  ) {
+    return 'coexist_fail_open';
+  }
+  return authority.settledRuntimeRuns.some(
+    (run) => run.runtimeId === live.terminalRuntimeId && run.runId === live.runtimeRunId,
+  )
+    ? 'canonical'
+    : 'coexist_fail_open';
 }
 
 type LeadingHistoryOwnerResolution =
@@ -2414,15 +2475,15 @@ function isTranscriptTerminal(
 }
 
 /**
- * Merge unsegmented history/live projections after identity has proved they are one canonical turn.
- * Segmented projections are admitted by the ordered causal matcher before reaching this legacy
- * compatibility path. Keep durable visible order, add only missing live-visible information, and
- * retain live-only runtime state such as artifacts, diagnostics and todo snapshots.
+ * Merge history/live projections after identity and authority have been decided independently.
+ * Compatibility callers retain proven live suffixes. A certified canonical caller keeps durable
+ * transcript order while retaining Runtime-only diagnostics, state and richer keyed notices.
  */
-function mergeLegacyUnsegmentedTurnProjections(
+function mergeIdentityProvenTurnProjections(
   durableEvents: readonly SessionEvent[],
   liveEvents: readonly SessionEvent[],
   exactEntryIdentity = false,
+  authority: 'compatible' | 'canonical' = 'compatible',
 ): SessionEvent[] {
   const effectiveLiveEvents = filterEffectiveOutputSegmentEvents(liveEvents);
   const liveTerminals = effectiveLiveEvents.filter(isTranscriptTerminal);
@@ -2441,14 +2502,20 @@ function mergeLegacyUnsegmentedTurnProjections(
   const textSuffixProjector = exactEntryIdentity
     ? cumulativeProjectionTextSuffix
     : projectionTextSuffix;
-  const textSuffix = textSuffixProjector(
-    projectedEventText(durableEvents, 'text_delta'),
-    projectedEventText(effectiveLiveEvents, 'text_delta'),
-  );
-  const thinkingSuffix = textSuffixProjector(
-    projectedEventText(durableEvents, 'thinking_delta'),
-    projectedEventText(effectiveLiveEvents, 'thinking_delta'),
-  );
+  const textSuffix =
+    authority === 'canonical'
+      ? ''
+      : textSuffixProjector(
+          projectedEventText(durableEvents, 'text_delta'),
+          projectedEventText(effectiveLiveEvents, 'text_delta'),
+        );
+  const thinkingSuffix =
+    authority === 'canonical'
+      ? ''
+      : textSuffixProjector(
+          projectedEventText(durableEvents, 'thinking_delta'),
+          projectedEventText(effectiveLiveEvents, 'thinking_delta'),
+        );
   const liveTextChunks = projectionSuffixChunks(effectiveLiveEvents, 'text_delta', textSuffix);
   const liveThinkingChunks = projectionSuffixChunks(
     effectiveLiveEvents,
@@ -2466,18 +2533,28 @@ function mergeLegacyUnsegmentedTurnProjections(
   );
   const durableToolResultIndex = new Map<string, number>();
   const durableNoticeCounts = new Map<string, number>();
+  const durableNoticeIndexes = new Map<string, number[]>();
   for (let index = 0; index < mergedBody.length; index++) {
     const event = mergedBody[index]!;
     if (event.kind === 'tool_result') durableToolResultIndex.set(event.toolId, index);
     const noticeKey = projectionNoticeKey(event);
     if (noticeKey !== undefined) {
       durableNoticeCounts.set(noticeKey, (durableNoticeCounts.get(noticeKey) ?? 0) + 1);
+      const indexes = durableNoticeIndexes.get(noticeKey) ?? [];
+      indexes.push(index);
+      durableNoticeIndexes.set(noticeKey, indexes);
     }
   }
 
   const liveExtras: SessionEvent[] = [];
   for (const [eventIndex, event] of effectiveLiveEvents.entries()) {
     if (isTranscriptTerminal(event) || isPromptSegmentBoundary(event)) {
+      continue;
+    }
+    if (
+      authority === 'canonical' &&
+      (event.kind === 'session_start' || event.kind === 'output_segment_started')
+    ) {
       continue;
     }
     if (event.kind === 'text_delta') {
@@ -2491,7 +2568,7 @@ function mergeLegacyUnsegmentedTurnProjections(
       continue;
     }
     if (event.kind === 'tool_start') {
-      if (!durableToolStarts.has(event.toolId)) {
+      if (authority !== 'canonical' && !durableToolStarts.has(event.toolId)) {
         durableToolStarts.add(event.toolId);
         liveExtras.push(event);
       }
@@ -2500,8 +2577,8 @@ function mergeLegacyUnsegmentedTurnProjections(
     if (event.kind === 'tool_result') {
       const durableIndex = durableToolResultIndex.get(event.toolId);
       if (durableIndex === undefined) {
-        liveExtras.push(event);
-      } else {
+        if (authority !== 'canonical') liveExtras.push(event);
+      } else if (authority !== 'canonical') {
         const durableResult = mergedBody[durableIndex];
         if (
           durableResult?.kind === 'tool_result' &&
@@ -2518,8 +2595,14 @@ function mergeLegacyUnsegmentedTurnProjections(
     if (noticeKey !== undefined) {
       const remaining = durableNoticeCounts.get(noticeKey) ?? 0;
       if (remaining === 0) liveExtras.push(event);
-      else if (remaining === 1) durableNoticeCounts.delete(noticeKey);
-      else durableNoticeCounts.set(noticeKey, remaining - 1);
+      else {
+        if (authority === 'canonical') {
+          const durableIndex = durableNoticeIndexes.get(noticeKey)?.shift();
+          if (durableIndex !== undefined) mergedBody[durableIndex] = event;
+        }
+        if (remaining === 1) durableNoticeCounts.delete(noticeKey);
+        else durableNoticeCounts.set(noticeKey, remaining - 1);
+      }
       continue;
     }
     // Lifecycle, tool progress, artifact/todo/context diagnostics and other runtime-only events
@@ -3552,6 +3635,66 @@ function stabilizeCanonicalPageHeadBeforeEarlierLiveTurns(
   );
 }
 
+interface DuplicateTranscriptTurnPair {
+  readonly durable: TranscriptTurnSnapshot;
+  readonly duplicate: TranscriptTurnSnapshot;
+  readonly projectionAuthority?: 'canonical';
+  readonly ownerResolution?: LeadingHistoryOwnerResolution;
+  readonly openLiveAdoption?: OpenLiveAdoption;
+  readonly closedCausalAdoption?: ClosedCausalAdoption;
+}
+
+function mergeDuplicateTurnProjection(
+  pair: DuplicateTranscriptTurnPair,
+  durableSegment: readonly SessionEvent[],
+  duplicateSegment: readonly SessionEvent[],
+): SessionEvent[] {
+  if (pair.projectionAuthority === 'canonical') {
+    return mergeIdentityProvenTurnProjections(
+      durableSegment,
+      duplicateSegment,
+      userEntryIdentityRelation(pair.durable, pair.duplicate) === 'match',
+      'canonical',
+    );
+  }
+  const strategy = selectTranscriptProjectionMergeStrategy({
+    hasClosedCausalAdoption: pair.closedCausalAdoption !== undefined,
+    openLiveAdoptionKind: pair.openLiveAdoption?.kind,
+    ownerResolutionKind: pair.ownerResolution?.kind,
+  });
+  if (strategy === 'closed-causal' && pair.closedCausalAdoption) {
+    return mergeClosedCausalProjection(durableSegment, pair.closedCausalAdoption);
+  }
+  if (strategy === 'open-live-causal' && pair.openLiveAdoption?.kind === 'causal_merge') {
+    return mergeOrderedCausalProjection(
+      pair.openLiveAdoption.liveEvents,
+      durableSegment.find(isPromptSegmentBoundary) ??
+        pair.openLiveAdoption.liveEvents.find(isPromptSegmentBoundary),
+      pair.openLiveAdoption.match,
+    );
+  }
+  if (strategy === 'open-live' && pair.openLiveAdoption) {
+    return mergeOpenLiveTurnProjections(pair.durable, durableSegment, duplicateSegment);
+  }
+  if (
+    strategy === 'promote-open-live-owner' &&
+    pair.ownerResolution?.kind === 'promote_open_live_owner'
+  ) {
+    return mergeOrderedCausalProjection(
+      pair.ownerResolution.liveEvents,
+      durableSegment.find(isPromptSegmentBoundary) ??
+        pair.ownerResolution.liveEvents.find(isPromptSegmentBoundary),
+      pair.ownerResolution.match,
+    );
+  }
+  if (strategy === 'promote-live-owner') return [...duplicateSegment];
+  return mergeIdentityProvenTurnProjections(
+    durableSegment,
+    duplicateSegment,
+    userEntryIdentityRelation(pair.durable, pair.duplicate) === 'match',
+  );
+}
+
 /**
  * Fold duplicate projections only with canonical identity. No content/timestamp heuristic is
  * allowed here: a fast, intentional repeat must remain a distinct turn even when its text and
@@ -3561,6 +3704,7 @@ function stabilizeCanonicalPageHeadBeforeEarlierLiveTurns(
 function foldStrongIdentityDuplicateTurns(
   userMessages: readonly UserMessage[],
   events: readonly SessionEvent[],
+  authority?: CertifiedCanonicalTranscriptAuthority,
 ): ReconciledTranscriptBuffers {
   const stabilized = stabilizeAmbiguousLeadingHistoryOrder(userMessages, events);
   let nextUsers = [...stabilized.userMessages];
@@ -3569,15 +3713,7 @@ function foldStrongIdentityDuplicateTurns(
   const canonicalizedLiveOwners: CanonicalizedLiveOwner[] = [];
   for (;;) {
     const turns = transcriptTurnSnapshots(nextUsers, nextEvents);
-    let pair:
-      | {
-          readonly durable: TranscriptTurnSnapshot;
-          readonly duplicate: TranscriptTurnSnapshot;
-          readonly ownerResolution?: LeadingHistoryOwnerResolution;
-          readonly openLiveAdoption?: OpenLiveAdoption;
-          readonly closedCausalAdoption?: ClosedCausalAdoption;
-        }
-      | undefined;
+    let pair: DuplicateTranscriptTurnPair | undefined;
 
     for (let duplicateIndex = 0; duplicateIndex < turns.length && !pair; duplicateIndex++) {
       const duplicate = turns[duplicateIndex]!;
@@ -3611,6 +3747,8 @@ function foldStrongIdentityDuplicateTurns(
           durable.runtimeRunId === undefined ||
           duplicate.runtimeRunId === undefined ||
           durable.runtimeRunId === duplicate.runtimeRunId;
+        const projectionAuthority = decideTurnProjectionAuthority(durable, duplicate, authority);
+        const certifiedCanonical = projectionAuthority === 'canonical';
         // The newest canonical page can persist the user boundary before any assistant row.
         // Its empty durable segment and the exact open live owner are two projections of one turn,
         // not a complete history copy plus a duplicate. Move the live segment under the canonical
@@ -3660,6 +3798,7 @@ function foldStrongIdentityDuplicateTurns(
               !strongTurnIdentityMatches(durable, duplicate) &&
               ownerResolution === undefined) ||
           (!duplicate.restoredFromHistory &&
+            !certifiedCanonical &&
             openLiveAdoption === undefined &&
             ownerResolution?.kind !== 'promote_open_live_owner' &&
             !liveTurnCanFold(duplicate, entryIdentity === 'match'))
@@ -3668,13 +3807,19 @@ function foldStrongIdentityDuplicateTurns(
         }
         const durableCausalSegment = nextEvents.slice(durable.eventStart, durable.eventEnd);
         const closedCausalMatch =
-          closedLiveEvents === undefined
+          certifiedCanonical || closedLiveEvents === undefined
             ? undefined
             : durableCausalSegment.length === 0 &&
                 durableMessage?.historyNoAssistantSegment === true
               ? { durableExtras: [] }
               : orderedCausalProjectionMatch(durableCausalSegment, closedLiveEvents);
-        if (closedLiveEvents !== undefined && closedCausalMatch === undefined) continue;
+        if (
+          !certifiedCanonical &&
+          closedLiveEvents !== undefined &&
+          closedCausalMatch === undefined
+        ) {
+          continue;
+        }
         const closedCausalAdoption =
           closedLiveEvents !== undefined && closedCausalMatch !== undefined
             ? { liveEvents: closedLiveEvents, match: closedCausalMatch }
@@ -3682,6 +3827,7 @@ function foldStrongIdentityDuplicateTurns(
         pair = {
           durable,
           duplicate,
+          ...(certifiedCanonical ? { projectionAuthority: 'canonical' as const } : {}),
           ...(ownerResolution !== undefined ? { ownerResolution } : {}),
           ...(openLiveAdoption !== undefined ? { openLiveAdoption } : {}),
           ...(closedCausalAdoption !== undefined ? { closedCausalAdoption } : {}),
@@ -3700,32 +3846,7 @@ function foldStrongIdentityDuplicateTurns(
     const promotesLiveOwner =
       pair.ownerResolution?.kind === 'promote_live_owner' ||
       pair.ownerResolution?.kind === 'promote_open_live_owner';
-    const mergedProjection =
-      pair.closedCausalAdoption !== undefined
-        ? mergeClosedCausalProjection(durableSegment, pair.closedCausalAdoption)
-        : pair.openLiveAdoption?.kind === 'causal_merge'
-          ? mergeOrderedCausalProjection(
-              pair.openLiveAdoption.liveEvents,
-              durableSegment.find(isPromptSegmentBoundary) ??
-                pair.openLiveAdoption.liveEvents.find(isPromptSegmentBoundary),
-              pair.openLiveAdoption.match,
-            )
-          : pair.openLiveAdoption !== undefined
-            ? mergeOpenLiveTurnProjections(pair.durable, durableSegment, duplicateSegment)
-            : pair.ownerResolution?.kind === 'promote_open_live_owner'
-              ? mergeOrderedCausalProjection(
-                  pair.ownerResolution.liveEvents,
-                  durableSegment.find(isPromptSegmentBoundary) ??
-                    pair.ownerResolution.liveEvents.find(isPromptSegmentBoundary),
-                  pair.ownerResolution.match,
-                )
-              : promotesLiveOwner
-                ? [...duplicateSegment]
-                : mergeLegacyUnsegmentedTurnProjections(
-                    durableSegment,
-                    duplicateSegment,
-                    userEntryIdentityRelation(pair.durable, pair.duplicate) === 'match',
-                  );
+    const mergedProjection = mergeDuplicateTurnProjection(pair, durableSegment, duplicateSegment);
     const retainsOpenLiveProjection =
       pair.openLiveAdoption !== undefined ||
       pair.ownerResolution?.kind === 'promote_open_live_owner';
@@ -3739,7 +3860,8 @@ function foldStrongIdentityDuplicateTurns(
       !pair.duplicate.restoredFromHistory &&
       duplicateMessage !== undefined &&
       pair.durable.canonicalIndex !== undefined &&
-      durableProjectionCoversMergedContent(pair.durable, mergedProjection)
+      (pair.projectionAuthority === 'canonical' ||
+        durableProjectionCoversMergedContent(pair.durable, mergedProjection))
     ) {
       canonicalizedLiveOwners.push({
         messageId: duplicateMessage.id,
@@ -6033,7 +6155,6 @@ export const useAppStore = create<AppState>((set) => ({
   // 用户在 Settings / picker 切的值落 localStorage；新 session 创建时如不显式给值就用这个。
   pendingReasoningMode: readPersistedReasoningMode(),
   pendingPermissionMode: readPersistedPermissionMode(),
-  pendingAutoModeEngine: readPersistedAutoModeEngine(),
   pendingAgentMode: readPersistedAgentMode(),
   pendingModel: readPersistedModel(),
   sessionFlags: {},
@@ -7202,7 +7323,28 @@ export const useAppStore = create<AppState>((set) => ({
         historyAndLiveEvents,
         includeLiveProjection ? state.liveProjectionBySession[sessionId] : undefined,
       );
-      const folded = foldStrongIdentityDuplicateTurns(ownerOpenedMsgs, historyAndLiveEvents);
+      const settledRuntimeRuns = options?.settledRuntimeRuns ?? [];
+      const certifiedCanonicalAuthority =
+        replaceLoadedWindow &&
+        options?.authoritativeNewest === true &&
+        options.conversationStatus === 'resolved' &&
+        options.sourceRevision !== undefined &&
+        settledRuntimeRuns.length > 0
+          ? {
+              sourceRevision: options.sourceRevision,
+              canonicalMessageIds: new Set(
+                histMsgs
+                  .filter((message) => message.canonicalIndex !== undefined)
+                  .map((message) => message.id),
+              ),
+              settledRuntimeRuns,
+            }
+          : undefined;
+      const folded = foldStrongIdentityDuplicateTurns(
+        ownerOpenedMsgs,
+        historyAndLiveEvents,
+        certifiedCanonicalAuthority,
+      );
       rememberCanonicalizedHistoryLiveOwners(sessionId, folded.canonicalizedLiveOwners ?? []);
       const combinedEvents = dedupePersistedCompactionBoundaries(folded.events);
       const combinedMsgs = hideOpenStrongIdentityDuplicateProjection(
@@ -7552,7 +7694,7 @@ export const useAppStore = create<AppState>((set) => ({
       const eventWithLocalOwner =
         localTerminalTurnId === undefined ? event : { ...event, turnId: localTerminalTurnId };
       const storedEvent = stampLiveStreamEvent(eventWithLocalOwner);
-      if (event.kind === 'session_error' && event.error === 'cancelled') {
+      if (isCancelledSessionError(event)) {
         // Deduplicate the optimistic BottomBar cancellation and the later main-process receipt.
         // Renderer-local owners make consecutive pre-admission cancellations distinguishable even
         // when neither has a session_start. Fall back to positional dedupe only when both legacy
@@ -7562,7 +7704,7 @@ export const useAppStore = create<AppState>((set) => ({
           const previous = bucket[i];
           if (!previous) continue;
           if (previous.kind === 'session_start') break;
-          if (previous.kind === 'session_error' && previous.error === 'cancelled') {
+          if (previous.kind === 'session_error' && isCancelledSessionError(previous)) {
             if (storedTerminalTurnId !== undefined || previous.turnId !== undefined) {
               if (storedTerminalTurnId !== undefined && storedTerminalTurnId === previous.turnId) {
                 return state;
@@ -7768,7 +7910,7 @@ export const useAppStore = create<AppState>((set) => ({
         );
       } else if (event.kind === 'queued_user_prompt_failed') {
         Object.assign(next, failQueuedUserMessageForPrompt(state, event));
-      } else if (event.kind === 'session_error' && event.error === 'cancelled') {
+      } else if (isCancelledSessionError(event)) {
         const queued = state.queuedUserMessagesBySession[event.sessionId];
         if (queued && queued.length > 0) {
           const retained = queued.filter((entry) => entry.status === 'failed');
@@ -7982,7 +8124,7 @@ export const useAppStore = create<AppState>((set) => ({
           next.managedTaskStatusBySession = restMtsComplete;
         }
       } else if (event.kind === 'session_error') {
-        if (event.error !== 'cancelled' && !isSessionVisiblyOpen(state, event.sessionId)) {
+        if (!isCancelledSessionError(event) && !isSessionVisiblyOpen(state, event.sessionId)) {
           const unreadFlags = setSessionFlagValue(
             next.sessionFlags ?? state.sessionFlags,
             event.sessionId,
@@ -8103,37 +8245,6 @@ export const useAppStore = create<AppState>((set) => ({
             next.todoDriftDismissedAtBySession = restDriftTurn;
             next.todoDriftDismissedPendingCountBySession = restDriftPending;
           }
-        }
-      } else if (event.kind === 'auto_engine_change') {
-        // FEATURE_029: auto-mode engine 切换（user manual / denial threshold / circuit breaker
-        // / bootstrap_failed）。更新 session.autoModeEngine 让 ModeSelector 立即反映；
-        // 本地 store 不持久化，重启后 main 端 list 重新拉权威值。
-        next.sessions = state.sessions.map((s) =>
-          s.sessionId === event.sessionId ? { ...s, autoModeEngine: event.engine } : s,
-        );
-        // Non-manual fallback (denial_threshold / circuit_breaker / bootstrap_failed)
-        // → 推一条持久通知。"manual" 是用户主动切换不弹。
-        if (event.reason && event.reason !== 'manual') {
-          // v0.1.4：bootstrap_failed 带 details 的话用 details 全文（含失败原因 + 排查指引）；
-          // denial_threshold / circuit_breaker 沿用 reason→label 模板。
-          let text: string;
-          if (event.reason === 'bootstrap_failed') {
-            text =
-              event.details ?? `Auto-mode bootstrap failed; engine fell back to ${event.engine}.`;
-          } else {
-            const reasonLabel =
-              event.reason === 'denial_threshold' ? 'denial threshold' : 'circuit breaker';
-            text = `Auto-mode engine fell back to ${event.engine} (${reasonLabel}).`;
-          }
-          // 用 next.notifications ?? state.notifications 作输入: 防止未来其他分支也写
-          // next.notifications 时本分支误覆盖。当前只有这一处写,fragile-defense (审查 L1)。
-          next.notifications = pushNotificationLocal(next.notifications ?? state.notifications, {
-            id: `auto-fallback:${event.sessionId}:${event.reason}`,
-            severity: event.reason === 'bootstrap_failed' ? 'error' : 'warning',
-            text,
-            sessionId: event.sessionId,
-            createdAt: Date.now(),
-          });
         }
       } else if (event.kind === 'tool_start') {
         // F009：记 toolId → path 暂存；等 tool_result 来配对决定要不要 jump 到 diff
@@ -9047,10 +9158,6 @@ export const useAppStore = create<AppState>((set) => ({
   setPendingPermissionMode: (mode) => {
     lsSet(LS_KEY_PENDING_PERMISSION, mode);
     set({ pendingPermissionMode: mode });
-  },
-  setPendingAutoModeEngine: (engine) => {
-    lsSet(LS_KEY_PENDING_AUTO_ENGINE, engine);
-    set({ pendingAutoModeEngine: engine });
   },
   setPendingAgentMode: (mode) => {
     lsSet(LS_KEY_PENDING_AGENT, mode);

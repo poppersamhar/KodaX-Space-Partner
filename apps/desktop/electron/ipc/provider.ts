@@ -34,7 +34,6 @@ import {
   deleteKey,
   getKey,
   listConfiguredAccounts,
-  hasKey,
   getBackendStatus,
 } from '../providers/keychain.js';
 import { testProvider } from '../providers/test-connection.js';
@@ -45,17 +44,28 @@ import type { ProviderInfo } from '@kodax-space/space-ipc-schema';
 import type { CustomProviderProbe } from '../providers/test-connection.js';
 import { refreshDiagnosticRedactionOptions } from '../diagnostics/runtime.js';
 import { runtimeHostAdapter } from '../kodax/runtime-host-adapter.js';
+import { projectReasoningProfile } from '../kodax/reasoning-effort.js';
 import {
   addSpaceCustomProvider,
   customProviderMutationQueue,
   removeSpaceCustomProvider,
   updateSpaceCustomProvider,
 } from '../providers/custom-provider-mutations.js';
+import { restoreManagedProviderEnvs } from '../providers/managed-env.js';
+import {
+  ensureProviderKeyInjected,
+  listKnownProviderIds,
+  providerCredentialSource,
+  readProviderCredential,
+  resolveProviderCredentialInfo,
+  setManagedProviderCredentialEnv,
+} from '../providers/credentials.js';
+
+export { ensureProviderKeyInjected, listKnownProviderIds, readProviderCredential };
 
 type KnownProvider = BuiltinProvider | CustomProvider | CustomProviderProbe;
 type ConfiguredSource = ProviderInfo['configuredSource'];
 
-const injectedEnvOriginals = new Map<string, string | undefined>();
 let injectAllKeysToEnvQueue: Promise<void> = Promise.resolve();
 async function reloadCoderConfigBestEffort(context: string): Promise<void> {
   if (!runtimeHostAdapter.isRuntimeSelected()) return;
@@ -67,41 +77,12 @@ async function reloadCoderConfigBestEffort(context: string): Promise<void> {
   });
 }
 
-function hasNonEmptyEnvValue(v: string | undefined): boolean {
-  return typeof v === 'string' && v.trim().length > 0;
-}
-
-function hasEnvKey(apiKeyEnv: string): boolean {
-  return hasNonEmptyEnvValue(process.env[apiKeyEnv]);
-}
-
-function hasExternalEnvKey(apiKeyEnv: string): boolean {
-  if (injectedEnvOriginals.has(apiKeyEnv)) {
-    return hasNonEmptyEnvValue(injectedEnvOriginals.get(apiKeyEnv));
-  }
-  return hasEnvKey(apiKeyEnv);
-}
-
-function credentialSource(
-  providerId: string,
-  apiKeyEnv: string,
-  keychainAccounts: ReadonlySet<string>,
-): ConfiguredSource {
-  const hasKeychain = keychainAccounts.has(providerId);
-  const hasEnv = hasExternalEnvKey(apiKeyEnv);
-  if (hasKeychain && hasEnv) return 'both';
-  if (hasKeychain) return 'keychain';
-  if (hasEnv) return 'env';
-  if (hasEnvKey(apiKeyEnv)) return 'runtime';
-  return 'none';
-}
-
 export function _credentialSourceForTesting(
   providerId: string,
   apiKeyEnv: string,
   keychainAccounts: ReadonlySet<string>,
 ): ConfiguredSource {
-  return credentialSource(providerId, apiKeyEnv, keychainAccounts);
+  return providerCredentialSource(providerId, apiKeyEnv, keychainAccounts);
 }
 
 export function _setManagedEnvForTesting(apiKeyEnv: string, value: string): void {
@@ -109,36 +90,11 @@ export function _setManagedEnvForTesting(apiKeyEnv: string, value: string): void
 }
 
 export function _restoreManagedEnvsForTesting(): void {
-  restoreManagedEnvs();
+  restoreManagedProviderEnvs();
 }
 
 function setManagedEnv(apiKeyEnv: string, value: string): void {
-  const envErr = validateApiKeyEnv(apiKeyEnv);
-  if (envErr) {
-    console.warn(`[provider] refusing to inject unsafe apiKeyEnv "${apiKeyEnv}": ${envErr}`);
-    return;
-  }
-  if (!injectedEnvOriginals.has(apiKeyEnv)) {
-    injectedEnvOriginals.set(apiKeyEnv, process.env[apiKeyEnv]);
-  }
-  process.env[apiKeyEnv] = value;
-}
-
-function restoreManagedEnvs(): void {
-  for (const [apiKeyEnv, original] of injectedEnvOriginals) {
-    if (original === undefined) delete process.env[apiKeyEnv];
-    else process.env[apiKeyEnv] = original;
-  }
-  injectedEnvOriginals.clear();
-}
-
-async function listKnownProviderIds(): Promise<readonly string[]> {
-  await providerConfigStore.load();
-  const ids = new Set<string>();
-  for (const provider of BUILTIN_PROVIDERS) ids.add(provider.id);
-  for (const provider of providerConfigStore.listCustom()) ids.add(provider.id);
-  for (const provider of await loadKodaxCustomProviders()) ids.add(provider.id);
-  return [...ids];
+  setManagedProviderCredentialEnv(apiKeyEnv, value);
 }
 
 /** 校验 apiKey 不含会破坏 HTTP header 的字符（review C2-sec：CRLF injection）。*/
@@ -157,7 +113,8 @@ function validateApiKey(key: string): string | null {
  *   - setKey / removeKey 后实时增量更新 env
  *   - 注入策略：按 provider 的 apiKeyEnv（如 ANTHROPIC_API_KEY）。
  *     多个 provider 共享同一 apiKeyEnv（e.g. codex-cli + openai 都用 OPENAI_API_KEY）时，
- *     **默认 provider 的 key 胜出**——其他共享同 env 的 provider 用同一个值
+ *     仅进程环境兼容层由默认 provider 胜出；Space-owned LLM 调用仍按 Provider identity
+ *     解析并 exact-scope，绝不把这个全局值视为另一个 Provider 的授权。
  *
  * review H4-code（2026-05-17）：原本只 set，不 unset。删 key 后 env 残留——
  * UI 显示 NOT SET 但 SDK 仍能用旧 key 直到进程重启。修复：构造"本次该出现的
@@ -183,7 +140,7 @@ async function injectAllKeysToEnvUnlocked(): Promise<void> {
   //    shell rc 里 export 的 key 是 KodaX/Claude Code 等工具的常用配置方式，删了之后
   //    Space provider.list 会显示"未配置"，与用户预期完全不符 (regression discovered
   //    via e2e 测试发现：zhipu-coding 在 shell 有 ZHIPU_API_KEY 但 list 显示未配置)。
-  restoreManagedEnvs();
+  restoreManagedProviderEnvs();
 
   // 2) 按 account 重新注入；未知 account 自动清掉（旧 dev key / 测试残留）
   //    v0.1.6: 之前只 log warn 不删，导致用户启动每次报一遍"a/b/c/x skipping"。
@@ -197,7 +154,7 @@ async function injectAllKeysToEnvUnlocked(): Promise<void> {
   const accounts = await listConfiguredAccounts(await listKnownProviderIds());
   const orphanAccounts: string[] = [];
   for (const acct of accounts) {
-    const info = await resolveProviderInfo(acct);
+    const info = await resolveProviderCredentialInfo(acct);
     if (!info) {
       orphanAccounts.push(acct);
       continue;
@@ -222,66 +179,12 @@ async function injectAllKeysToEnvUnlocked(): Promise<void> {
   }
   // 4) 默认 provider 的 key 最后注入一次——保证共享 env 时它胜出
   if (defaultId) {
-    const info = await resolveProviderInfo(defaultId);
+    const info = await resolveProviderCredentialInfo(defaultId);
     if (info) {
       const value = await getKey(defaultId);
       if (value) setManagedEnv(info.apiKeyEnv, value);
     }
   }
-}
-
-async function resolveProviderInfo(id: string): Promise<{ apiKeyEnv: string } | undefined> {
-  if (isBuiltinId(id)) {
-    const b = getBuiltin(id);
-    return b ? { apiKeyEnv: b.apiKeyEnv } : undefined;
-  }
-  const c = providerConfigStore.getCustom(id);
-  if (c) return { apiKeyEnv: c.apiKeyEnv };
-  const sdkCustom = (await loadKodaxCustomProviders()).find((p) => p.id === id);
-  return sdkCustom ? { apiKeyEnv: sdkCustom.apiKeyEnv } : undefined;
-}
-
-async function resolveCredentialAccountForProvider(
-  providerId: string,
-  apiKeyEnv: string,
-): Promise<string | undefined> {
-  if (await hasKey(providerId)) return providerId;
-  for (const candidateId of await listKnownProviderIds()) {
-    if (candidateId === providerId) continue;
-    const candidateInfo = await resolveProviderInfo(candidateId);
-    if (candidateInfo?.apiKeyEnv !== apiKeyEnv) continue;
-    if (await hasKey(candidateId)) return candidateId;
-  }
-  return undefined;
-}
-
-export async function ensureProviderKeyInjected(providerId: string): Promise<boolean> {
-  if (providerId === 'mock') return false;
-  await providerConfigStore.load();
-  const info = await resolveProviderInfo(providerId);
-  if (!info) return false;
-  const credentialAccount = await resolveCredentialAccountForProvider(providerId, info.apiKeyEnv);
-  if (!credentialAccount) return false;
-  const value = await getKey(credentialAccount);
-  if (!value) return false;
-  setManagedEnv(info.apiKeyEnv, value);
-  return true;
-}
-
-/**
- * Main-process-only credential lookup for the daemon credential broker.
- * The value is returned only to a trusted callback and never crosses IPC.
- */
-export async function readProviderCredential(providerId: string): Promise<string | undefined> {
-  if (providerId === 'mock') return undefined;
-  await providerConfigStore.load();
-  const info = await resolveProviderInfo(providerId);
-  if (!info) return undefined;
-  const account = await resolveCredentialAccountForProvider(providerId, info.apiKeyEnv);
-  const stored = account ? await getKey(account) : undefined;
-  if (hasNonEmptyEnvValue(stored)) return stored;
-  const fromEnv = process.env[info.apiKeyEnv];
-  return hasNonEmptyEnvValue(fromEnv) ? fromEnv : undefined;
 }
 
 async function resolveKnownProvider(id: string): Promise<KnownProvider | undefined> {
@@ -316,7 +219,7 @@ export function registerProviderChannels(): void {
     // BuiltinProvider 的 apiKeyEnv / defaultModel / models 就是 SDK 的真相，
     // 不再需要每次 provider.list 调用时二次 dynamic-import SDK 取值。
     for (const b of BUILTIN_PROVIDERS) {
-      const source = credentialSource(b.id, b.apiKeyEnv, keychainAccounts);
+      const source = providerCredentialSource(b.id, b.apiKeyEnv, keychainAccounts);
       seenProviderIds.add(b.id);
       list.push({
         id: b.id,
@@ -332,7 +235,7 @@ export function registerProviderChannels(): void {
       });
     }
     for (const c of providerConfigStore.listCustom()) {
-      const source = credentialSource(c.id, c.apiKeyEnv, keychainAccounts);
+      const source = providerCredentialSource(c.id, c.apiKeyEnv, keychainAccounts);
       seenProviderIds.add(c.id);
       list.push({
         id: c.id,
@@ -348,13 +251,14 @@ export function registerProviderChannels(): void {
         baseUrl: c.baseUrl,
         skipBaseUrlValidation: c.skipBaseUrlValidation,
         ...(c.promptCacheAffinity === true ? { promptCacheAffinity: true } : {}),
+        ...(c.imageInput === true ? { imageInput: true } : {}),
         ...(c.contextWindow !== undefined ? { contextWindow: c.contextWindow } : {}),
         ...(c.reasoning !== undefined ? { reasoning: c.reasoning } : {}),
       });
     }
     for (const c of await loadKodaxCustomProviders()) {
       if (seenProviderIds.has(c.id)) continue;
-      const source = credentialSource(c.id, c.apiKeyEnv, keychainAccounts);
+      const source = providerCredentialSource(c.id, c.apiKeyEnv, keychainAccounts);
       seenProviderIds.add(c.id);
       list.push({
         id: c.id,
@@ -370,6 +274,7 @@ export function registerProviderChannels(): void {
         baseUrl: c.baseUrl,
         skipBaseUrlValidation: c.skipBaseUrlValidation,
         ...(c.promptCacheAffinity === true ? { promptCacheAffinity: true } : {}),
+        ...(c.imageInput === true ? { imageInput: true } : {}),
         ...(c.contextWindow !== undefined ? { contextWindow: c.contextWindow } : {}),
         ...(c.reasoning !== undefined ? { reasoning: c.reasoning } : {}),
       });
@@ -412,14 +317,8 @@ export function registerProviderChannels(): void {
     if (!probe) {
       return { ok: false, error: 'unknown provider' };
     }
-    // 轻量 sync 预检：仅对 builtin —— builtin 的 apiKeyEnv 规范唯一，env 没 key 直接给即时反馈。
-    // custom provider 的 apiKeyEnv 可能复用 builtin env 名（如自建 Anthropic 网关用
-    // ANTHROPIC_API_KEY），预检会因别的 provider 设了同名 env 而误判通过 → 不预检，交给 SDK 的
-    // verifyProviderCredential 按 provider 真实凭证返 'unconfigured'，更准确。
-    await ensureProviderKeyInjected(input.providerId);
-    if (isBuiltinId(input.providerId) && !hasEnvKey(probe.apiKeyEnv)) {
-      return { ok: false, error: 'no API key configured' };
-    }
+    // testProvider binds an exact keychain credential without mutating process.env.
+    // The Provider instance owns the authoritative unconfigured/network result.
     return testProvider(probe, { timeoutMs: 8000 });
   });
 
@@ -429,13 +328,8 @@ export function registerProviderChannels(): void {
     if (!provider) {
       throw new Error('unknown providerId');
     }
-    await ensureProviderKeyInjected(input.providerId);
-    const source = credentialSource(
-      input.providerId,
-      provider.apiKeyEnv,
-      (await hasKey(input.providerId)) ? new Set([input.providerId]) : new Set<string>(),
-    );
-    if (source === 'none') {
+    const configured = await ensureProviderKeyInjected(input.providerId);
+    if (!configured) {
       throw new Error('provider is not configured; add an API key before setting it as default');
     }
     await providerConfigStore.setDefault(input.providerId);
@@ -474,6 +368,7 @@ export function registerProviderChannels(): void {
         defaultModel: input.defaultModel,
         models: input.models,
         ...(input.promptCacheAffinity === true ? { promptCacheAffinity: true } : {}),
+        ...(input.imageInput === true ? { imageInput: true } : {}),
         ...(input.contextWindow !== undefined ? { contextWindow: input.contextWindow } : {}),
         ...(input.reasoning !== undefined ? { reasoning: input.reasoning } : {}),
       });
@@ -506,6 +401,7 @@ export function registerProviderChannels(): void {
         defaultModel: input.defaultModel,
         models: input.models,
         ...(input.promptCacheAffinity === true ? { promptCacheAffinity: true } : {}),
+        ...(input.imageInput === true ? { imageInput: true } : {}),
         ...(input.contextWindow !== undefined ? { contextWindow: input.contextWindow } : {}),
         ...(input.reasoning !== undefined ? { reasoning: input.reasoning } : {}),
       };
@@ -678,29 +574,16 @@ export function registerProviderChannels(): void {
         provider as { getReasoningProfile?: (model: string) => ReasoningProfileT }
       ).getReasoningProfile?.(input.model);
       const reasoningProfile = providerReasoningProfile ?? capabilities?.reasoningProfile;
-      const supportedEfforts = reasoningProfile?.supportedEfforts
-        ?.filter((effort) => effort.isUserVisible !== false)
-        .map((effort) => effort.value);
-      const defaultEffort =
-        reasoningProfile?.defaultEffort ??
-        reasoningProfile?.supportedEfforts?.find((effort) => effort.isDefault)?.value;
-      // "Off" is only honorable when the provider doesn't HARD-reject the 'none' effort. kimi-code /
-      // minimax-coding localRejectEfforts=['none','minimal'] → can't disable thinking; the picker
-      // hides "Off" for those (else it mislabels a control the runtime clamps up to the weakest rung).
-      // Anthropic disables via a separate `thinking` flag and doesn't localReject none → stays true.
-      const localRejectEfforts =
-        (reasoningProfile as { localRejectEfforts?: readonly string[] } | undefined)
-          ?.localRejectEfforts ?? [];
-      const canDisableThinking = !localRejectEfforts.includes('none');
+      const reasoning = projectReasoningProfile(reasoningProfile);
       return {
         contextWindow: cw,
         source,
         compactionTriggerPercent: compaction.triggerPercent,
         ...(compaction.triggerTokens ? { compactionTriggerTokens: compaction.triggerTokens } : {}),
         compactionEffectiveTriggerTokens: effectiveTriggerTokens,
-        ...(supportedEfforts && supportedEfforts.length > 0 ? { supportedEfforts } : {}),
-        ...(defaultEffort ? { defaultEffort } : {}),
-        canDisableThinking,
+        ...(reasoning.supportedEfforts ? { supportedEfforts: reasoning.supportedEfforts } : {}),
+        ...(reasoning.defaultEffort ? { defaultEffort: reasoning.defaultEffort } : {}),
+        canDisableThinking: reasoning.canDisableThinking,
       };
     } catch (err) {
       // resolveProvider 不识别 custom_* id 时会 throw — 报 fallback 200k 让 UI 渲染

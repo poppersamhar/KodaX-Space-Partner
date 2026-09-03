@@ -536,7 +536,6 @@ export function BottomBar(): JSX.Element {
   const pendingModel = useAppStore((s) => s.pendingModel);
   const pendingReasoningMode = useAppStore((s) => s.pendingReasoningMode);
   const pendingPermissionMode = useAppStore((s) => s.pendingPermissionMode);
-  const pendingAutoModeEngine = useAppStore((s) => s.pendingAutoModeEngine);
   const pendingAgentMode = useAppStore((s) => s.pendingAgentMode);
   const setPendingProviderId = useAppStore((s) => s.setPendingProviderId);
   const acknowledgePendingSendRun = useAppStore((s) => s.acknowledgePendingSendRun);
@@ -792,7 +791,6 @@ export function BottomBar(): JSX.Element {
       pendingProviderId,
       pendingReasoningMode,
       pendingPermissionMode,
-      pendingAutoModeEngine,
       pendingAgentMode,
       pendingModel,
     });
@@ -836,7 +834,6 @@ export function BottomBar(): JSX.Element {
         ...(model ? { model } : {}),
         reasoningMode: data.reasoningMode,
         permissionMode: data.permissionMode,
-        autoModeEngine: data.autoModeEngine,
         agentMode: data.agentMode,
         surface: currentSurface,
         ...(data.partnerExpert !== undefined ? { partnerExpert: data.partnerExpert } : {}),

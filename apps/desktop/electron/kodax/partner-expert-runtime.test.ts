@@ -9,9 +9,34 @@ import type { PartnerExpertSnapshotT, SessionEvent } from '@kodax-space/space-ip
 // Scope Space and SDK before importing any of their singleton stores or providers.
 process.env.KODAX_TEST_ONBOARDING = `expert-runtime-${randomUUID()}`;
 process.env.KODAX_SPACE_ENABLE_SDK_EXTENSIONS = '0';
+const credentialEnv = 'SPACE_EXPERT_TEST_UNUSED';
+const previousCredential = process.env[credentialEnv];
+process.env[credentialEnv] = 'expert-test-credential';
 const { applySdkHomeEnv, getKodaxDir } = await import('./data-paths.js');
 applySdkHomeEnv();
 const profileDirectory = getKodaxDir();
+await fs.mkdir(profileDirectory, { recursive: true });
+await fs.writeFile(
+  path.join(profileDirectory, 'config.json'),
+  `${JSON.stringify(
+    {
+      customProviders: [
+        {
+          name: 'space-expert-runtime-test',
+          protocol: 'openai',
+          baseUrl: 'https://example.invalid/v1',
+          apiKeyEnv: credentialEnv,
+          model: 'test-model',
+          reasoning: 'none',
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`,
+);
+const keychain = await import('../providers/keychain.js');
+keychain._resetMemoryStoreForTesting();
 const { RealKodaXSession } = await import('./real-session.js');
 const { kodaxHost } = await import('./host.js');
 const { SessionRuntimeStore, setSessionRuntimeStoreForTesting } =
@@ -197,7 +222,10 @@ const unregisterProvider = registerModelProvider(
 after(async () => {
   await awaitLatestCodingMemoryReviewDrain(2_000);
   unregisterProvider();
+  keychain._resetMemoryStoreForTesting();
   await fs.rm(profileDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  if (previousCredential === undefined) delete process.env[credentialEnv];
+  else process.env[credentialEnv] = previousCredential;
 });
 afterEach(async () => {
   beforeResponse = undefined;

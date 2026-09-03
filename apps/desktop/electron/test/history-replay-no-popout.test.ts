@@ -101,7 +101,6 @@ beforeEach(() => {
         provider: 'mock',
         reasoningMode: 'auto',
         permissionMode: 'accept-edits',
-        autoModeEngine: 'llm',
         agentMode: 'ama',
         surface: 'code',
         createdAt: FALLBACK_SENT_AT,
@@ -6701,8 +6700,21 @@ test('pre-admission and stopped-run failures cannot leave later root output one 
   store.appendEvent({
     kind: 'session_error',
     sessionId: SID,
-    error: 'Provider run failed while using a run-scoped credential.',
+    error: 'The provider response was incomplete or incompatible.',
+    failureKind: 'invalid_response',
+    failureDetail: {
+      failureKind: 'invalid_response',
+      stage: 'response_stream',
+      providerErrorCode: 'protocol_mismatch',
+      safeMessage: 'The provider response was incomplete or incompatible.',
+      requestId: 'req_history_failure',
+    },
     turnId: 'turn-stopped',
+    runtimeEvent: {
+      runtimeId: 'runtime-provider-diagnostics',
+      runId: 'run-provider-diagnostics',
+      seq: 1,
+    },
   });
 
   store.appendUserMessage(SID, 'second report', 4_000);
@@ -6733,7 +6745,9 @@ test('pre-admission and stopped-run failures cannot leave later root output one 
     if (message.kind === 'user') return [`user:${message.content}`];
     if (message.kind === 'assistant_text') return [`assistant:${message.text}`];
     if (message.kind === 'system_notice' && message.variant === 'error') {
-      return [`error:${message.text}`];
+      return [
+        `error:${message.text}:${message.failureKind ?? 'none'}:${message.failureDetail?.providerErrorCode ?? 'none'}:${message.runtimeRunId ?? 'none'}`,
+      ];
     }
     return [];
   });
@@ -6742,9 +6756,9 @@ test('pre-admission and stopped-run failures cannot leave later root output one 
     'user:older query',
     'assistant:older answer',
     'user:first report',
-    'error:Session data changed during the read boundary: session.lock',
+    'error:Session data changed during the read boundary: session.lock:none:none:none',
     'user:continue',
-    'error:Provider run failed while using a run-scoped credential.',
+    'error:The provider response was incomplete or incompatible.:invalid_response:protocol_mismatch:run-provider-diagnostics',
     'user:second report',
     'assistant:current answer',
   ]);
@@ -7742,6 +7756,352 @@ test('history overlap folds identical terminal tool turns without losing the rec
   assert.equal(tools[0]?.kind === 'tool_call' ? tools[0].result : undefined, 'file body');
 });
 
+test('certified post-terminal history owns parallel tool order without duplicating the turn', () => {
+  const store = useAppStore.getState();
+  const turnId = 'turn-certified-parallel-tools';
+  const runId = 'run-certified-parallel-tools';
+  const runtimeId = 'runtime-certified-parallel-tools';
+  const runtimeEvent = (seq: number) => ({
+    runtimeId,
+    runId,
+    journalEpoch: 'epoch-certified-parallel-tools',
+    seq,
+  });
+  const messageId = store.appendUserMessage(SID, 'run both checks', 10_000);
+  assert.ok(messageId);
+  store.bindUserMessageRuntimeRun(SID, messageId, runId);
+  for (const event of [
+    {
+      kind: 'session_start' as const,
+      provider: 'mock',
+      turnId,
+      runtimeEvent: runtimeEvent(1),
+    },
+    {
+      kind: 'output_segment_started' as const,
+      responseId: 'response-parallel-tools',
+      providerRequestId: 'provider-parallel-tools',
+      mode: 'append' as const,
+      turnId,
+      runtimeEvent: runtimeEvent(2),
+    },
+    {
+      kind: 'provider_recovery' as const,
+      stage: 'tool_execution',
+      errorClass: 'transient_failure',
+      attempt: 2,
+      maxAttempts: 4,
+      delayMs: 0,
+      recoveryAction: 'retry',
+      ladderStep: 1,
+      fallbackUsed: false,
+      turnId,
+      runtimeEvent: runtimeEvent(3),
+    },
+    {
+      kind: 'tool_start' as const,
+      toolId: 'tool-b',
+      toolName: 'tool-b',
+      input: { order: 2 },
+      turnId,
+      runtimeEvent: runtimeEvent(4),
+    },
+    {
+      kind: 'tool_start' as const,
+      toolId: 'tool-a',
+      toolName: 'tool-a',
+      input: { order: 1 },
+      turnId,
+      runtimeEvent: runtimeEvent(5),
+    },
+    {
+      kind: 'tool_result' as const,
+      toolId: 'tool-a',
+      toolName: 'tool-a',
+      content: 'result-a',
+      turnId,
+      runtimeEvent: runtimeEvent(6),
+    },
+    {
+      kind: 'sidecar_message' as const,
+      message: {
+        source: 'sidecar-verifier' as const,
+        verdict: 'revise' as const,
+        recipient: 'main-agent' as const,
+        delivery: 'synthetic-user-message' as const,
+        content: 'Review the first result.',
+        suggestedFix: 'Keep the canonical tool order.',
+      },
+      turnId,
+      runtimeEvent: runtimeEvent(7),
+    },
+    {
+      kind: 'tool_result' as const,
+      toolId: 'tool-b',
+      toolName: 'tool-b',
+      content: 'result-b',
+      turnId,
+      runtimeEvent: runtimeEvent(8),
+    },
+    {
+      kind: 'session_complete' as const,
+      turnId,
+      runtimeEvent: runtimeEvent(9),
+    },
+  ]) {
+    store.appendEvent({ ...event, sessionId: SID });
+  }
+
+  const certifiedNewestHistory = {
+    replaceLoadedWindow: true,
+    authoritativeNewest: true,
+    sourceRevision: 'source-certified-parallel-tools',
+    conversationStatus: 'resolved' as const,
+    settledRuntimeRuns: [{ runtimeId, runId, generation: 1 }],
+  };
+  store.prependSessionHistory(
+    SID,
+    [
+      {
+        kind: 'user',
+        content: 'run both checks',
+        sentAt: 10_000,
+        entryId: 'entry-parallel-user',
+        canonicalIndex: 0,
+        turnId,
+        turnUserOrdinal: 0,
+      },
+      {
+        kind: 'sidecar_message',
+        message: {
+          source: 'sidecar-verifier',
+          verdict: 'revise',
+          recipient: 'main-agent',
+          delivery: 'synthetic-user-message',
+          content: 'Review the first result.',
+          historical: true,
+        },
+        turnId,
+      },
+      {
+        kind: 'tool_call',
+        toolId: 'tool-a',
+        toolName: 'tool-a',
+        input: { order: 1 },
+        result: 'result-a',
+        entryId: 'entry-parallel-a',
+        canonicalIndex: 1,
+        turnId,
+      },
+      {
+        kind: 'tool_call',
+        toolId: 'tool-b',
+        toolName: 'tool-b',
+        input: { order: 2 },
+        result: 'result-b',
+        entryId: 'entry-parallel-b',
+        canonicalIndex: 2,
+        turnId,
+      },
+    ],
+    FALLBACK_SENT_AT,
+    certifiedNewestHistory,
+  );
+
+  const visible = composeMessages({
+    userMessages: useAppStore.getState().userMessagesBySession[SID] ?? [],
+    events: useAppStore.getState().eventsBySession[SID] ?? [],
+  });
+  assert.deepEqual(
+    visible.flatMap((message) => (message.kind === 'user' ? [message.content] : [])),
+    ['run both checks'],
+  );
+  assert.deepEqual(
+    visible.flatMap((message) => (message.kind === 'tool_call' ? [message.toolName] : [])),
+    ['tool-a', 'tool-b'],
+  );
+  const foldedEvents = useAppStore.getState().eventsBySession[SID] ?? [];
+  assert.equal(foldedEvents.filter((event) => event.kind === 'provider_recovery').length, 1);
+  assert.equal(foldedEvents.filter((event) => event.kind === 'output_segment_started').length, 0);
+  const sidecars = foldedEvents.filter(
+    (event): event is Extract<SessionEvent, { kind: 'sidecar_message' }> =>
+      event.kind === 'sidecar_message',
+  );
+  assert.equal(sidecars.length, 1);
+  assert.equal(sidecars[0]?.message.historical, undefined);
+  assert.equal(sidecars[0]?.message.suggestedFix, 'Keep the canonical tool order.');
+});
+
+test('certified failed history keeps canonical content and the exact live error', () => {
+  const store = useAppStore.getState();
+  const turnId = 'turn-certified-failure';
+  const runId = 'run-certified-failure';
+  const runtimeId = 'runtime-certified-failure';
+  const runtimeEvent = (seq: number) => ({ runtimeId, runId, journalEpoch: 'epoch-failure', seq });
+  const messageId = store.appendUserMessage(SID, 'run the failing check', 11_000);
+  assert.ok(messageId);
+  store.bindUserMessageRuntimeRun(SID, messageId, runId);
+  for (const event of [
+    {
+      kind: 'session_start' as const,
+      provider: 'mock',
+      turnId,
+      runtimeEvent: runtimeEvent(1),
+    },
+    {
+      kind: 'output_segment_started' as const,
+      responseId: 'response-failure',
+      providerRequestId: 'provider-failure',
+      mode: 'append' as const,
+      turnId,
+      runtimeEvent: runtimeEvent(2),
+    },
+    {
+      kind: 'text_delta' as const,
+      text: 'uncommitted partial text',
+      providerRequestId: 'provider-failure',
+      turnId,
+      runtimeEvent: runtimeEvent(3),
+    },
+    {
+      kind: 'session_error' as const,
+      error: 'Provider request failed.',
+      failureKind: 'provider' as const,
+      turnId,
+      runtimeEvent: runtimeEvent(4),
+    },
+  ]) {
+    store.appendEvent({ ...event, sessionId: SID });
+  }
+
+  store.prependSessionHistory(
+    SID,
+    [
+      {
+        kind: 'user',
+        content: 'run the failing check',
+        sentAt: 11_000,
+        entryId: 'entry-failure-user',
+        canonicalIndex: 0,
+        turnId,
+        turnUserOrdinal: 0,
+      },
+      {
+        kind: 'assistant',
+        text: 'persisted partial text',
+        sentAt: 11_100,
+        entryId: 'entry-failure-assistant',
+        canonicalIndex: 1,
+        turnId,
+      },
+    ],
+    FALLBACK_SENT_AT,
+    {
+      replaceLoadedWindow: true,
+      authoritativeNewest: true,
+      sourceRevision: 'source-certified-failure',
+      conversationStatus: 'resolved',
+      settledRuntimeRuns: [{ runtimeId, runId, generation: 1 }],
+    },
+  );
+
+  const visible = composeMessages({
+    userMessages: useAppStore.getState().userMessagesBySession[SID] ?? [],
+    events: useAppStore.getState().eventsBySession[SID] ?? [],
+  });
+  assert.deepEqual(
+    visible.flatMap((message) => (message.kind === 'user' ? [message.content] : [])),
+    ['run the failing check'],
+  );
+  assert.deepEqual(
+    visible.flatMap((message) => (message.kind === 'assistant_text' ? [message.text] : [])),
+    ['persisted partial text'],
+  );
+  assert.deepEqual(
+    visible.flatMap((message) =>
+      message.kind === 'system_notice' && message.variant === 'error' ? [message.text] : [],
+    ),
+    ['Provider request failed.'],
+  );
+});
+
+test('a foreign settled Run cannot authorize destructive canonical replacement', () => {
+  const store = useAppStore.getState();
+  const turnId = 'turn-foreign-authority';
+  const runId = 'run-foreign-authority';
+  const runtimeId = 'runtime-foreign-authority';
+  const runtimeEvent = (seq: number) => ({ runtimeId, runId, journalEpoch: 'epoch-foreign', seq });
+  const messageId = store.appendUserMessage(SID, 'keep uncertain live output', 12_000);
+  assert.ok(messageId);
+  store.bindUserMessageRuntimeRun(SID, messageId, runId);
+  for (const event of [
+    {
+      kind: 'session_start' as const,
+      provider: 'mock',
+      turnId,
+      runtimeEvent: runtimeEvent(1),
+    },
+    {
+      kind: 'output_segment_started' as const,
+      responseId: 'response-foreign-authority',
+      providerRequestId: 'provider-foreign-authority',
+      mode: 'append' as const,
+      turnId,
+      runtimeEvent: runtimeEvent(2),
+    },
+    {
+      kind: 'text_delta' as const,
+      text: 'live output',
+      providerRequestId: 'provider-foreign-authority',
+      turnId,
+      runtimeEvent: runtimeEvent(3),
+    },
+    {
+      kind: 'session_complete' as const,
+      turnId,
+      runtimeEvent: runtimeEvent(4),
+    },
+  ]) {
+    store.appendEvent({ ...event, sessionId: SID });
+  }
+  store.prependSessionHistory(
+    SID,
+    [
+      {
+        kind: 'user',
+        content: 'keep uncertain live output',
+        sentAt: 12_000,
+        entryId: 'entry-foreign-authority-user',
+        canonicalIndex: 0,
+        turnId,
+        turnUserOrdinal: 0,
+      },
+      {
+        kind: 'assistant',
+        text: 'different canonical output',
+        sentAt: 12_100,
+        entryId: 'entry-foreign-authority-assistant',
+        canonicalIndex: 1,
+        turnId,
+      },
+    ],
+    FALLBACK_SENT_AT,
+    {
+      replaceLoadedWindow: true,
+      authoritativeNewest: true,
+      sourceRevision: 'source-foreign-authority',
+      conversationStatus: 'resolved',
+      settledRuntimeRuns: [{ runtimeId, runId: 'another-run', generation: 1 }],
+    },
+  );
+
+  const visibleUsers = composeMessages({
+    userMessages: useAppStore.getState().userMessagesBySession[SID] ?? [],
+    events: useAppStore.getState().eventsBySession[SID] ?? [],
+  }).filter((message) => message.kind === 'user');
+  assert.equal(visibleUsers.length, 2, 'uncertified overlap must remain fail-open');
+});
+
 test('bounded terminal history folds an acknowledged successful multi-iteration turn once', () => {
   const store = useAppStore.getState();
   const turnId = 'turn-successful-multi-iteration';
@@ -8707,7 +9067,6 @@ test('restored conversation keeps real per-message sentAt so workflow notices ar
           provider: 'mock',
           reasoningMode: 'auto',
           permissionMode: 'accept-edits',
-          autoModeEngine: 'llm',
           agentMode: 'ama',
           surface: 'code',
           createdAt: LATE_CREATED,
@@ -9492,7 +9851,6 @@ test('forked restored history cannot re-enter as live events after canonical hyd
     provider: 'mock',
     reasoningMode: 'auto',
     permissionMode: 'accept-edits',
-    autoModeEngine: 'llm',
     agentMode: 'ama',
     surface: 'code',
     createdAt: FALLBACK_SENT_AT + 400,
@@ -9574,7 +9932,6 @@ test('an immediate fork query stays after inherited history when hydration resol
     provider: 'mock',
     reasoningMode: 'auto',
     permissionMode: 'accept-edits',
-    autoModeEngine: 'llm',
     agentMode: 'ama',
     surface: 'code',
     createdAt: FALLBACK_SENT_AT + 200,
@@ -9631,7 +9988,6 @@ test('fork classifies a source-live optimistic prefix as inherited child history
     provider: 'mock',
     reasoningMode: 'auto',
     permissionMode: 'accept-edits',
-    autoModeEngine: 'llm',
     agentMode: 'ama',
     surface: 'code',
     createdAt: FALLBACK_SENT_AT + 200,
@@ -9719,7 +10075,6 @@ test('fork keeps a mixed restored and source-live prefix single after child hydr
     provider: 'mock',
     reasoningMode: 'auto',
     permissionMode: 'accept-edits',
-    autoModeEngine: 'llm',
     agentMode: 'ama',
     surface: 'code',
     createdAt: FALLBACK_SENT_AT + 400,

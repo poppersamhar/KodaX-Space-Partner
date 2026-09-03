@@ -4,6 +4,7 @@ import type {
   SpaceActionValueT,
   Surface,
 } from '@kodax-space/space-ipc-schema';
+import { reasoningModeSchema } from '@kodax-space/space-ipc-schema';
 
 export interface SpaceActionDescriptor {
   readonly id: SpaceActionIdT;
@@ -12,8 +13,9 @@ export interface SpaceActionDescriptor {
   readonly effect: 'ui-ephemeral' | 'preference-write';
   readonly surfaces: readonly Surface[];
   readonly planModeAllowed: boolean;
-  readonly valueType: 'boolean' | 'enum';
+  readonly valueType: 'boolean' | 'enum' | 'string';
   readonly allowedValues?: readonly string[];
+  readonly validateValue?: (value: unknown) => boolean;
   readonly aliases: readonly string[];
 }
 
@@ -96,12 +98,12 @@ export const SPACE_ACTION_DESCRIPTORS: readonly SpaceActionDescriptor[] = [
   {
     id: 'settings.reasoningMode.setDefault',
     title: 'Set default reasoning mode',
-    description: 'Set the default reasoning mode used by new sessions.',
+    description: 'Set the SDK reasoning effort used by new sessions.',
     effect: 'preference-write',
     surfaces: ['code'],
     planModeAllowed: false,
-    valueType: 'enum',
-    allowedValues: ['off', 'auto', 'quick', 'balanced', 'deep'],
+    valueType: 'string',
+    validateValue: (value) => reasoningModeSchema.safeParse(value).success,
     aliases: ['reasoning', 'thinking', 'deep reasoning', 'effort default'],
   },
 ] as const;
@@ -119,6 +121,7 @@ export function validateSpaceActionArgs(
   args: SpaceActionArgsT,
 ): args is { value: SpaceActionValueT } {
   if (descriptor.valueType === 'boolean') return typeof args.value === 'boolean';
+  if (descriptor.validateValue) return descriptor.validateValue(args.value);
   return typeof args.value === 'string' && Boolean(descriptor.allowedValues?.includes(args.value));
 }
 

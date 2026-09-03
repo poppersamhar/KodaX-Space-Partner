@@ -4,7 +4,6 @@ import path from 'node:path';
 import { z } from 'zod';
 import type {
   AgentMode,
-  AutoModeEngine,
   PartnerExpertSnapshotT,
   PartnerConnectorSnapshotT,
   PermissionMode,
@@ -13,6 +12,7 @@ import type {
 import {
   partnerExpertSnapshotSchema,
   partnerConnectorSnapshotsSchema,
+  reasoningModeSchema,
 } from '@kodax-space/space-ipc-schema';
 import { getSpaceDataDir } from './data-paths.js';
 import { replaceFileIfUnchanged, writeNewFileExclusive } from './atomic-file.js';
@@ -30,9 +30,10 @@ const sessionRuntimeSchema = z
     provider: z.string().min(1).max(128).optional(),
     model: z.string().min(1).max(512).optional(),
     thinking: z.boolean().optional(),
-    permissionMode: z.enum(['plan', 'accept-edits', 'auto']).optional(),
+    permissionMode: z.enum(['plan', 'accept-edits', 'auto', 'full-access']).optional(),
+    /** Legacy v0.7.x input: accepted only so the next write can remove it. */
     autoModeEngine: z.enum(['llm', 'rules']).optional(),
-    reasoningMode: z.enum(['off', 'auto', 'quick', 'balanced', 'deep']).optional(),
+    reasoningMode: reasoningModeSchema.optional(),
     agentMode: persistedAgentModeSchema.optional(),
     partnerExpert: partnerExpertSnapshotSchema.optional(),
     partnerConnectors: partnerConnectorSnapshotsSchema.optional(),
@@ -45,7 +46,6 @@ export interface SessionRuntimeSettings {
   readonly model?: string;
   readonly thinking?: boolean;
   readonly permissionMode?: PermissionMode;
-  readonly autoModeEngine?: AutoModeEngine;
   readonly reasoningMode?: ReasoningMode;
   readonly agentMode?: AgentMode;
   readonly partnerExpert?: PartnerExpertSnapshotT;
@@ -68,7 +68,7 @@ type RuntimeFileState =
       readonly kind: 'valid';
       readonly settings: SessionRuntimeSettings;
       readonly updatedAt: string;
-      readonly needsAgentModeMigration: boolean;
+      readonly needsSettingsMigration: boolean;
       readonly hash: string;
     }
   | { readonly kind: 'invalid'; readonly reason: string };
@@ -83,7 +83,6 @@ function settingsFromParsed(parsed: z.infer<typeof sessionRuntimeSchema>): Sessi
     ...(parsed.model !== undefined ? { model: parsed.model } : {}),
     ...(parsed.thinking !== undefined ? { thinking: parsed.thinking } : {}),
     ...(parsed.permissionMode !== undefined ? { permissionMode: parsed.permissionMode } : {}),
-    ...(parsed.autoModeEngine !== undefined ? { autoModeEngine: parsed.autoModeEngine } : {}),
     ...(parsed.reasoningMode !== undefined ? { reasoningMode: parsed.reasoningMode } : {}),
     ...(parsed.agentMode !== undefined ? { agentMode: parsed.agentMode } : {}),
     ...(parsed.partnerExpert !== undefined ? { partnerExpert: parsed.partnerExpert } : {}),
@@ -99,6 +98,15 @@ function hasRetiredAgentMode(raw: unknown): boolean {
   return agentMode === 'amaw' || agentMode === 'ama-workflow';
 }
 
+function hasRetiredAutoModeSettings(raw: unknown): boolean {
+  return Boolean(
+    raw &&
+      typeof raw === 'object' &&
+      !Array.isArray(raw) &&
+      Object.prototype.hasOwnProperty.call(raw, 'autoModeEngine'),
+  );
+}
+
 function buildSessionRuntimeFile(
   sessionId: string,
   settings: SessionRuntimeSettings,
@@ -111,7 +119,6 @@ function buildSessionRuntimeFile(
     ...(settings.model !== undefined ? { model: settings.model } : {}),
     ...(settings.thinking !== undefined ? { thinking: settings.thinking } : {}),
     ...(settings.permissionMode !== undefined ? { permissionMode: settings.permissionMode } : {}),
-    ...(settings.autoModeEngine !== undefined ? { autoModeEngine: settings.autoModeEngine } : {}),
     ...(settings.reasoningMode !== undefined ? { reasoningMode: settings.reasoningMode } : {}),
     ...(settings.agentMode !== undefined ? { agentMode: settings.agentMode } : {}),
     ...(settings.partnerExpert !== undefined ? { partnerExpert: settings.partnerExpert } : {}),
@@ -156,7 +163,7 @@ export class SessionRuntimeStore {
         kind: 'valid',
         settings: settingsFromParsed(parsed.data),
         updatedAt: parsed.data.updatedAt,
-        needsAgentModeMigration: hasRetiredAgentMode(json),
+        needsSettingsMigration: hasRetiredAgentMode(json) || hasRetiredAutoModeSettings(json),
         hash: sha256(bytes),
       };
     } catch (err) {
@@ -174,13 +181,13 @@ export class SessionRuntimeStore {
     if (!filePath) return null;
     const state = await this.inspect(sessionId, filePath);
     if (state.kind === 'valid') {
-      if (state.needsAgentModeMigration) {
+      if (state.needsSettingsMigration) {
         await this.enqueueSessionWrite(sessionId, async () => {
           try {
-            await this.migrateRetiredAgentModeUnlocked(sessionId, filePath);
+            await this.migrateRetiredSettingsUnlocked(sessionId, filePath);
           } catch (err) {
             console.warn(
-              `[SessionRuntimeStore] retired agent-mode migration failed for ${sessionId}:`,
+              `[SessionRuntimeStore] retired settings migration failed for ${sessionId}:`,
               err instanceof Error ? err.message : err,
             );
           }
@@ -242,12 +249,12 @@ export class SessionRuntimeStore {
     }
   }
 
-  private async migrateRetiredAgentModeUnlocked(
+  private async migrateRetiredSettingsUnlocked(
     sessionId: string,
     filePath: string,
   ): Promise<void> {
     const current = await this.inspect(sessionId, filePath);
-    if (current.kind !== 'valid' || !current.needsAgentModeMigration) return;
+    if (current.kind !== 'valid' || !current.needsSettingsMigration) return;
     const bytes = Buffer.from(
       JSON.stringify(
         buildSessionRuntimeFile(sessionId, current.settings, current.updatedAt),

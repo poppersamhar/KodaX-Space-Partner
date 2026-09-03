@@ -149,11 +149,18 @@ const queued = {
   },
 } as const;
 
-test('Runtime Run projection preserves credential-safe provider failure classification', () => {
+test('Runtime Run projection preserves credential-safe provider failure details', () => {
   const projected = projectRuntimeRun({
     ...running,
     phase: 'failed',
     endedAt: '2026-08-21T08:00:00.000Z',
+    failureDetail: {
+      failureKind: 'network',
+      stage: 'transport',
+      providerErrorCode: 'tls_error',
+      safeMessage: 'The secure provider connection failed.',
+      requestId: 'req_projection',
+    },
     terminal: {
       revision: 1,
       kind: 'failed',
@@ -164,6 +171,197 @@ test('Runtime Run projection preserves credential-safe provider failure classifi
   });
 
   assert.equal(projected.failureKind, 'network');
+  assert.equal(projected.terminalReason, 'The secure provider connection failed.');
+  assert.deepEqual(projected.failureDetail, {
+    failureKind: 'network',
+    stage: 'transport',
+    providerErrorCode: 'tls_error',
+    safeMessage: 'The secure provider connection failed.',
+    requestId: 'req_projection',
+  });
+  assert.equal(projected.retriable, true);
+  assert.equal(projected.action, 'check_network');
+});
+
+test('Runtime Run projection omits malformed optional identifiers', () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args);
+  const projected = (() => {
+    try {
+      return projectRuntimeRun({
+        ...running,
+        phase: 'failed',
+        endedAt: '2026-08-21T08:00:00.000Z',
+        failureDetail: {
+          failureKind: 'provider',
+          stage: 'transport',
+          providerErrorCode: 'provider_error',
+          safeMessage: 'The provider request failed.',
+          httpStatus: 900,
+          upstreamErrorCode: 'unsafe/upstream value',
+          requestId: 'unsafe=request value',
+          retryAfterMs: -1,
+          contextTokens: { required: -1, available: 10 },
+        },
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+  })();
+
+  assert.deepEqual(projected.failureDetail, {
+    failureKind: 'provider',
+    stage: 'transport',
+    providerErrorCode: 'provider_error',
+    safeMessage: 'The provider request failed.',
+  });
+  assert.deepEqual(warnings, [
+    [
+      '[runtime] sanitized malformed failureDetail',
+      {
+        eventType: 'runtime.run_projection',
+        runId: 'run_active',
+        issuePaths: [
+          'httpStatus',
+          'upstreamErrorCode',
+          'requestId',
+          'retryAfterMs',
+          'contextTokens.required',
+        ],
+      },
+    ],
+  ]);
+  assert.doesNotMatch(JSON.stringify(warnings), /unsafe\/upstream|unsafe=request/);
+});
+
+test('Runtime Run projection does not expose legacy terminal or error text', () => {
+  const projected = projectRuntimeRun({
+    ...running,
+    phase: 'failed',
+    terminal: {
+      revision: 1,
+      kind: 'failed',
+      code: 'run_failed',
+      message: 'Authorization: Bearer sk-legacy-secret',
+      effectOutcome: 'known',
+      failureKind: 'provider',
+    },
+    error: 'upstream response body contains a private prompt',
+  });
+
+  assert.equal(projected.terminalReason, 'Runtime run failed');
+  assert.doesNotMatch(JSON.stringify(projected), /sk-legacy-secret|private prompt/);
+});
+
+test('Runtime Run projection rejects malformed required details with safe diagnostics', () => {
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args);
+  const projected = (() => {
+    try {
+      return projectRuntimeRun({
+        ...running,
+        phase: 'failed',
+        failureDetail: {
+          failureKind: 'provider',
+          stage: 'secret invalid stage',
+          providerErrorCode: 'provider_error',
+          safeMessage: 'must-not-cross-projection-boundary',
+        },
+      } as unknown as RuntimeStatusSnapshot['runs'][number]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  })();
+
+  assert.equal(projected.terminalReason, 'Runtime run failed');
+  assert.equal(projected.failureDetail, undefined);
+  assert.deepEqual(warnings, [
+    [
+      '[runtime] sanitized malformed failureDetail',
+      {
+        eventType: 'runtime.run_projection',
+        runId: 'run_active',
+        issuePaths: ['stage'],
+      },
+    ],
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify({ projected, warnings }),
+    /secret invalid stage|must-not-cross-projection-boundary/,
+  );
+});
+
+test('Runtime Run projection exposes a stable delayed retry action', () => {
+  const projected = projectRuntimeRun({
+    ...running,
+    phase: 'failed',
+    endedAt: '1970-01-01T00:33:20.000Z',
+    failureDetail: {
+      failureKind: 'rate_limit',
+      stage: 'transport',
+      providerErrorCode: 'rate_limited',
+      safeMessage: 'The provider rate limit was reached.',
+      retryAfterMs: 2_500,
+    },
+  });
+
+  assert.equal(projected.retriable, true);
+  assert.equal(projected.action, 'retry');
+  assert.equal(projected.retryAvailableAt, 2_002_500);
+});
+
+test('Runtime Run projection never offers a delayed retry without a stable terminal time', () => {
+  const projected = projectRuntimeRun({
+    ...running,
+    phase: 'failed',
+    endedAt: 'not-a-timestamp',
+    failureDetail: {
+      failureKind: 'rate_limit',
+      stage: 'transport',
+      providerErrorCode: 'rate_limited',
+      safeMessage: 'The provider rate limit was reached.',
+      retryAfterMs: 2_500,
+    },
+  });
+
+  assert.equal(projected.retriable, false);
+  assert.equal(projected.action, undefined);
+  assert.equal(projected.retryAvailableAt, undefined);
+});
+
+test('run.updated keeps settlement uncertainty active and publishes its safe diagnostics', () => {
+  const reducer = new CoderSessionProjectionReducer(
+    projectRuntimeSessionSnapshot(observation, []),
+    observation.runs,
+  );
+  const failureDetail = {
+    failureKind: 'runtime_cleanup',
+    stage: 'runtime_settlement',
+    providerErrorCode: 'runtime_settlement_failed',
+    safeMessage: 'The Runtime could not confirm settlement.',
+    requestId: 'req_settlement',
+  } as const;
+
+  const update = reducer.apply({
+    id: 'event_settlement_unknown',
+    seq: 42,
+    cursor: { sessionId: 's_code', journalEpoch: 'journal_epoch_shared', seq: 42 },
+    time: '2026-08-28T08:00:00.000Z',
+    sessionId: 's_code',
+    runId: 'run_active',
+    type: 'run.updated',
+    payload: {
+      ...running,
+      phase: 'unknown',
+      failureDetail,
+    },
+  } as RuntimeTypedEvent);
+
+  assert.equal(update?.change.domain, 'run');
+  assert.equal(reducer.snapshot().activeRun?.phase, 'unknown');
+  assert.deepEqual(reducer.snapshot().activeRun?.failureDetail, failureDetail);
 });
 
 const permission = {
@@ -258,9 +456,7 @@ const observation = {
       effort: 'high',
       thinking: true,
       agentMode: 'ama',
-      autoModeEngine: 'rules',
       autoModeClassifierModel: 'fast-classifier',
-      autoModeTimeoutMs: 12_000,
     },
   },
   runs: [running, queued],
@@ -424,9 +620,7 @@ test('atomic observation maps run, draft, tool, Todo, and interaction truth', ()
       effort: 'high',
       thinking: true,
       agentMode: 'ama',
-      autoModeEngine: 'rules',
       autoModeClassifierModel: 'fast-classifier',
-      autoModeTimeoutMs: 12_000,
     },
   });
   assert.equal(projection.managedTask?.phase, 'verifying');

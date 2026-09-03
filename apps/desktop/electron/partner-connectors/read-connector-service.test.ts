@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PartnerConnectorService, type PartnerConnectorContext } from './service.js';
@@ -401,13 +401,15 @@ test('read-only host rejects skipped guards, cross-provider writes and revoked r
 test('real WeCom adapter composes with host guards and retains both approved reference forms', async (t) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'partner-wecom-compose-')));
   t.after(() => rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, 'fixture-native');
+  await writeFile(executable, 'fixture', { mode: 0o700 });
   let businessReads = 0;
   const adapter = createWecomConnector({
     root,
     platform: 'darwin',
     arch: 'arm64',
-    verifyBinary: async (file) => file === process.execPath,
-    installer: { executable: process.execPath, install: async () => process.execPath },
+    verifyBinary: async (file) => file === executable,
+    installer: { executable, install: async () => executable },
     processFactory: () => async (input) => {
       await input.beforeSpawn?.();
       input.assertSpawn?.();

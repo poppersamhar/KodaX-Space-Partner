@@ -6,7 +6,6 @@ import test from 'node:test';
 
 import { projectEmbeddedMidTurnUserMessages, RealKodaXSession } from '../kodax/real-session.js';
 import { runtimeHostAdapter } from '../kodax/runtime-host-adapter.js';
-import { setUserConfigImpl } from '../kodax/user-config.js';
 
 async function waitForTest(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -1228,7 +1227,7 @@ test('active daemon run preserves interrupt intent and requires explicit after-t
     sessionId: 'session_restored',
     projectRoot: process.cwd(),
     provider: 'test-provider',
-    reasoningMode: 'balanced',
+    reasoningMode: 'auto',
     permissionMode: 'accept-edits',
     surface: 'code',
     emit: () => undefined,
@@ -1354,11 +1353,11 @@ test('active daemon run preserves interrupt intent and requires explicit after-t
         provider: 'test-provider',
         model: null,
         thinking: null,
-        reasoningMode: 'balanced',
+        effort: null,
+        reasoningMode: null,
         permissionMode: 'accept-edits',
         executionCwd: process.cwd(),
         agentMode: 'ama',
-        autoModeEngine: 'llm',
       },
     },
   );
@@ -1374,11 +1373,6 @@ test('active daemon run preserves interrupt intent and requires explicit after-t
 });
 
 test('daemon run refreshes settings and transports trusted Skill context without hook commands', async (t) => {
-  setUserConfigImpl({
-    loadConfig: (() => ({ sandbox: { envPass: ['GH_TOKEN', 'GITHUB_TOKEN'] } })) as never,
-    registerCustomProviders: () => undefined,
-  });
-  t.after(() => setUserConfigImpl(null));
   const adapter = runtimeHostAdapter as unknown as Record<string, unknown>;
   const patchedMethods = new Map<string, { readonly existed: boolean; readonly value: unknown }>();
   const patchMethod = (name: string, value: unknown): void => {
@@ -1427,7 +1421,6 @@ test('daemon run refreshes settings and transports trusted Skill context without
     provider: 'test-provider',
     reasoningMode: 'deep',
     permissionMode: 'auto',
-    autoModeEngine: 'llm',
     surface: 'code',
     emit: () => undefined,
     requestPermission: async () => 'allow_once',
@@ -1479,11 +1472,11 @@ test('daemon run refreshes settings and transports trusted Skill context without
         provider: 'test-provider',
         model: null,
         thinking: null,
-        reasoningMode: 'deep',
+        effort: null,
+        reasoningMode: null,
         permissionMode: 'auto',
         executionCwd: process.cwd(),
         agentMode: 'ama',
-        autoModeEngine: 'llm',
       },
     },
   );
@@ -1497,7 +1490,6 @@ test('daemon run refreshes settings and transports trusted Skill context without
           readonly skillInvocation?: Record<string, unknown>;
         };
         readonly modelOverride?: string;
-        readonly sandbox?: { readonly envPass?: readonly string[] };
       }
     | undefined;
   assert.ok(options?.context?.excludeTools?.includes('exit_plan_mode'));
@@ -1509,7 +1501,6 @@ test('daemon run refreshes settings and transports trusted Skill context without
     enforceAtRuntime: true,
   });
   assert.equal(options?.modelOverride, 'skill-model');
-  assert.deepEqual(options?.sandbox?.envPass, ['GH_TOKEN', 'GITHUB_TOKEN']);
   assert.deepEqual(managedRunInput?.operation, { operationId: 'space-send-start-1' });
   assert.deepEqual(managedRunInput?.input, [
     { type: 'text', text: 'prepared daemon Skill prompt' },
@@ -1720,7 +1711,6 @@ test('disposing Space during daemon run admission detaches without aborting the 
     model: 'glm-5.2',
     reasoningMode: 'deep',
     permissionMode: 'auto',
-    autoModeEngine: 'llm',
     surface: 'code',
     emit: () => undefined,
     requestPermission: async () => 'allow_once',
@@ -1804,7 +1794,6 @@ test('Runtime cancel before admission emits a local terminal and never starts a 
     model: 'glm-5.2',
     reasoningMode: 'deep',
     permissionMode: 'auto',
-    autoModeEngine: 'llm',
     surface: 'code',
     emit: (event) => events.push(event),
     requestPermission: async () => 'allow_once',
@@ -1913,7 +1902,6 @@ test('Runtime cancel without a visible Run ID waits for in-flight admission', as
     model: 'glm-5.2',
     reasoningMode: 'deep',
     permissionMode: 'auto',
-    autoModeEngine: 'llm',
     surface: 'code',
     emit: (event) => events.push(event),
     requestPermission: async () => 'allow_once',
@@ -2021,7 +2009,6 @@ test('a stale exact Stop does not cancel a preparing successor admission', async
     model: 'glm-5.2',
     reasoningMode: 'deep',
     permissionMode: 'auto',
-    autoModeEngine: 'llm',
     surface: 'code',
     emit: () => undefined,
     requestPermission: async () => 'allow_once',

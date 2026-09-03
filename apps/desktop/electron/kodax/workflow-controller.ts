@@ -22,12 +22,15 @@ import { getSpaceDataDir } from './data-paths.js';
 import { pushToRenderer } from '../ipc/push.js';
 import { artifactStore } from '../artifact/store.js';
 import { detectArtifactKind } from '../artifact/workflow-artifact-bridge.js';
-import { resolveWireEffort, type ReasoningProfileLike } from './reasoning-effort.js';
+import { resolveSpaceWireEffort } from './reasoning-effort.js';
 import { workflowPolicyStore, buildWorkflowHostPolicy } from './workflow-policy.js';
 import { externalAgentGateway } from './external-agent-gateway.js';
 import { repoIntelContextFields } from './repo-intel-gate.js';
 import { replaceFileWithoutFollowingAliases } from './atomic-file.js';
-import { loadKodaxRunConfig } from './user-config.js';
+import {
+  runDetachedWorkflowWithProviderCredentialLease,
+  runWithExactProviderCredential,
+} from '../providers/credential-scope.js';
 
 // ---- SDK 形状(只取本控制器用到的子集,避免硬依赖 SDK 类型导出) ----
 interface SdkProcessSnapshot {
@@ -47,9 +50,15 @@ export interface WorkflowRunManagerLike {
     activeOnly?: boolean;
     limit?: number;
   }): readonly SdkProcessSnapshot[];
-  /** F063 启动:把已解析的 module + options 提交到进程管理器,事件经订阅回流。可能异步。 */
-  startFromOptions(input: Record<string, unknown>): unknown | Promise<unknown>;
+  /** F063 启动:把已解析的 module + options 提交到进程管理器,事件经订阅回流。 */
+  startFromOptions(input: Record<string, unknown>): {
+    readonly runId: string;
+    readonly done: Promise<unknown>;
+  };
 }
+
+type RunProviderOperation = typeof runWithExactProviderCredential;
+type RunDetachedProviderOperation = typeof runDetachedWorkflowWithProviderCredentialLease;
 
 // ---- F063 库 / 启动 类型 ----
 export interface WorkflowMetaLite {
@@ -1086,6 +1095,8 @@ export class WorkflowController {
     private readonly originsFile: string = path.join(getSpaceDataDir(), 'workflow-origins.json'),
     /** Space 自有 run base dir——F063 启动 run 与 F062 durable 控制(delete/prune)共用。 */
     private readonly runBaseDir: string = path.join(path.dirname(originsFile), 'workflow-runs'),
+    private readonly runProviderOperation: RunProviderOperation = runWithExactProviderCredential,
+    private readonly runDetachedProviderOperation: RunDetachedProviderOperation = runDetachedWorkflowWithProviderCredentialLease,
   ) {}
 
   getRunBaseDir(): string {
@@ -1385,7 +1396,8 @@ export class WorkflowController {
     const partnerBlocked = this.assertCoderSurface(input.session);
     if (partnerBlocked) return partnerBlocked;
     const sdk = await loadCodingSdk();
-    if (!sdk || !this.manager) return { error: 'workflow runtime unavailable' };
+    const manager = this.manager;
+    if (!sdk || !manager) return { error: 'workflow runtime unavailable' };
     let module: unknown;
     try {
       module =
@@ -1427,35 +1439,36 @@ export class WorkflowController {
     const runId = `wf_${randomUUID()}`;
     const runDir = path.join(this.runBaseDir, runId);
     try {
-      // await:startFromOptions 可能异步（建 run 目录/注册进程/spawn）。不 await 会让
-      // 异步错误变 unhandled rejection，且 registerOrigin 抢跑在启动确认之前（ghost run）。
-      await this.manager.startFromOptions({
-        module,
-        args: input.args ?? {},
-        // workflow 子 agent 用精简 options（无 session block）——run 是**短命**的，自带
-        // run 目录（run.json/events.jsonl/artifacts），不写对话 lineage。刻意设计。
-        options,
-        runId,
-        runDir,
-        processMetadata: {
-          displayName: meta?.name,
-          source: 'sdk',
-          hostMetadata: {
-            ...this.hostMetadata(s, patternsFromWorkflowModule(module)),
-            ...(resolvedAgentTarget
-              ? {
-                  externalAgentId: resolvedAgentTarget.agentId,
-                  ...(resolvedAgentTarget.expectedConfigurationRevision
-                    ? {
-                        externalAgentConfigurationRevision:
-                          resolvedAgentTarget.expectedConfigurationRevision,
-                      }
-                    : {}),
-                }
-              : {}),
+      // Detached Workflow 必须使用 SDK 的 derived lease；exact scope 会在 handle 返回时失效。
+      await this.runDetachedProviderOperation(s.provider, runId, () =>
+        manager.startFromOptions({
+          module,
+          args: input.args ?? {},
+          // workflow 子 agent 用精简 options（无 session block）——run 是**短命**的，自带
+          // run 目录（run.json/events.jsonl/artifacts），不写对话 lineage。刻意设计。
+          options,
+          runId,
+          runDir,
+          processMetadata: {
+            displayName: meta?.name,
+            source: 'sdk',
+            hostMetadata: {
+              ...this.hostMetadata(s, patternsFromWorkflowModule(module)),
+              ...(resolvedAgentTarget
+                ? {
+                    externalAgentId: resolvedAgentTarget.agentId,
+                    ...(resolvedAgentTarget.expectedConfigurationRevision
+                      ? {
+                          externalAgentConfigurationRevision:
+                            resolvedAgentTarget.expectedConfigurationRevision,
+                        }
+                      : {}),
+                  }
+                : {}),
+            },
           },
-        },
-      });
+        }),
+      );
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -1477,13 +1490,14 @@ export class WorkflowController {
     const partnerBlocked = this.assertCoderSurface(session);
     if (partnerBlocked) return partnerBlocked;
     const sdk = await loadCodingSdk();
-    if (!sdk?.generateWorkflowFromOptions) return { error: 'workflow generation unavailable' };
+    const generateWorkflow = sdk?.generateWorkflowFromOptions;
+    if (!generateWorkflow) return { error: 'workflow generation unavailable' };
     let generated: WorkflowGenerationResultLite;
     try {
-      generated = await sdk.generateWorkflowFromOptions({
-        request,
-        options: await this.launchOptions(session),
-      });
+      const options = await this.launchOptions(session);
+      generated = await this.runProviderOperation(session.provider, () =>
+        generateWorkflow({ request, options }),
+      );
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -1617,7 +1631,8 @@ export class WorkflowController {
       return { error: 'revise --replace requires a saved workflow name target' };
     }
     const sdk = await loadCodingSdk();
-    if (!sdk?.generateWorkflowFromOptions) return { error: 'workflow revision unavailable' };
+    const generateWorkflow = sdk?.generateWorkflowFromOptions;
+    if (!generateWorkflow) return { error: 'workflow revision unavailable' };
     let capsule: WorkflowCapsuleLite;
     try {
       if (input.saved) {
@@ -1650,10 +1665,10 @@ export class WorkflowController {
     });
     let generated: WorkflowGenerationResultLite;
     try {
-      generated = await sdk.generateWorkflowFromOptions({
-        request: revisionRequest,
-        options: await this.launchOptions(input.session),
-      });
+      const options = await this.launchOptions(input.session);
+      generated = await this.runProviderOperation(input.session.provider, () =>
+        generateWorkflow({ request: revisionRequest, options }),
+      );
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -1786,24 +1801,7 @@ export class WorkflowController {
   // ---- 内部 ----
 
   private async launchOptions(s: LaunchSession): Promise<Record<string, unknown>> {
-    // C4/C5: resolve the effort against the provider's real ladder (workflow child agents hit the
-    // same localReject-crash / low-ceiling hazards as the chat path).
-    let reasoningProfile: ReasoningProfileLike | undefined;
-    try {
-      const sdk = await loadCodingSdk();
-      const resolveProvider = (
-        sdk as unknown as {
-          resolveProvider?: (id: string) =>
-            | {
-                getReasoningProfile?: (model?: string) => ReasoningProfileLike | undefined;
-              }
-            | undefined;
-        } | null
-      )?.resolveProvider;
-      reasoningProfile = resolveProvider?.(s.provider)?.getReasoningProfile?.(s.model ?? undefined);
-    } catch {
-      reasoningProfile = undefined;
-    }
+    const sdk = await loadCodingSdk();
     // Also exclude efforts the wire layer already rejected this process (parity with the chat path),
     // so a previously-400'd effort isn't re-sent on every workflow run.
     const rejectedEfforts =
@@ -1822,10 +1820,6 @@ export class WorkflowController {
     // key is absent, and the value is threaded to each child via ChildExecutorOptions
     // .parentOptions. repoIntelContextFields() is fail-closed (see repo-intel-gate.ts).
     const repoIntelCtx = await repoIntelContextFields();
-    // Workflow Panel / slash-command launches are independent SDK Runs. Pass an
-    // explicit allow-list (including empty) so they match chat, Partner, legacy,
-    // and daemon sessions without falling back to process-global env state.
-    const runConfig = await loadKodaxRunConfig();
     const externalAgentBinding = await externalAgentGateway.getBinding({
       actorId: 'space:workflow',
       projectId: s.projectRoot,
@@ -1833,7 +1827,13 @@ export class WorkflowController {
     });
     return {
       provider: s.provider,
-      effort: resolveWireEffort(s.reasoningMode, reasoningProfile, rejectedEfforts),
+      effort: resolveSpaceWireEffort({
+        provider: s.provider,
+        ...(s.model ? { model: s.model } : {}),
+        reasoningMode: s.reasoningMode,
+        rejectedEfforts,
+        resolveWireEffort: sdk?.resolveWireEffort,
+      }),
       agentMode: s.agentMode,
       ...(s.model ? { model: s.model } : {}),
       // C9: agentProfile.surface makes create_artifact's resolveSessionRunContext succeed for
@@ -1851,7 +1851,6 @@ export class WorkflowController {
       // in buildWorkflowHostPolicy — mirrors the AMA run_workflow path in real-session.ts.
       workflowHostPolicy: buildWorkflowHostPolicy(policy),
       workflow: { maxConcurrency: policy.maxConcurrency },
-      sandbox: runConfig.sandbox,
     };
   }
 
@@ -1877,25 +1876,29 @@ export class WorkflowController {
     readonly patterns?: readonly string[];
     readonly processMetadata?: Record<string, unknown>;
   }): Promise<WorkflowStartResult> {
-    if (!this.manager) return { error: 'workflow runtime unavailable' };
+    const manager = this.manager;
+    if (!manager) return { error: 'workflow runtime unavailable' };
     const runId = `wf_${randomUUID()}`;
     const runDir = path.join(this.runBaseDir, runId);
     const displayName = workflowNameFromModule(input.module);
     try {
-      await this.manager.startFromOptions({
-        module: input.module,
-        args: input.args ?? {},
-        options: await this.launchOptions(input.session),
-        runId,
-        runDir,
-        ...(input.scriptSnapshot ? { scriptSnapshot: input.scriptSnapshot } : {}),
-        processMetadata: {
-          displayName,
-          ...input.processMetadata,
-          source: input.source,
-          hostMetadata: this.hostMetadata(input.session, input.patterns),
-        },
-      });
+      const options = await this.launchOptions(input.session);
+      await this.runDetachedProviderOperation(input.session.provider, runId, () =>
+        manager.startFromOptions({
+          module: input.module,
+          args: input.args ?? {},
+          options,
+          runId,
+          runDir,
+          ...(input.scriptSnapshot ? { scriptSnapshot: input.scriptSnapshot } : {}),
+          processMetadata: {
+            displayName,
+            ...input.processMetadata,
+            source: input.source,
+            hostMetadata: this.hostMetadata(input.session, input.patterns),
+          },
+        }),
+      );
     } catch (err) {
       return { error: err instanceof Error ? err.message : String(err) };
     }
@@ -2156,6 +2159,7 @@ interface SavedWorkflowDirsLite {
 }
 
 interface CodingSdkSubset {
+  resolveWireEffort?: import('./reasoning-effort.js').ResolveWireEffortFn;
   listBuiltinWorkflows?: () => readonly WorkflowMetaLite[];
   listWorkflowPatternTemplates?: () => readonly WorkflowPatternLite[];
   getBuiltinWorkflow?: (name: string) => unknown;

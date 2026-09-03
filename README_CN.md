@@ -13,7 +13,7 @@
   <a href="https://github.com/icetomoyo/KodaX-Space/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/icetomoyo/KodaX-Space?style=flat-square"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-KAI--FCL-orange?style=flat-square"></a>
   <a href="https://github.com/icetomoyo/KodaX-Space/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/icetomoyo/KodaX-Space/ci.yml?style=flat-square&label=ci"></a>
-  <img alt="KodaX SDK" src="https://img.shields.io/badge/KodaX_SDK-0.7.95-2ea44f?style=flat-square">
+  <img alt="KodaX SDK" src="https://img.shields.io/badge/KodaX_SDK-0.7.96--alpha.3-2ea44f?style=flat-square">
   <img alt="platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-34495e?style=flat-square">
 </p>
 
@@ -90,7 +90,7 @@ npm run dev
 
 ## 当前源码基线
 
-**`v0.1.45` 发布使用 npm Registry 正式发布且完整性锁定的 KodaX 0.7.95，并显式协商 Runtime 安全能力，不通过语义版本号推断支持。** root/Desktop manifest、lockfile、物理安装与打包 ASAR 均锁定正式 Registry URL/SRI。Coder 默认连接 profile-scoped shared daemon；完整退出路径要求 SDK 提供 `runtimeExitSettlement:2`，daemon 连接要求 `sandboxRuntime:5`、`crashOutcomeModel:2`、`actorSettlementConvergence:2` 与 `conversationHistory:2`。F141 的 Daemon / Embedded 开关仍由安全 admission gate 控制，必须先等待运行中入口、交互、队列和其他客户端安全收敛。Space 保留有界 Actor/Turn 投影、精确 history/live 对齐、Runtime-owned interrupt finalization、完整物理请求用量诊断、提示词缓存亲和与 CLI 缓存用量归一化。Partner 继续由 Space embedded-inline 持有；MCP 进程/日志、Workflow library/start/admin、Space Reference Agent 执行和产品 Artifact 仍是明确的 host-provider 边界。
+**当前源码为 Space 0.1.46-alpha.3，精确锁定已发布的 KodaX 0.7.96-alpha.7，并要求 `sandboxRuntime:11`、`runtimeAutoModeGuardrail:5`、`sharedSessionSettings:2`、`providerCredentialBroker:2` 与 `effectiveConfig:1`；能力支持不通过语义版本号推断。** root/Desktop manifest、lockfile、物理安装、打包 ASAR 与整体解包的跨平台 native bundle 使用同一 Registry URL/SRI。Space 暴露 Plan、Edits、Auto[LLM]、Full Access 四档。Alpha.7 保留 sandbox-first 语义，并引入 Windows native protocol/setup generation 10、显式 doctor/setup 的真实 target-start 证明、setup 持有的宽 profile ACL 收敛、支持最多 32 个精确网络 authority 的 64 端口范围、逐命令私有 Temp，以及由 `sandboxRuntime:11` 隔离的安全 daemon 替换。`kodax sandbox doctor` 必须在宿主终端直接运行，也可使用 Space Settings，不要让模型通过 Bash 工具嵌套运行。Space 直接消费精确 Registry 字节，不做依赖补丁。当前稳定发布版仍是 Space v0.1.45 / KodaX 0.7.95，该历史产物保持不变。
 
 v0.1.45 锁定的 KodaX 0.7.95 保留 `actorSettlementConvergence:2`、`sessionEventJournal:1`、`conversationHistory:2` 与 `crashOutcomeModel:2`，并把退出结算提升到 v2、Windows sandbox 提升到 v5。同一 boot 的 `unconfirmed-owner` 票据由 SDK 后台自动重试进程排空、ACL 复原和 effect-fence 释放，只在精确 sandbox-user SID 探针证明账号空闲后清除；探针暂时失败时仅对 sandbox 工作 fail closed，不阻塞无关的非 sandbox 工作。崩溃遗留的零字节 authority lock 也会在字节/stat 未变化证明后自动回收，仍存活或已被继任者接管的 owner 不会被误删。Runtime Shell 仍是 sandbox-first；containment 无法准备时沿用普通权限策略，但普通权限执行仍取得同一 filesystem-effect fence，不重放命令、不重复 classifier，灾难性破坏操作继续硬拒绝。`worker.configuredA2A` 仍是 KodaX CLI Worker-hosted embedded Runtime 配置，不是 Space Settings 开关。
 
@@ -112,12 +112,12 @@ F136 让 Windows 后台 owner 可见、可控；F140 允许选择“每次询问
 
 已于 2026-08-24 正式发布 [`v0.1.45`](https://github.com/icetomoyo/KodaX-Space/releases/tag/v0.1.45)：Space package `0.1.45` 精确锁定 npm `latest` KodaX `0.7.95`。本版本把 ask_user 与 guardrail 授权从全屏模态改为对话流内的聚焦提问卡，对齐 `conversationHistory:2`、`runtimeExitSettlement:2` 与 `sandboxRuntime:5`，并恢复 daemon 重连后已准入的 Runs、保证幂等发送只产生一个气泡。
 
-| 范围           | 摘要                                                                                                                      |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| 最新 SDK       | npm `latest` 在发布准备时核验为 `0.7.95`，manifest、lockfile、安装包和 SRI 均精确一致。                                   |
-| 内联提问卡     | `ask_user_question` 与 guardrail 提示渲染为对话流内的聚焦卡片；召回停靠条统计待答数量并闪定位队首卡，队首卡支持 1-9/Enter/Esc 键盘操作。 |
-| Run 恢复       | daemon 重连后已准入的 Run 按精确 `runId` 恢复，幂等发送只产生一个气泡，历史重验保留已绘制的 canonical 前缀。               |
-| 文档与手册     | README、用户手册、PRD/HLD、Feature List、能力台账、Known Issues、release 记录、回归指南和 `kodax_manual` 统一到 v0.1.45。 |
+| 范围       | 摘要                                                                                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 最新 SDK   | npm `latest` 在发布准备时核验为 `0.7.95`，manifest、lockfile、安装包和 SRI 均精确一致。                                                  |
+| 内联提问卡 | `ask_user_question` 与 guardrail 提示渲染为对话流内的聚焦卡片；召回停靠条统计待答数量并闪定位队首卡，队首卡支持 1-9/Enter/Esc 键盘操作。 |
+| Run 恢复   | daemon 重连后已准入的 Run 按精确 `runId` 恢复，幂等发送只产生一个气泡，历史重验保留已绘制的 canonical 前缀。                             |
+| 文档与手册 | README、用户手册、PRD/HLD、Feature List、能力台账、Known Issues、release 记录、回归指南和 `kodax_manual` 统一到 v0.1.45。                |
 
 详细内容见 [v0.1.45 设计](docs/features/v0.1.45.md)、[发布记录](docs/releases/v0.1.45-release-readiness.md)、[Issue 193 回归指南](docs/test-guides/ISSUE_193_v0.1.45_REGRESSION_GUIDE.md)、[Issue 196 回归指南](docs/test-guides/ISSUE_196_v0.1.45_REGRESSION_GUIDE.md)和 [Issue 197 回归指南](docs/test-guides/ISSUE_197_v0.1.45_REGRESSION_GUIDE.md)。
 
@@ -351,8 +351,8 @@ npm run e2e:headed
 | [docs/test-guides/ISSUE_193_v0.1.45_REGRESSION_GUIDE.md](docs/test-guides/ISSUE_193_v0.1.45_REGRESSION_GUIDE.md) | v0.1.45 对话因果顺序及 Sidecar/Interrupt 刷新恢复覆盖。                    |
 | [docs/test-guides/ISSUE_196_v0.1.45_REGRESSION_GUIDE.md](docs/test-guides/ISSUE_196_v0.1.45_REGRESSION_GUIDE.md) | v0.1.45 Session 历史、queue、状态、加载与压缩反馈覆盖。                    |
 | [docs/test-guides/ISSUE_197_v0.1.45_REGRESSION_GUIDE.md](docs/test-guides/ISSUE_197_v0.1.45_REGRESSION_GUIDE.md) | v0.1.45 构建代理与退出恢复覆盖。                                           |
-| [docs/features/v0.1.44.md](docs/features/v0.1.44.md)                                                             | 历史 v0.1.44 原生提醒、后台退出结算与 KodaX 0.7.93 边界。                   |
-| [docs/releases/v0.1.44-release-readiness.md](docs/releases/v0.1.44-release-readiness.md)                         | 历史 v0.1.44 门禁、精确 KodaX 0.7.93 合约与发布证据。                       |
+| [docs/features/v0.1.44.md](docs/features/v0.1.44.md)                                                             | 历史 v0.1.44 原生提醒、后台退出结算与 KodaX 0.7.93 边界。                  |
+| [docs/releases/v0.1.44-release-readiness.md](docs/releases/v0.1.44-release-readiness.md)                         | 历史 v0.1.44 门禁、精确 KodaX 0.7.93 合约与发布证据。                      |
 | [docs/test-guides/FEATURE_145_v0.1.44_TEST_GUIDE.md](docs/test-guides/FEATURE_145_v0.1.44_TEST_GUIDE.md)         | 历史 v0.1.44 原生数字角标验收覆盖。                                        |
 | [docs/test-guides/ISSUE_189_v0.1.44_REGRESSION_GUIDE.md](docs/test-guides/ISSUE_189_v0.1.44_REGRESSION_GUIDE.md) | 历史 v0.1.44 后台完整退出结算覆盖。                                        |
 | [docs/test-guides/ISSUE_190_v0.1.44_REGRESSION_GUIDE.md](docs/test-guides/ISSUE_190_v0.1.44_REGRESSION_GUIDE.md) | 历史 v0.1.44 previous-boot Windows ACL 恢复覆盖。                          |
@@ -397,7 +397,7 @@ npm run e2e:headed
 | `v0.1.36`                    | KodaX 0.7.82、活动 Session 输入准入、history/live 对齐、跨 Session 恢复隔离与发布文档收口。                                       |
 | `v0.1.37`                    | KodaX 0.7.83、多 Session 恢复、安全退出重启、语义启动背景和发布文档对齐。                                                         |
 | `v0.1.44`                    | 精确 KodaX 0.7.93、F145 原生提醒、后台完整退出、Task Dock/Repointel/历史对齐与外部任务恢复态。                                    |
-| `v0.1.45`                    | 精确 KodaX 0.7.95、内联 ask_user/guardrail 提问卡、conversationHistory v2、sandbox v5、已准入 Run 重连恢复与幂等发送单气泡。       |
+| `v0.1.45`                    | 精确 KodaX 0.7.95、内联 ask_user/guardrail 提问卡、conversationHistory v2、sandbox v5、已准入 Run 重连恢复与幂等发送单气泡。      |
 | `v0.1.43`                    | 精确 KodaX 0.7.92、SDK-owned 完整退出、sandboxRuntime v4、crashOutcomeModel v2 与有效 live-output segment。                       |
 | `v0.1.42`                    | 精确 KodaX 0.7.89、Actor settlement v2 与 Session/Run/Turn 因果 transcript 对齐。                                                 |
 | `v0.1.40`                    | KodaX 0.7.86、sandboxRuntime v3、Issue 128 打包 Shell、stale owner 恢复、可重试 owner 清理与完整发布文档同步。                    |

@@ -21,6 +21,7 @@ import {
   sessionRewindChannel,
   sessionAgentsMdChannel,
   sessionSetAgentModeChannel,
+  sessionSetReasoningModeChannel,
 } from '../src/index.js';
 
 const historyEnvelope = { sessionId: 's_1', requestId: 'history-1' } as const;
@@ -48,7 +49,6 @@ test('session.list output distinguishes persisted runtime identity from legacy f
     provider: 'openai',
     reasoningMode: 'auto',
     permissionMode: 'accept-edits',
-    autoModeEngine: 'llm',
     agentMode: 'ama',
     surface: 'partner',
     createdAt: 1,
@@ -491,6 +491,53 @@ test('session_error event: unknown Runtime failure kind rejected', () => {
   assert.equal(r.success, false);
 });
 
+test('session_error event accepts the KodaX 0.7.96 structured failure kinds', () => {
+  for (const failureKind of [
+    'not_found',
+    'unknown_provider',
+    'request',
+    'upstream',
+    'cancelled',
+    'context_capacity',
+  ]) {
+    assert.equal(
+      sessionEventChannel.payload.safeParse({
+        kind: 'session_error',
+        sessionId: 's_1',
+        error: 'Safe Runtime failure.',
+        failureKind,
+      }).success,
+      true,
+      `expected ${failureKind} to be accepted`,
+    );
+  }
+});
+
+test('session_error event accepts KodaX 0.7.96 credential-safe failure details', () => {
+  const r = sessionEventChannel.payload.safeParse({
+    kind: 'session_error',
+    sessionId: 's_1',
+    error: 'The configured model was not found.',
+    failureKind: 'not_found',
+    failureDetail: {
+      failureKind: 'not_found',
+      stage: 'transport',
+      providerErrorCode: 'model_not_found',
+      safeMessage: 'The configured model was not found.',
+      httpStatus: 404,
+      upstreamErrorCode: 'model.not_found-v2',
+      requestId: 'req:custom-shard_2',
+      retryAfterMs: 250,
+    },
+  });
+
+  assert.equal(r.success, true);
+  if (!r.success || r.data.kind !== 'session_error') return;
+  assert.equal(r.data.failureDetail?.providerErrorCode, 'model_not_found');
+  assert.equal(r.data.failureDetail?.upstreamErrorCode, 'model.not_found-v2');
+  assert.equal(r.data.failureDetail?.requestId, 'req:custom-shard_2');
+});
+
 test('session_error event: retryAvailableAt accepts large future epoch', () => {
   // 1h ahead, 1 year ahead — schema 不应当 clip 这些 (avoid the old rejection-on-cap bug)
   for (const ms of [60_000, 3_600_000, 365 * 24 * 3_600_000]) {
@@ -518,13 +565,43 @@ test('session.create input: requires projectRoot and provider', () => {
   );
 });
 
-test('session.create input: rejects bogus reasoningMode', () => {
+test('session.create input: rejects unsafe reasoning effort tokens', () => {
   const result = sessionCreateChannel.input.safeParse({
     projectRoot: '/r',
     provider: 'mock',
-    reasoningMode: 'bogus',
+    reasoningMode: '../unsafe',
   });
   assert.equal(result.success, false);
+});
+
+test('reasoning settings accept SDK-declared efforts and legacy Space aliases', () => {
+  for (const mode of [
+    'off',
+    'auto',
+    'minimal',
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+    'quick',
+    'balanced',
+    'deep',
+  ]) {
+    assert.equal(
+      sessionSetReasoningModeChannel.input.safeParse({ sessionId: 's_1', mode }).success,
+      true,
+      `should accept ${mode}`,
+    );
+  }
+  assert.equal(
+    sessionSetReasoningModeChannel.input.safeParse({ sessionId: 's_1', mode: 'ultra' }).success,
+    true,
+  );
+  assert.equal(
+    sessionSetReasoningModeChannel.input.safeParse({ sessionId: 's_1', mode: '../unsafe' }).success,
+    false,
+  );
 });
 
 test('agentMode enum accepts canonical AMA and SA only', () => {
@@ -567,7 +644,6 @@ test('session.create output includes resolved runtime settings', () => {
     createdAt: 0,
     reasoningMode: 'quick',
     permissionMode: 'auto',
-    autoModeEngine: 'rules',
     agentMode: 'sa',
   };
   assert.equal(sessionCreateChannel.output.safeParse(output).success, true);
@@ -1240,10 +1316,10 @@ test('session.event tool_result rejects content over 512 KB', () => {
   assert.equal(sessionEventChannel.payload.safeParse(evt).success, false);
 });
 
-// ---- FEATURE_029: canonical 3 mode + auto engine ----
+// ---- KodaX 0.7.96 canonical permission profiles ----
 
-test('permissionMode enum accepts canonical 3: plan / accept-edits / auto', () => {
-  for (const mode of ['plan', 'accept-edits', 'auto'] as const) {
+test('permissionMode enum accepts the four canonical profiles', () => {
+  for (const mode of ['plan', 'accept-edits', 'auto', 'full-access'] as const) {
     const result = sessionCreateChannel.input.safeParse({
       projectRoot: '/tmp/proj',
       provider: 'mock',
@@ -1262,36 +1338,6 @@ test('permissionMode enum rejects legacy values: ask-permissions / bypass-permis
     });
     assert.equal(result.success, false, `should reject legacy ${mode}`);
   }
-});
-
-test('session.event auto_engine_change variant accepted with reason enum', () => {
-  for (const reason of ['manual', 'denial_threshold', 'circuit_breaker'] as const) {
-    const evt = {
-      kind: 'auto_engine_change' as const,
-      sessionId: 's_1',
-      engine: 'rules' as const,
-      reason,
-    };
-    assert.equal(sessionEventChannel.payload.safeParse(evt).success, true, `reason=${reason}`);
-  }
-});
-
-test('session.event auto_engine_change accepts engine without reason (optional)', () => {
-  const evt = {
-    kind: 'auto_engine_change' as const,
-    sessionId: 's_1',
-    engine: 'llm' as const,
-  };
-  assert.equal(sessionEventChannel.payload.safeParse(evt).success, true);
-});
-
-test('session.event auto_engine_change rejects invalid engine value', () => {
-  const evt = {
-    kind: 'auto_engine_change' as const,
-    sessionId: 's_1',
-    engine: 'something-else',
-  };
-  assert.equal(sessionEventChannel.payload.safeParse(evt).success, false);
 });
 
 test('session.event workflow_notice accepts live dedup key and sentAt', () => {

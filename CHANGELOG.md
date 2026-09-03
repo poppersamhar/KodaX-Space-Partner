@@ -12,6 +12,138 @@ KodaX-Space is the Electron desktop client for the [KodaX SDK](https://github.co
 > v0.1.7 内容 (F011/F023/F024/F026/F038) 跟 v0.1.8 一起发。GitHub Releases 顶部仍是 v0.1.5，
 > 0.1.7 这条 section 留作历史记录、git log 引用入口。
 
+## [Unreleased]
+
+## [0.1.46-alpha.3] - 2026-09-03
+
+### Changed
+
+- **KodaX 0.7.96-alpha.7 and sandbox Runtime v11** - Root and Desktop now pin
+  the exact published alpha.7 Registry package. SDK startup, daemon admission,
+  connected Runtime checks, IPC projection, compatibility tests, and release
+  smoke require `sandboxRuntime:11`. Space keeps the alpha.4 permission contract:
+  Plan, Edits, Auto[LLM], and Full Access remain unchanged.
+- **Windows sandbox readiness follows the alpha.6/alpha.7 control plane** - Space
+  documents and validates protected-cache/setup generation 10, verify-only
+  ordinary admission, setup-owned ACL convergence, a 64-port native proxy range
+  for up to 32 exact network authorities, per-command private temporary leaves,
+  stronger broker/portable-Bash cleanup, and exact terminal evidence. Explicit
+  doctor and Setup/onboarding prove a no-side-effect target start/exit before
+  reporting ready; Settings runs these operations at the host boundary and does
+  not tunnel doctor through model Bash or add an automatic elevation path.
+
+### Fixed
+
+- **Canonical history no longer duplicates settled parallel-tool turns
+  (Issue 202)** - The history paging boundary preserves the exact settled
+  Runtime witness. A resolved authoritative newest read can therefore keep
+  canonical transcript and tool presentation order even when live Runtime
+  chronology differs, while retaining the exact terminal event and Runtime-only
+  diagnostics. Stale, partial, ambiguous, foreign-Run, and identity-conflict
+  cases continue to fail open.
+
+## [0.1.46-alpha.2] - 2026-09-01
+
+### Changed
+
+- **KodaX 0.7.96-alpha.5 permission and sandbox alignment** - Root and Desktop
+  now pin the exact published alpha.5 Registry package and require
+  `sandboxRuntime:9`, `runtimeAutoModeGuardrail:5`, and
+  `sharedSessionSettings:2`. Space exposes Plan, Edits, Auto[LLM], and Full
+  Access across IPC, persistence, slash commands, Runtime projection, and the
+  renderer. Legacy Auto Rules/engine/timing and `sandbox.envPass` controls are
+  removed or normalized away. Auto is sandbox-first; Full Access runs directly
+  on the host while remaining subject to Exec Policy. Startup, daemon admission,
+  compatibility probes, and packaged smoke now verify the alpha.5 Windows
+  concurrency, native self-healing, and version-safe daemon boundary.
+- **Credential and transcript boundaries** - Provider credential discovery now
+  lives below IPC, keeping the explicit OpenAI/Codex CLI keychain-sharing
+  policy in the credential domain and removing Provider-to-IPC dependency
+  cycles. Runtime Run and compaction brokers share one envelope-fencing helper
+  while retaining their distinct authorization policies. Transcript duplicate
+  folding now delegates merge-strategy selection to a tested pure module instead
+  of a six-level nested conditional.
+- **Focused AskUser components** - Guardrail and question presentation are split
+  from the stateful inline-card coordinator, and reasoning action validation is
+  carried by its descriptor rather than special-cased in the catalog dispatcher.
+
+### Fixed
+
+- **Cross-platform release packaging keeps the KodaX native bundle complete** -
+  electron-builder prunes `*.exe`/`*.dll` from node_modules on non-Windows
+  targets, which silently dropped the manifest-pinned Windows sandbox
+  executable from macOS/Linux packages. A unified afterPack hook restores any
+  pruned native artifact from the exact locked install before distributables
+  are produced, the packaged smoke asserts the alpha.5 sandbox facade v9
+  contract it verifies, and the packaged daemon Shell probe gets a generous
+  cold-start budget and workspaces disjoint from the Runtime home so slow
+  admission and darwin's protected-native-state read guard cannot masquerade
+  as a contract failure.
+- **Safe, accessible AskUser keyboard interaction** - Enter on a focused option
+  or action button now activates that control instead of submitting the card's
+  existing answer. Dock recall focuses the guardrail Allow action rather than
+  visually focusing Block while Enter allowed. Text inputs expose truthful
+  Ctrl/Command+Enter and Escape shortcuts; selection roles, checked state,
+  descriptions, and errors are announced to assistive technology. A missing
+  renderer bridge now produces an actionable error instead of silently ignoring
+  the reply.
+
+## [0.1.46-alpha.1] - 2026-08-30
+
+### Changed
+
+- **Truthful agent limits and SDK-driven reasoning efforts** - The Task Dock no
+  longer presents KodaX mixed work-unit telemetry as a `200`-round user limit;
+  real Runtime approval requests remain actionable. Reasoning efforts now pass
+  through bounded SDK/provider strings across IPC, persistence, slash, semantic
+  controls, and the model picker. Unsupported ordered efforts fall back to the
+  nearest lower supported rung before the SDK default, and profiles that use
+  `none` to disable thinking correctly expose the Off choice.
+- **KodaX 0.7.96-alpha.3 scoped Runtime integration** - Root and Desktop pin
+  the exact published prerelease and Registry integrity. Space now requires
+  the v2 scoped Provider credential broker and effective-config API. Manual
+  Runtime `/compact` binds and revokes an operation-scoped keychain lease;
+  managed Runs and continuations allow known Provider identities and resolve credentials lazily
+  for fallback, classifier, sidecar, Agent, and Workflow work while enforcing
+  the originating Session and Run lineage. Partner/legacy embedded Runs use the
+  same lazy allowlist, and independently started Workflows keep an explicitly
+  derived lease only until their managed handle settles. Runtime settings status
+  reads the daemon's effective value and source instead of inferring from Electron state.
+  SDK startup, daemon admission, connected Runtime checks, and packaged smoke require
+  `sandboxRuntime:6` plus its trusted-text/native-Windows authority markers.
+  Release packaging unpacks the complete cross-platform `dist/native` bundle;
+  the dependency gate requires every native target, and packaged smoke verifies
+  the manifest-pinned hashes before exercising the real command sandbox.
+  Alpha.3 retains the alpha.2 Windows lifecycle PowerShell resolver fix.
+- **KodaX 0.7.96 multimodal provider alignment** - Surface DeepSeek's vision-only
+  `deepseek-v4-flash-vision-exp` route and `glm-5.3-flash` on `zhipu`,
+  `zhipu-coding`, and `zai-coding`, keeping the latter's 1M-token renderer
+  fallback consistent with the SDK catalog. Custom OpenAI/Anthropic-compatible
+  providers can now explicitly opt into KodaX image routing with `imageInput`;
+  the setting is validated over IPC, persisted, editable, and synchronized into
+  the live Runtime catalog.
+- **Structured Runtime failure diagnostics** - Preserve KodaX 0.7.96
+  credential-safe `failureDetail` across daemon events, live Run projections,
+  Space IPC, and conversation notices. Error notices now expose the stable
+  KodaX code and bounded support metadata, including context-token
+  `required / available` counts. Space displays the SDK `safeMessage`, keeps a
+  forward-compatible unknown-code path, enforces the SDK's safe identifier
+  character set, and logs only event/run identity plus schema paths when a
+  malformed detail is sanitized. Live and cold-start projections preserve the
+  same recovery action and stable retry deadline as terminal events, while a
+  terminal `context_capacity_exceeded` result never offers blind retry. The
+  SDK's capacity-debt recovery now runs before that terminal outcome, so Space
+  no longer invents a local context-threshold failure around completed tool
+  results.
+
+### Fixed
+
+- **Reliable packaged Windows sandbox smoke** - The packaged daemon Shell probe
+  now reserves 180 seconds for sandbox authorization, command execution, and
+  Job-drain attestation instead of inheriting the SDK's 60-second interactive
+  command default. Slow or contended restricted-user startup no longer causes a
+  false packaging failure after the probe command has already executed.
+
 ## [0.1.45] - 2026-08-24
 
 ### Changed
@@ -25,6 +157,12 @@ KodaX-Space is the Electron desktop client for the [KodaX SDK](https://github.co
   The full-screen AskUserModal is removed.
 
 ### Fixed
+
+- **Issue 193 causal transcript recovery** - Canonical/live folding preserves
+  thinking, tools, text, and notices in causal order across bounded or mid-turn
+  history pages. Live Sidecar notices and accepted queued interrupts survive
+  renderer reload, and delivery promotes an interrupt into one user boundary
+  without hiding or duplicating it.
 
 - **KodaX 0.7.95 Registry alignment** - Root and Desktop now pin the exact
   published package and integrity. Space recognizes typed daemon disconnect
@@ -1521,6 +1659,7 @@ v0.1.6（F011 + F026 + F038）是内部里程碑，**不单独 tag**，合并进
 ### Added
 
 - **F011 真 PTY 单 tab 终端** ([6844f1f](https://github.com/icetomoyo/KodaX-Space/commit/6844f1f)) — Terminal popout 从 "bash 工具历史 viewer" 升级为真 xterm.js + node-pty shell。
+
   - 4 IPC channels：`terminal.create` / `.write` / `.resize` / `.kill` + push `.output` / `.exit`
   - PtyHost 单例 Map<uuid, IPty>；UUID 服务端 mint，renderer 不能伪造
   - 跨平台 shell：Win cmd.exe / Mac+Linux $SHELL；renderer 不能注 arg
@@ -1532,6 +1671,7 @@ v0.1.6（F011 + F026 + F038）是内部里程碑，**不单独 tag**，合并进
   - hotfix [d984719](https://github.com/icetomoyo/KodaX-Space/commit/d984719)：xterm CJS 包让 vite 二次 reload 触发 renderer 白屏；改 lazy import + optimizeDeps.include
 
 - **F023 终端多 tab** ([160fbb3](https://github.com/icetomoyo/KodaX-Space/commit/160fbb3)) — Tab bar + 多 PTY 并存。
+
   - 单 useReducer 管 tabs/activeId/counter；pure reducer 抽 `tabsReducer.ts`
   - 非 active tab 用 `display:none` 隐藏，PTY 保活
   - Terminal.tsx ResizeObserver 加 0×0 guard，防 hidden tab 收到 1×1 SIGWINCH 炸 scrollback
@@ -1540,6 +1680,7 @@ v0.1.6（F011 + F026 + F038）是内部里程碑，**不单独 tag**，合并进
   - 12 reducer 单测
 
 - **F024 文件富预览 PDF / docx / xlsx** ([a570c37](https://github.com/icetomoyo/KodaX-Space/commit/a570c37)) — Preview popout 按 ext 路由。
+
   - 新 IPC `files.readBinary`：assertAllowed + resolveInsideProject + maxBytes 兜底
   - 3 个 lazy viewer，main bundle 不变（PDF 335KB / Docx 504KB / Xlsx 368KB chunk）
   - PdfViewer: pdfjs-dist 4.10 ESM; `isEvalSupported:false` + `disableAutoFetch:true` 硬化；DPI 上限 2
@@ -1549,6 +1690,7 @@ v0.1.6（F011 + F026 + F038）是内部里程碑，**不单独 tag**，合并进
   - 11 utils 单测 + 4 binary-read 单测
 
 - **F026 ⌘Shift+P 命令面板** ([85d0bf5](https://github.com/icetomoyo/KodaX-Space/commit/85d0bf5)) — 全局快捷键召出模糊搜索。
+
   - 4 group 候选：Actions / Sessions / Files / Slash
   - JS fzf-lite scorer 抽到 `lib/fuzzy.ts`，FuzzyMatcher 抽象方便未来 F042 NAPI 替换
   - 多起点 scan + 连续匹配累计 ramp + boundary bonus；11 单测

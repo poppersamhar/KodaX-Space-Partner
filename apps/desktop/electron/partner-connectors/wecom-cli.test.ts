@@ -11,6 +11,12 @@ import { ReadConnectorError } from './read-connector.js';
 const profile = 'space-11111111-1111-4111-8111-111111111111';
 const identity = { authorityId: 'wecom-bot', subjectId: 'aib-test-bot', label: '企业微信机器人' };
 
+async function createFixtureExecutable(root: string): Promise<string> {
+  const executable = path.join(root, 'fixture-native');
+  await writeFile(executable, 'fixture', { mode: 0o700 });
+  return executable;
+}
+
 test('WeCom authenticates bounded official native bytes before even a version check', async () => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'space-wecom-native-default-')));
   const executable = path.join(root, 'wecom-cli', 'cli', '1.2.0', 'darwin-arm64', 'wecom-cli');
@@ -143,13 +149,14 @@ test('WeCom rejects native replacement inside the final synchronous session guar
 
 test('WeCom verifies the same private bot around a protected whoami and reads only its explicit document', async () => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'space-wecom-test-')));
+  const executable = await createFixtureExecutable(root);
   const calls: string[][] = [];
   let guardCalls = 0;
   const connector = createWecomConnector({
     root,
     platform: 'darwin',
     arch: 'arm64',
-    installer: { executable: process.execPath, install: async () => process.execPath },
+    installer: { executable, install: async () => executable },
     verifyBinary: async () => true,
     processFactory: () => async (input: ProviderCliRequest) => {
       await input.beforeSpawn?.();
@@ -249,11 +256,12 @@ async function fixture(
   run: (input: ProviderCliRequest, root: string) => Promise<ProviderCliResponse>,
 ) {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'space-wecom-cases-')));
+  const executable = await createFixtureExecutable(root);
   const connector = createWecomConnector({
     root,
     platform: 'darwin',
     arch: 'arm64',
-    installer: { executable: process.execPath, install: async () => process.execPath },
+    installer: { executable, install: async () => executable },
     verifyBinary: async () => true,
     processFactory: () => async (input) => {
       await input.beforeSpawn?.();
@@ -281,12 +289,13 @@ test('WeCom accepts only the exact official generated authorization page', () =>
 
 test('WeCom confines its native logging fallback and applies host identity/resource length bounds', async () => {
   const root = await realpath(await mkdtemp(path.join(tmpdir(), 'space-wecom-env-')));
+  const executable = await createFixtureExecutable(root);
   let verifiedSettings = false;
   const connector = createWecomConnector({
     root,
     platform: 'darwin',
     arch: 'arm64',
-    installer: { executable: process.execPath, install: async () => process.execPath },
+    installer: { executable, install: async () => executable },
     verifyBinary: async () => true,
     processFactory: (options) => {
       assert.equal(options.overrides?.WECOM_CLI_LOG_DIR, path.join(options.cwd, '.env'));

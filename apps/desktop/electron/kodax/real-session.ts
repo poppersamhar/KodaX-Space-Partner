@@ -62,7 +62,7 @@ function loadSdkLlm(): Promise<SdkLlmModule | null> {
 }
 
 // /agent 子路径——只用它的 reasoning-effort 能力学习缓存（getCachedRejectedEfforts /
-// recordRejectedEffort）。加载失败返 null，effort 解析退回纯 profile（不影响主回路）。
+// recordRejectedEffort）。加载失败返 null，canonical resolver 仍可在没有拒绝缓存时工作。
 type SdkAgentModule = typeof import('@kodax-ai/kodax/agent');
 let sdkAgentCache: Promise<SdkAgentModule | null> | null = null;
 function loadSdkAgent(): Promise<SdkAgentModule | null> {
@@ -98,22 +98,6 @@ async function extractRetryAfterMs(err: unknown): Promise<number | undefined> {
 }
 
 /**
- * v0.1.4 review MED-1：sanitize auto-mode bootstrap 失败的错误文本再放进
- * auto_engine_change.details（最终展示在 NotificationsSurface）。
- * - strip 绝对路径段：Windows 盘符（大/小写）/ UNC / POSIX
- * - 截到 240 字符给 details 的 wrapper 文案留余地（schema 上限 512）
- * 复用 updater.ts 同款 union regex；rawMessage 仍进 console.warn。
- */
-function sanitizeAutoModeErrorMessage(msg: string): string {
-  return (
-    msg
-      .replace(/([A-Za-z]:[\\/][^\s]+|\\\\[^\s]+|\/[A-Za-z][^\s]+)/g, '<path>')
-      .slice(0, 240)
-      .trim() || 'unknown error'
-  );
-}
-
-/**
  * KodaX exposes a changed persistence boundary as a factual pre-admission conflict. Space may
  * restore the draft only while it still knows that runs.start/submitInput has not been called.
  */
@@ -128,9 +112,6 @@ function isSessionPreAdmissionDataChanged(error: unknown): boolean {
 import type {
   AskUserAnswer as SdkAskUserAnswer,
   AskUserSelectionAnswer as SdkAskUserSelectionAnswer,
-  AutoModeAskUser,
-  AutoModeAskUserVerdict,
-  AutoModeEngine,
   AutoModeToolGuardrail,
   Guardrail,
   KodaXAgentMode,
@@ -139,7 +120,6 @@ import type {
   KodaXInputArtifact,
   KodaXShellExecutionContract,
   KodaXSessionStorage,
-  ToolCallSignal,
   ExtensionRuntimeContract,
 } from '@kodax-ai/kodax/coding';
 import type {
@@ -150,6 +130,7 @@ import type {
 import type {
   InputArtifact,
   PermissionMode,
+  ReasoningMode,
   SessionEvent,
   SessionSendRejectionReason,
   SpaceRuntimeRunStopReceiptT,
@@ -273,6 +254,7 @@ import { workflowController } from './workflow-controller.js';
 import { externalAgentGateway } from './external-agent-gateway.js';
 import { loadKodaxRunConfig } from './user-config.js';
 import { pushToRenderer } from '../ipc/push.js';
+import { runWithSpaceProviderCredentialLease } from '../providers/credential-scope.js';
 import {
   isTransientChildEvent,
   buildChildActivity,
@@ -292,10 +274,10 @@ import {
   drainQueueForSession,
   enqueueUserPrompt,
 } from '../ipc/queue.js';
-import { resolveWireEffort, type ReasoningProfileLike } from './reasoning-effort.js';
+import { resolveSpaceWireEffort, runtimeSettingEffort } from './reasoning-effort.js';
 import { runtimeHostAdapter } from './runtime-host-adapter.js';
 
-type SpaceReasoning = 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+type SpaceReasoning = ReasoningMode;
 
 function canonicalAgentMode(mode: KodaXAgentMode): 'ama' | 'sa' {
   return mode === 'sa' ? 'sa' : 'ama';
@@ -449,8 +431,6 @@ export class RealKodaXSession implements ManagedSession {
   provider: string;
   reasoningMode: SpaceReasoning;
   permissionMode: ManagedSession['permissionMode'];
-  /** FEATURE_029：auto mode 子档；非 auto mode 时持有也无害（下次切 auto 时生效）。*/
-  autoModeEngine: ManagedSession['autoModeEngine'];
   /** AMA / SA agent mode. */
   agentMode: ManagedSession['agentMode'];
   /**
@@ -499,7 +479,6 @@ export class RealKodaXSession implements ManagedSession {
     this.model = opts.model;
     this.reasoningMode = opts.reasoningMode;
     this.permissionMode = opts.permissionMode;
-    this.autoModeEngine = opts.autoModeEngine ?? 'llm';
     this.agentMode = opts.agentMode ?? 'ama';
     this.surface = opts.surface ?? 'code';
     this.partnerExpert = opts.partnerExpert ? structuredClone(opts.partnerExpert) : undefined;
@@ -532,6 +511,18 @@ export class RealKodaXSession implements ManagedSession {
     }
   }
 
+  private async resolveCurrentWireEffort(): Promise<string | undefined> {
+    const [sdk, agent] = await Promise.all([loadSdkCoding(), loadSdkAgent()]);
+    return resolveSpaceWireEffort({
+      provider: this.provider,
+      ...(this.model ? { model: this.model } : {}),
+      reasoningMode: this.reasoningMode,
+      rejectedEfforts:
+        agent?.getCachedRejectedEfforts(this.provider, this.model ?? undefined) ?? [],
+      resolveWireEffort: sdk.resolveWireEffort,
+    });
+  }
+
   private async syncRuntimeSessionSettings(): Promise<KodaXShellExecutionContract | undefined> {
     const { terminalShell } = await settingsStore.load();
     const shellExecution = await resolveKodaXShellExecutionContract(terminalShell, {
@@ -540,11 +531,13 @@ export class RealKodaXSession implements ManagedSession {
     const shellExecutionFingerprint = JSON.stringify(shellExecution ?? null);
     const shellExecutionChanged = this.shellExecutionFingerprint !== shellExecutionFingerprint;
     const dispatchedPermissionMode = this.permissionMode;
+    const wireEffort = await this.resolveCurrentWireEffort();
     await runtimeHostAdapter.updateSessionSettings(this.sessionId, {
       provider: this.provider,
       model: this.model ?? null,
       thinking: this.thinking ?? null,
-      reasoningMode: this.reasoningMode,
+      effort: runtimeSettingEffort(this.reasoningMode, wireEffort),
+      reasoningMode: null,
       permissionMode: dispatchedPermissionMode,
       executionCwd: this.projectRoot,
       // Reconcile this at every execution boundary: the daemon session may have
@@ -553,7 +546,6 @@ export class RealKodaXSession implements ManagedSession {
       // no-op check avoids a write when the Runtime value already matches.
       shellExecution: shellExecution ?? null,
       agentMode: this.agentMode,
-      autoModeEngine: this.autoModeEngine,
     });
     // Runtime permissions are live settings: a mode selected while the daemon
     // was initializing or while the versioned update was in flight must govern
@@ -1036,12 +1028,14 @@ export class RealKodaXSession implements ManagedSession {
   ): readonly RuntimeInput[] {
     return [
       { type: 'text', text: prompt },
-      ...(artifacts ?? []).map((artifact): RuntimeInput => ({
-        type: 'image',
-        path: artifact.path,
-        mediaType: artifact.mediaType,
-        source: artifact.source,
-      })),
+      ...(artifacts ?? []).map(
+        (artifact): RuntimeInput => ({
+          type: 'image',
+          path: artifact.path,
+          mediaType: artifact.mediaType,
+          source: artifact.source,
+        }),
+      ),
     ];
   }
 
@@ -1352,77 +1346,6 @@ export class RealKodaXSession implements ManagedSession {
     await this.disposeExtensionRuntime();
   }
 
-  /**
-   * FEATURE_030: 把 KodaX `AutoModeAskUser` callback 桥接到 Space askUserBroker。
-   * KodaX guardrail 升级路径（denial threshold / circuit breaker / classifier
-   * decision escalate）会调这个；broker 推 IPC 由对话流内联卡（AskUserInline）渲染；用户答复 → verdict 回 KodaX。
-   *
-   * 把 signals 从 KodaX shape (ToolCallSignal[]) 映射到 Space schema 的 AskUserSignal：
-   * KodaX 内部 signal severity 是 string；Space schema 限 'info'|'warning'|'danger'。
-   * 未知 severity → 默认 'info'（保守）。message 缺失 → type 名兜底显示。
-   */
-  private makeAskUserBridge(): AutoModeAskUser {
-    const sid = this.sessionId;
-    return async (
-      call: Parameters<AutoModeAskUser>[0],
-      reason: string,
-      signals?: readonly ToolCallSignal[],
-      diagnostics?: Parameters<AutoModeAskUser>[3],
-    ): Promise<AutoModeAskUserVerdict> => {
-      const sigArr = signals?.map((s) => {
-        // ToolCallSignal is a discriminated union on `kind`; map each variant to
-        // the Space IPC AskUser { type, severity, message } shape.
-        if (s.kind === 'dangerous_pattern') {
-          // severity: 'high' → 'danger', 'medium' → 'warning'
-          let normalized: 'warning' | 'danger';
-          if (s.severity === 'high') {
-            normalized = 'danger';
-          } else if (s.severity === 'medium') {
-            normalized = 'warning';
-          } else {
-            // 当前 SDK 只有 high/medium；若将来引入 'critical'/'low' 等新档，silent downgrade
-            // 会让我们看不见。observable warn 让此类 SDK 升级立即冒头，prompt 我们扩 schema。
-            console.warn(
-              `[real-session ${sid}] unknown dangerous_pattern severity "${String(s.severity)}" → warning; ` +
-                `KodaX SDK may have introduced a new severity level`,
-            );
-            normalized = 'warning';
-          }
-          return { type: s.kind, severity: normalized, message: s.pattern };
-        } else {
-          // All other variants: extract a representative message per kind.
-          let msg: string;
-          if (s.kind === 'shell_redirect_outside') {
-            msg = s.target;
-          } else if (s.kind === 'package_install') {
-            msg = s.manager;
-          } else if (s.kind === 'git_write') {
-            msg = s.verb;
-          } else if (s.kind === 'network') {
-            msg = s.tool;
-          } else if (s.kind === 'file_modification') {
-            msg = s.targets.join(', ');
-          } else {
-            // 'protected_path' | 'outside_project' — both have `path`
-            msg = s.path;
-          }
-          return { type: s.kind, severity: 'warning' as const, message: msg };
-        }
-      });
-      return askUserBroker.request({
-        sessionId: sid,
-        reason,
-        toolCall: {
-          toolId: String(call.id ?? `auto_${call.name}_${Date.now()}`),
-          toolName: String(call.name),
-          input: call.input,
-        },
-        signals: sigArr,
-        autoModeDiagnostics: diagnostics,
-      });
-    };
-  }
-
   private async runCoderDaemon(
     prompt: string,
     signal: AbortSignal,
@@ -1441,16 +1364,17 @@ export class RealKodaXSession implements ManagedSession {
       const shellExecution = await this.syncRuntimeSessionSettings();
       await runtimeHostAdapter.ensureObserved(sid);
 
-      const [skillsPrompt, runConfig, sdk] = await Promise.all([
+      const [skillsPrompt, runConfig, sdk, wireEffort] = await Promise.all([
         buildSkillsPromptForSurface('code', this.projectRoot),
         loadKodaxRunConfig(),
         loadSdkCoding(),
+        this.resolveCurrentWireEffort(),
       ]);
       const selfManual = buildSpaceManual(sdk);
       const workflowPolicy = workflowPolicyStore.get();
       const options: RuntimeDaemonKodaXOptions = {
         provider: this.provider,
-        reasoningMode: this.reasoningMode,
+        ...(wireEffort !== undefined ? { effort: wireEffort } : {}),
         agentMode: this.agentMode,
         ...(this.model !== undefined ? { model: this.model } : {}),
         ...(explicitSkill?.modelOverride !== undefined
@@ -1458,7 +1382,6 @@ export class RealKodaXSession implements ManagedSession {
           : {}),
         ...(this.thinking !== undefined ? { thinking: this.thinking } : {}),
         compaction: runConfig.compaction,
-        sandbox: runConfig.sandbox,
         context: {
           gitRoot: this.projectRoot,
           executionCwd: this.projectRoot,
@@ -2523,8 +2446,8 @@ export class RealKodaXSession implements ManagedSession {
       },
     };
 
-    // FEATURE_030: AutoModeToolGuardrail bootstrap — 仅 mode='auto' 时构造并注入
-    // KodaXOptions.guardrails。其他 mode 跳过，零成本（loadAutoRules 不读盘）。
+    // Auto[LLM] bootstrap for non-Runtime runs. KodaX 0.7.96 has one fixed
+    // reviewer; there is no Rules engine or automatic user-prompt fallback.
     let guardrails: Guardrail[] | undefined;
     let autoToolGuardrail: AutoModeToolGuardrail | undefined;
     if (runPermissionMode === 'auto') {
@@ -2547,35 +2470,9 @@ export class RealKodaXSession implements ManagedSession {
       }
       try {
         const bootstrap = await bootstrapAutoMode({
-          askUser: this.makeAskUserBridge(),
           projectRoot: this.projectRoot,
           getCurrentProviderName: () => this.provider,
-          // v0.7.42 SDK wired (P0): 用户 /model 设的值或 provider 默认（''）
           getCurrentModel: () => this.model ?? '',
-          initialEngine: this.autoModeEngine as AutoModeEngine,
-          // 不显式 pin timeoutMs——让 SDK 0.7.80 使用两次尝试默认 (45s / 90s)。
-          onEngineChange: (engine) => {
-            // F030 review MEDIUM#4: session dispose 后 guardrail in-flight classifier
-            // 仍可能调回这里——disposed 守护防止往已关 push channel 写
-            if (this.disposed) return;
-            if (this.autoModeEngine === engine) return;
-            const previousEngine = this.autoModeEngine;
-            this.autoModeEngine = engine;
-            // F030 review MEDIUM#2: 无法从 SDK 区分 denial threshold vs circuit breaker，
-            // 两者都是 llm→rules 自动 fallback。用 'denial_threshold' 占位但更老实的做法
-            // 是 omit reason 字段——schema reason 是 optional，renderer 看到 undefined 就
-            // 显示通用 "engine fallback" 而不是误导成"due to denials"。
-            const isAutoFallback = previousEngine === 'llm' && engine === 'rules';
-            emitLive({
-              kind: 'auto_engine_change',
-              sessionId: sid,
-              engine,
-              // 'manual' 是确定的（user-driven setEngine 走 host.setAutoModeEngine 路径，
-              // 不经过 guardrail onEngineChange）；这里都是 SDK 内部自动调，故只能是
-              // denial_threshold 或 circuit_breaker——我们没法从 SDK 区分，故 omit。
-              ...(isAutoFallback ? {} : { reason: 'manual' as const }),
-            });
-          },
           log: (level, msg) =>
             level === 'warn'
               ? console.warn(`[auto-mode ${sid}] ${msg}`)
@@ -2583,43 +2480,17 @@ export class RealKodaXSession implements ManagedSession {
         });
         autoToolGuardrail = bootstrap.getGuardrail();
         guardrails = [autoToolGuardrail];
-        autoGuardrailInstalled = true;
-        console.info(
-          `[real-session ${sid}] auto-mode bootstrapped; engine=${this.autoModeEngine}, ` +
-            `rules sources=${bootstrap.rulesLoadResult.sources.length}, ` +
-            `errors=${bootstrap.rulesLoadResult.errors.length}`,
-        );
+        // Partner has no shell surface, so its Auto guardrail is the only
+        // decision owner. Embedded Coder lacks the Runtime shell boundary;
+        // retain the conservative Edits broker after review instead of letting
+        // a sandbox-eligible Bash call fall through to direct host execution.
+        autoGuardrailInstalled = this.surface === 'partner';
+        console.info(`[real-session ${sid}] Auto[LLM] reviewer bootstrapped.`);
       } catch (err) {
         const rawMessage = err instanceof Error ? err.message : String(err);
-        console.warn(`[real-session ${sid}] auto-mode bootstrap failed: ${rawMessage}`);
-        // F030 review HIGH#2: 失败 fallback 不是 fail-open——broker (F029) 把 auto 当
-        // accept-edits 处理，bash/dangerous 仍弹窗。但用户以为"Auto"全自动跑，应当显著
-        // 告知 guardrail 失效。
-        //
-        // v0.1.4 修复：之前 emit 一条 session_error 携带说明文字想当"通知"用，但
-        // session_error 是"session 结束"语义 —— ActivitySpinner 倒扫看到立刻把
-        // streaming=false，spinner 消失（实际 SDK 还在跑）。换成 auto_engine_change
-        // 带 reason='bootstrap_failed' + details：renderer 端 NotificationsSurface
-        // 已经监听 non-manual reason 自动弹持久内联通知，且不污染 streaming 状态。
-        //
-        // review event-channel MED-1: rawMessage 可能含 SDK error 里嵌的绝对路径
-        // (EACCES: /home/user/.secret/...) 或上游 provider 响应里的 auth 报错细节。
-        // sanitize 后再塞 details 字段 —— 跟 updater.ts 的 path strip 同套路。
-        // 完整 rawMessage 还是会进 console.warn 给开发者排查。
-        const sanitizedMessage = sanitizeAutoModeErrorMessage(rawMessage);
-        if (this.autoModeEngine !== 'rules') {
-          this.autoModeEngine = 'rules';
-        }
-        emitLive({
-          kind: 'auto_engine_change',
-          sessionId: sid,
-          engine: 'rules',
-          reason: 'bootstrap_failed',
-          details:
-            `Auto mode guardrail failed to initialize: ${sanitizedMessage}. ` +
-            `Session continues with accept-edits behavior (no LLM/rules classifier). ` +
-            `Check ~/.kodax/auto-rules.jsonc syntax or pick a different mode.`,
-        });
+        console.warn(
+          `[real-session ${sid}] Auto[LLM] bootstrap failed; using conservative Edits broker: ${rawMessage}`,
+        );
       }
     }
 
@@ -2775,23 +2646,7 @@ export class RealKodaXSession implements ManagedSession {
         ...(inputArtifacts ? { inputArtifacts } : {}),
       };
 
-      // C4/C5/C1: 解析 Space 的 5 档 reasoning 到 provider 真实档位。绝不发 provider 本地硬拒的
-      // 档位（kimi-code/minimax 的 'none'/'minimal' 会 throw），"Deep" 触及真实天花板（GLM-5.2 'max'），
-      // 并排除本进程 wire 层已拒过的档位（onReasoningEffortRejected → getCachedRejectedEfforts）。
-      let reasoningProfile: ReasoningProfileLike | undefined;
-      try {
-        reasoningProfile = (
-          sdk.resolveProvider(this.provider) as {
-            getReasoningProfile?: (model?: string) => ReasoningProfileLike | undefined;
-          }
-        )?.getReasoningProfile?.(this.model ?? undefined);
-      } catch {
-        reasoningProfile = undefined; // custom_* / 未识别 provider → 走 legacy 静态映射
-      }
-      const rejectedEfforts =
-        (await loadSdkAgent())?.getCachedRejectedEfforts(this.provider, this.model ?? undefined) ??
-        [];
-      const wireEffort = resolveWireEffort(this.reasoningMode, reasoningProfile, rejectedEfforts);
+      const wireEffort = await this.resolveCurrentWireEffort();
       const runConfig = await loadKodaxRunConfig();
       const persistedSkillSession =
         sessionStorage !== undefined
@@ -2835,7 +2690,6 @@ export class RealKodaXSession implements ManagedSession {
           : {}),
         ...(this.thinking !== undefined ? { thinking: this.thinking } : {}),
         compaction: runConfig.compaction,
-        sandbox: runConfig.sandbox,
         events,
         ...(runExtensionRuntime !== undefined ? { extensionRuntime: runExtensionRuntime } : {}),
         abortSignal: signal,
@@ -2944,17 +2798,19 @@ export class RealKodaXSession implements ManagedSession {
         } else {
           // Partner inline driver, or the explicitly selected legacy Coder rollback driver.
           await this.requirePartnerExpertAvailable(runPartnerExpert ?? null);
-          await withSessionRunContext(
-            {
-              sessionId: sid,
-              surface: this.surface,
-              projectRoot: this.projectRoot,
-              permissionMode: runPermissionMode,
-            },
-            () =>
-              runWithSessionQueueScope(sid, () =>
-                sdk.runManagedTask(options, explicitSkill?.executionPrompt ?? prompt),
-              ),
+          await runWithSpaceProviderCredentialLease(this.provider, () =>
+            withSessionRunContext(
+              {
+                sessionId: sid,
+                surface: this.surface,
+                projectRoot: this.projectRoot,
+                permissionMode: runPermissionMode,
+              },
+              () =>
+                runWithSessionQueueScope(sid, () =>
+                  sdk.runManagedTask(options, explicitSkill?.executionPrompt ?? prompt),
+                ),
+            ),
           );
           // SA errors resolve success:false while AMA errors throw; the shared callback
           // latch normalizes both paths to one Space terminal event.

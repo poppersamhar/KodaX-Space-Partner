@@ -28,6 +28,11 @@ import { assessRisk } from '../../permission/risk.js';
 import { sanitizeForDisplay, sanitizeInputForDisplay } from '../../permission/sanitize.js';
 import { projectAutoModeDiagnostics } from '../../permission/auto-mode-diagnostics.js';
 import { isTransientChildEvent, type ChildMeta } from '../workflow-activity.js';
+import {
+  parseRuntimeFailureDetail,
+  runtimeFailurePresentation,
+  runtimeRetryAvailableAt,
+} from './runtime-failure.js';
 
 type OutputSegmentSdk = Pick<
   typeof import('@kodax-ai/kodax/coding'),
@@ -194,12 +199,45 @@ function runtimePhase(phase: RuntimeRunStatus['phase']): SpaceRuntimeRunProjecti
   return phase;
 }
 
+function genericRuntimeTerminalReason(phase: RuntimeRunStatus['phase']): string | undefined {
+  switch (phase) {
+    case 'failed':
+      return 'Runtime run failed';
+    case 'cancelled':
+      return 'cancelled';
+    case 'interrupted':
+      return 'Runtime run interrupted';
+    default:
+      return undefined;
+  }
+}
+
 export function projectRuntimeRun(
   run: RuntimeRunStatus,
   queuePosition?: number,
 ): SpaceRuntimeRunProjectionT {
   const origin = run.origin;
   const activeSubtaskCount = nonNegativeInteger(run.activeSubtaskCount);
+  const completedAt = run.endedAt !== undefined ? timestamp(run.endedAt) : undefined;
+  const failureDetailResult = parseRuntimeFailureDetail(run.failureDetail);
+  if (failureDetailResult.issuePaths.length > 0) {
+    console.warn('[runtime] sanitized malformed failureDetail', {
+      eventType: 'runtime.run_projection',
+      runId: run.runId,
+      issuePaths: failureDetailResult.issuePaths,
+    });
+  }
+  const failureDetail = failureDetailResult.detail;
+  const terminalReason = failureDetail?.safeMessage ?? genericRuntimeTerminalReason(run.phase);
+  const retryAvailableAt = runtimeRetryAvailableAt(run.endedAt, failureDetail?.retryAfterMs);
+  const failurePresentation =
+    failureDetail !== undefined
+      ? runtimeFailurePresentation(
+          failureDetail.failureKind,
+          failureDetail.providerErrorCode,
+          retryAvailableAt !== undefined ? failureDetail.retryAfterMs : undefined,
+        )
+      : undefined;
   return {
     runId: run.runId,
     sessionId: run.sessionId,
@@ -217,14 +255,27 @@ export function projectRuntimeRun(
     ...(run.runningAt !== undefined || run.startedAt !== undefined
       ? { startedAt: timestamp(run.runningAt ?? run.startedAt) }
       : {}),
-    ...(run.endedAt !== undefined ? { completedAt: timestamp(run.endedAt) } : {}),
+    ...(completedAt !== undefined ? { completedAt } : {}),
     ...(queuePosition !== undefined ? { queuePosition } : {}),
-    ...(run.terminal?.message !== undefined || run.terminal?.code !== undefined
-      ? { terminalReason: (run.terminal?.message ?? run.terminal?.code ?? '').slice(0, MAX_REASON) }
-      : run.error
-        ? { terminalReason: run.error.slice(0, MAX_REASON) }
-        : {}),
+    ...(terminalReason !== undefined
+      ? { terminalReason: terminalReason.slice(0, MAX_REASON) }
+      : {}),
     ...(run.terminal?.failureKind !== undefined ? { failureKind: run.terminal.failureKind } : {}),
+    ...(failureDetail !== undefined
+      ? {
+          failureKind: failureDetail.failureKind,
+          failureDetail,
+        }
+      : {}),
+    ...(failurePresentation !== undefined
+      ? {
+          retriable: failurePresentation.retriable,
+          ...(failurePresentation.action !== undefined
+            ? { action: failurePresentation.action }
+            : {}),
+        }
+      : {}),
+    ...(retryAvailableAt !== undefined ? { retryAvailableAt } : {}),
     ...(run.lifecycleError !== undefined
       ? {
           lifecycleError: {
@@ -917,7 +968,7 @@ function queuedInputsProjection(
 }
 
 const REASONING_MODES = new Set(['off', 'auto', 'quick', 'balanced', 'deep']);
-const PERMISSION_MODES = new Set(['plan', 'accept-edits', 'auto']);
+const PERMISSION_MODES = new Set(['plan', 'accept-edits', 'auto', 'full-access']);
 
 function settingsProjection(
   revision: number,
@@ -936,7 +987,13 @@ function settingsProjection(
           }
         : {}),
       ...(typeof value.permissionMode === 'string' && PERMISSION_MODES.has(value.permissionMode)
-        ? { permissionMode: value.permissionMode as 'plan' | 'accept-edits' | 'auto' }
+        ? {
+            permissionMode: value.permissionMode as
+              | 'plan'
+              | 'accept-edits'
+              | 'auto'
+              | 'full-access',
+          }
         : {}),
       ...(text(value.executionCwd, 4_096)
         ? { executionCwd: text(value.executionCwd, 4_096)! }
@@ -944,17 +1001,8 @@ function settingsProjection(
       ...(value.agentMode === 'ama' || value.agentMode === 'sa'
         ? { agentMode: value.agentMode }
         : {}),
-      ...(value.autoModeEngine === 'llm' || value.autoModeEngine === 'rules'
-        ? { autoModeEngine: value.autoModeEngine }
-        : {}),
       ...(text(value.autoModeClassifierModel, 128)
         ? { autoModeClassifierModel: text(value.autoModeClassifierModel, 128)! }
-        : {}),
-      ...(typeof value.autoModeTimeoutMs === 'number' &&
-      Number.isInteger(value.autoModeTimeoutMs) &&
-      value.autoModeTimeoutMs > 0 &&
-      value.autoModeTimeoutMs <= 3_600_000
-        ? { autoModeTimeoutMs: value.autoModeTimeoutMs }
         : {}),
     },
   };

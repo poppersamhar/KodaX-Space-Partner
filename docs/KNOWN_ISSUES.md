@@ -1,6 +1,6 @@
 # Known Issues
 
-Last Updated: 2026-08-24
+Last Updated: 2026-09-01
 
 > Historical issue details are preserved as investigation evidence. Resolved items older than 30 days move to [ISSUES_ARCHIVED.md](ISSUES_ARCHIVED.md) without losing their investigation record. The latest published Space [`v0.1.45`](https://github.com/icetomoyo/KodaX-Space/releases/tag/v0.1.45) artifact uses exact npm Registry KodaX 0.7.95 and requires `conversationHistory:2`, `runtimeExitSettlement:2`, and `sandboxRuntime:5`. Start from the [documentation hub](README.md) for current behavior and status.
 
@@ -193,8 +193,285 @@ Last Updated: 2026-08-24
 | 195 | Medium   | Resolved in v0.1.45 | Explicit Skill execution expanded in a separate IPC and lost the SDK's structured policy and lifecycle admission                                                                                    | KodaX 0.7.94 explicit-Skill adoption                         | 2026-08-22 |
 | 196 | High     | Resolved in v0.1.45 | Live history replacement could shrink or reorder the transcript and leave loading or activity state stale until Ctrl+R                                                                              | v0.1.44 history paging and Runtime reconnect                 | 2026-08-23 |
 | 197 | High     | Resolved in v0.1.45 | Release dependency verification and startup recovery could keep build or quit alive after their work had ended                                                                                      | v0.1.44 release gate and exit recovery                       | 2026-08-23 |
+| 198 | Low      | Resolved in source  | Right-sidebar work-budget display is accurate but the SDK 90% budget-approval askUser loop has been retired from the main AMA loop in KodaX 0.7.95                                                  | KodaX 0.7.95 adoption                                        | 2026-08-27 |
+| 199 | Medium   | Resolved in source  | Manual `/compact` cannot use a Provider key stored only in the Space OS keychain                                                                                                                    | <= v0.1.37 / KodaX 0.7.83                                    | 2026-08-28 |
+| 200 | Medium   | Resolved in source  | Fixed Space reasoning enums dropped provider-specific SDK efforts and could fall back from a stronger request to a distant model default                                                            | <= v0.1.45 reasoning picker                                  | 2026-08-28 |
+| 201 | High     | Resolved in source  | Space-owned Provider paths could reuse another Provider's keychain credential or bypass the active Runtime configuration                                                                            | <= v0.1.45                                                   | 2026-08-29 |
+| 202 | High     | Resolved in source  | Post-terminal reconciliation duplicated parallel-tool turns when Runtime and canonical orders differed                                                                                              | v0.1.45 causal transcript reconciliation                     | 2026-09-01 |
 
 ## Issue Details
+
+## Issue 202: Post-terminal reconciliation duplicated parallel-tool turns when Runtime and canonical orders differed
+
+- Priority: High
+- Status: Resolved in source
+- Introduced: v0.1.45 causal transcript reconciliation
+- Created: 2026-09-01
+- Resolved: 2026-09-01
+
+### Problem
+
+Session `20260901_162545_d271f2a182ca2d` displayed the same submitted query and completed response
+twice. The two copies also ordered the first parallel tool group differently. Canonical JSONL held
+one user boundary and one response; the Provider and Runtime executed the Run only once.
+
+### Root Cause
+
+Space used strong `(turnId, turnUserOrdinal)` identity only to select a possible duplicate, then
+required canonical history content to be one unique contiguous sequence inside the Runtime live
+journal. Parallel tools invalidate that assumption: Runtime records actual start/result chronology,
+while canonical history stores stable presentation order. `output_segment_started` activated the
+strict causal matcher, the two valid total orders contradicted, and fail-open rendering retained
+both complete projections.
+
+The paging layer already knew which exact `runtimeId/runId/generation` values were followed by a
+newest history read, but reduced that evidence to a retry boolean before installing history. The
+store therefore guessed authority from content order instead of using the existing durability
+proof.
+
+### Resolution
+
+- Preserve the exact post-terminal settled Run set from history paging through the store install.
+- Decide turn projection authority only from exact owner identity, exact Runtime terminal
+  ownership, resolved newest history, source revision, and the post-terminal read witness.
+- Let certified canonical history own transcript content and tool order without invoking the
+  content-sequence matcher.
+- Retain the exact live terminal and Runtime-only diagnostics. Matching historical Sidecar
+  placeholders are enriched in canonical position from the live payload; obsolete session/output
+  segment markers retire with the live transcript projection.
+- Keep stale, partial, ambiguous, foreign-Run, page-head, and identity-conflict cases fail-open.
+  No KodaX SDK change is required for this fix.
+
+Files changed:
+
+- `apps/desktop/renderer/src/shell/sessionHistoryPaging.ts`
+- `apps/desktop/renderer/src/store/appStore.ts`
+- `apps/desktop/electron/test/session-history-paging.test.ts`
+- `apps/desktop/electron/test/history-replay-no-popout.test.ts`
+- `docs/test-guides/ISSUE_202_v0.1.46_REGRESSION_GUIDE.md`
+- `docs/KNOWN_ISSUES.md`
+
+### Verification
+
+- A minimized reproduction of the reported Session now renders one user and one canonical
+  `tool-a -> tool-b` sequence although live execution observed `start-b -> start-a -> result-a ->
+result-b`.
+- The real paging workflow proves the same behavior through terminal evidence rather than a
+  hand-authored store assumption.
+- Certified failed Runs retain one canonical partial answer and the exact live error.
+- Provider recovery and rich live Sidecar payloads survive canonical transcript replacement.
+- A foreign settled Run cannot authorize destructive replacement; uncertain overlap remains
+  fail-open.
+- See [Issue 202 regression guide](test-guides/ISSUE_202_v0.1.46_REGRESSION_GUIDE.md).
+
+## Issue 201: Space-owned Provider paths could reuse another Provider's keychain credential or bypass the active Runtime configuration
+
+- Priority: High
+- Status: Resolved in source
+- Introduced: <= v0.1.45
+- Created: 2026-08-29
+- Resolved: 2026-08-29
+
+### Problem
+
+Space treated any keychain accounts with the same `apiKeyEnv` as interchangeable. Two custom
+Providers could therefore point at different endpoints while Provider B silently received Provider
+A's secret. Provider status and connection testing could report the same false configuration.
+
+Several Space-owned calls also bypassed the credential or process boundary already used by an
+ordinary daemon Run: embedded/Partner/legacy managed tasks, standalone Workflow generation and
+execution, embedded manual compaction, and Provider connection testing. Separately, `/fallback`,
+`/verifier-log`, and `/stall-log` changed the Electron process environment even when the active
+Coder lived in the already-running Runtime daemon.
+
+### Resolution
+
+- Keychain lookup is exact by Provider identity. The only shared-account compatibility rule is the
+  explicit bidirectional `openai` / `codex-cli` alias for `OPENAI_API_KEY`; a matching env name alone
+  is never authorization to reuse a secret.
+- Space tracks startup environment credentials separately from managed keychain injection, so a
+  managed value cannot configure or auto-activate an unrelated Provider. Exact single-Provider
+  probes remain scoped for their full asynchronous lifetime; Run and Workflow paths use explicit
+  lazy allowlists and never fall back to a concurrently changed process environment.
+- Provider testing invokes the constructed Provider instance inside that exact scope instead of a
+  top-level helper that preflights `process.env`.
+- Runtime Run and after-turn admission now bind a v2 scoped credential lease. The lease exposes
+  only secret-free known Provider identities and resolves
+  each key lazily for authorized fallback, classifier, sidecar, Agent, or Workflow work within the
+  originating Session and Run lineage; an unavailable key fails closed only when a real wire call
+  requests it. Environment-only credentials are also leased because a shared daemon's inherited
+  environment is not authoritative to the current Space process. An inherited Space-managed env
+  value can no longer become an unbound fallback secret.
+- Runtime-backed slash settings read the daemon's secret-safe effective config and source, honor
+  environment-string values and `applied:false`, then patch persisted daemon configuration for Coder Sessions. Partner/embedded Sessions continue to
+  use the Space process environment even when Runtime is globally selected.
+- Runtime manual compaction registers a v2 operation-scoped lease, binds it to one stable compact
+  operation ID, and revokes it on success or failure. The daemon receives no raw key in the command.
+- Partner/legacy embedded root Runs now use an SDK lazy lease over the primary and known Provider
+  identities, allowing KodaX to derive bounded Agent/Workflow scopes and resolve fallback,
+  classifier, or sidecar credentials per wire call. Independently started detached Workflows receive
+  a `workflowRunId`-attributed derived lease that is closed on handle success, failure, or start error.
+  External Agents remain on their independent `credentialRef` plane.
+
+## Issue 200: Fixed Space reasoning enums dropped provider-specific SDK efforts and could fall back from a stronger request to a distant model default
+
+- Priority: Medium
+- Status: Resolved in source
+- Introduced: <= v0.1.45 reasoning picker
+- Fixed: source
+- Created: 2026-08-28
+- Resolved: 2026-08-28
+
+### Original Problem
+
+Space queried the SDK for per-model reasoning efforts, but then projected them through fixed IPC,
+renderer, persistence, slash-command, and semantic-control enums. A provider-declared effort such
+as `ultra` was silently removed. The SDK resolver preserved availability, but an unsupported strong
+intent could jump directly to the model default even when a closer lower effort was usable. Space
+also interpreted `disabledEfforts: ['none']` as `none` being unavailable, although that SDK field
+describes the effort that disables thinking.
+
+### Resolution
+
+- Replaced Space's closed reasoning union with a bounded lowercase token contract and threaded it
+  through IPC, settings, Session runtime persistence, Partner effective config, slash commands,
+  semantic controls, Runtime projections, and the model picker.
+- Preserved SDK-declared visible efforts in provider order and added a raw-label fallback for new
+  provider values without requiring a Space release.
+- Added Space-owned monotonic fallback for ordered strengths: exact effort, then the nearest lower
+  supported rung, then the SDK's existing default/omission behavior. Learned rejections remain
+  delegated to the SDK resolver.
+- Corrected the Off projection so `disabledEfforts: ['none']` means that `none` disables thinking;
+  explicit `supportsDisabledThinking: false` and local rejections still hide Off.
+
+Files changed: reasoning IPC/settings schemas, Runtime persistence and adapters, model picker,
+slash/semantic controls, provider capability projection, and focused regression tests.
+
+## Issue 199: Manual `/compact` cannot use a Provider key stored only in the Space OS keychain
+
+- Priority: Medium
+- Status: Resolved in source
+- Introduced: <= v0.1.37 / KodaX 0.7.83
+- Created: 2026-08-28
+
+### Original Problem
+
+When a custom Provider API key is configured in Space's OS keychain instead of the daemon process
+environment, ordinary Coder requests succeed but the manual `/compact` command reports a skipped
+compaction such as:
+
+`Compaction skipped: custom_<id> API error: TOKENHUB_API_KEY not set`
+
+Expected behavior: every Provider request initiated by Space, including an imperative manual
+compaction summary, must use the same in-memory credential-broker boundary as an ordinary Run. The
+user must not have to duplicate an OS-keychain secret into an environment variable.
+
+Reproduction:
+
+1. Configure a custom Provider whose `apiKeyEnv` is `TOKENHUB_API_KEY`, saving its API key through
+   Space while leaving that environment variable unset.
+2. Start a Coder Session and verify an ordinary query succeeds.
+3. Enter `/compact` after the Session has enough history to summarize.
+4. Observe that compaction is skipped because `TOKENHUB_API_KEY` is not set.
+
+### Context
+
+- Confirmed in the v0.1.37 screenshot with KodaX 0.7.83.
+- Reproduced against the earlier v0.1.45 working tree with KodaX 0.7.96-alpha.1: the manual
+  compaction path performed zero Space credential-resolver reads and produced the same error twice.
+- Threshold-triggered automatic compaction runs inside an admitted Coder Run and inherits that
+  Run's scoped credential, so the defect is specific to standalone manual compaction.
+
+### Root Cause
+
+`RuntimeCompactSessionInput` has no credential-lease binding. Space therefore calls
+`runtime.sessions.compact(input)` directly, while Space's credential broker is registered and bound
+only by `runs.start()` / continuation admission. KodaX resolves the summarizer Provider outside a
+`runWithProviderCredential()` scope, so its only remaining credential source is the daemon's
+environment variable.
+
+### Resolution
+
+KodaX 0.7.96-alpha.3 adds `RuntimeCompactSessionInput.credential` and an operation identity backed by
+`providerCredentialBroker:2`. Space now registers a scoped credential lease before invoking manual
+Runtime compaction, binds it to the exact Session, Provider allowlist, `session.compact` operation,
+operation ID, and `compaction` purpose, and revokes it in `finally`. The broker resolves keychain or
+external credentials only when the daemon asks for an authorized Provider; no secret is copied into
+Runtime config, IPC, or the compact input.
+
+Regression coverage proves keychain-only compaction succeeds through the scoped broker, mismatched
+Session/purpose/operation requests return no credential, and the lease is revoked. Automatic
+threshold compaction remains inside its admitted credential-bound Run and is unchanged.
+
+## Issue 198: Right-sidebar work-budget display is accurate but the SDK 90% budget-approval askUser loop has been retired from the main AMA loop
+
+- Priority: Low
+- Status: Resolved in source
+- Introduced: KodaX 0.7.95 adoption
+- Fixed: source
+- Created: 2026-08-27
+- Resolved: 2026-08-28
+
+### Original Problem
+
+The right-sidebar `预算 X/200` display in `RightSidebar.tsx` is fed by the SDK `managed_task_status`
+event fields `globalWorkBudget` / `budgetUsage`. The value `200` is the SDK's current default
+`totalBudget` (work units), confirmed in `runtime-worker.js` (`A3e=200`). This is **not** a stale
+local constant.
+
+However, the SDK CHANGELOG entries (v0.7.11, and later reinforcement entries) describe a "Global
+work-budget approval loop" that should trigger an `askUser` dialog at the 90% threshold
+(`spentBudget >= 0.9 × totalBudget`) to offer the user a `+200` extension. In KodaX 0.7.95,
+minified-bundle analysis shows `maybeRequestAdditionalWorkBudget` (`Jme`) has only **one** remaining
+call site: the sidecar-verifier `revise` path that requests another pass. The per-round 90%
+threshold automatic askUser has been removed from the main AMA loop.
+
+Consequently, in practice the budget bar fills to `200/200` (clamped by `Math.min`) and no
+approval dialog appears. The shared root budget gate (`agent_budget_exhausted`,
+`AgentBudgetExhaustedError`) still rejects new actor-turn admission once `spentBudget + units >
+totalBudget`, but this surfaces as a hard error, not a user-facing dialog.
+
+The user has never observed the approval popup in normal usage, which is consistent with the
+current SDK behavior.
+
+### Context
+
+- Space-side display path: `RightSidebar.tsx:831` → `appStore.ts:8040` reads
+  `managed_task_status.globalWorkBudget` / `.budgetUsage` → transparent pass-through from
+  `real-session.ts:2312`. No local override of `totalBudget` or `managedWorkBudget` exists in
+  the Space codebase.
+- The `askUser` bridge is fully wired (`real-session.ts` → `askUserBroker`) and would surface
+  the SDK's askUser dialog if the SDK emitted one. The absence of the popup is therefore an
+  SDK-side behavior change, not a Space-side wiring gap.
+- The 500-iteration mechanical fuse ("One uninterrupted managed Runner invocation is
+  mechanically capped at 500 tool-loop iterations") is a separate runaway-loop breaker, not a
+  task-level budget.
+
+### Root Cause
+
+The KodaX SDK 0.7.95 runtime has retired the per-round 90%-threshold budget-extension askUser
+from the main AMA execution loop. The only remaining trigger is the sidecar-verifier
+`revise` path with additional conditions (`askUser` available, `spentBudget ≥ 90%`,
+`lastApprovalBudgetTotal ≠ totalBudget`). This appears to be an intentional design shift
+in the post-V2-Worker + sidecar-verifier era, but this has not been confirmed against
+the KodaX SDK source repository.
+
+### Proposed Solution
+
+- Confirm with the KodaX SDK repository whether the removal of the per-round 90% budget-
+  approval askUser from the main AMA loop is an intentional design decision or an oversight.
+- If intentional: update the right-sidebar `预算` label or tooltip to reflect that it is a
+  soft accounting meter rather than a user-extensible budget, or hide the progress bar
+  when the approval mechanism is unavailable.
+- If unintentional: file a KodaX SDK issue to restore the per-round 90% askUser in the
+  main AMA loop. Space-side `askUser` bridge is already wired and requires no changes.
+
+### Resolution
+
+Space stopped rendering `globalWorkBudget` / `budgetUsage` as a numeric user budget in the compact
+right sidebar, Tasks popout, pinned summary, and Task Dock metrics. The telemetry remains available
+internally, and a real SDK `budgetApprovalRequired` state still produces an actionable attention
+surface. This avoids relabeling the separate 500-iteration fuse or inventing a replacement limit.
 
 ## Issue 197: Release dependency verification and startup recovery could keep build or quit alive after their work had ended
 
@@ -14146,13 +14423,13 @@ misclassified as missing before the durable mutation is attempted.
 
 ## Summary
 
-- Total: 185
+- Total: 188
 - Open: 1
-- Ready: 0
-- In Progress: 11
+- Ready: 1
+- In Progress: 10
 - Deferred: 0
-- Resolved: 173
+- Resolved: 176
 - High: 96
-- Medium: 78
-- Low: 11
-- Next to resolve: 165
+- Medium: 80
+- Low: 12
+- Next to resolve: 199

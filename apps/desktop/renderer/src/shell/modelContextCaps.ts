@@ -12,7 +12,7 @@
 
 type CapRule = { match: RegExp; cap: number };
 
-// 数值与 SDK 0.7.58 provider-capabilities.json 对齐（2026-07-03 复核，见 c:/tmp/caps.mjs 对比脚本）。
+// 数值与 SDK 0.7.96-alpha.7 provider-capabilities.json 对齐（2026-09-03 复核）。
 // **过报(over-claim)是危险方向**——会让用户误以为"还有大把空间"却提前压缩；这里逐条按 SDK 真值订正。
 // 顺序敏感：更具体的规则必须在通配前面（first-match wins）。
 const RULES: readonly CapRule[] = [
@@ -35,8 +35,8 @@ const RULES: readonly CapRule[] = [
   { match: /^kimi-for-coding/, cap: 256_000 },
   // Qwen 3.5 — 1M
   { match: /^qwen3\.5/, cap: 1_000_000 },
-  // GLM-5.2 (Zhipu / Z.ai Coding Plan) - 1M; keep this before the broader GLM-5 fallback.
-  { match: /^glm-5\.2$/, cap: 1_000_000 },
+  // GLM-5.2 / 5.3 (Zhipu / Z.ai Coding Plan) - 1M; keep before the broader GLM-5 fallback.
+  { match: /^glm-5\.[23](?:-flash)?$/, cap: 1_000_000 },
   // GLM-5 / GLM-5.1 / GLM-5 Turbo - 200k fallback.
   { match: /^glm-5(?:$|\.1$|-turbo$)/, cap: 200_000 },
   // GLM-4.7 - 200k.

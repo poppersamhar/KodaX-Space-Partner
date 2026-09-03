@@ -61,7 +61,6 @@ import {
   sessionSetReasoningModeChannel,
   sessionSetProviderChannel,
   sessionSetPermissionModeChannel,
-  sessionSetAutoModeEngineChannel,
   sessionSetAgentModeChannel,
   sessionForkChannel,
   sessionRewindChannel,
@@ -210,7 +209,6 @@ import {
   settingsKodaxConfigGetChannel,
   settingsKodaxConfigPlanIntegrationMigrationChannel,
   settingsKodaxConfigSetCompactionChannel,
-  settingsKodaxConfigSetSandboxChannel,
   settingsSetCoderRuntimeModeChannel,
   settingsSetDefaultWorkspaceChannel,
   settingsSetLanguageModeChannel,
@@ -312,7 +310,7 @@ import {
 import { diagnosticsExportChannel, diagnosticsReportChannel } from './diagnostics.js';
 import { spaceControlRequestedChannel, spaceControlResolveChannel } from './space-control.js';
 
-const coreInvokeChannels = {
+const extensionInvokeChannels = {
   [spaceExtensionsListChannel.name]: spaceExtensionsListChannel,
   [spaceExtensionsInstallChannel.name]: spaceExtensionsInstallChannel,
   [spaceExtensionsSetEnabledChannel.name]: spaceExtensionsSetEnabledChannel,
@@ -324,6 +322,9 @@ const coreInvokeChannels = {
   [spaceExtensionsExpertDeleteChannel.name]: spaceExtensionsExpertDeleteChannel,
   [sessionPartnerExpertGetChannel.name]: sessionPartnerExpertGetChannel,
   [sessionPartnerExpertSetChannel.name]: sessionPartnerExpertSetChannel,
+} as const;
+
+const coreInvokeChannels = {
   [versionChannel.name]: versionChannel,
   [sandboxStatusChannel.name]: sandboxStatusChannel,
   [sandboxRefreshChannel.name]: sandboxRefreshChannel,
@@ -348,7 +349,6 @@ const coreInvokeChannels = {
   [sessionSetReasoningModeChannel.name]: sessionSetReasoningModeChannel,
   [sessionSetProviderChannel.name]: sessionSetProviderChannel,
   [sessionSetPermissionModeChannel.name]: sessionSetPermissionModeChannel,
-  [sessionSetAutoModeEngineChannel.name]: sessionSetAutoModeEngineChannel,
   [sessionSetAgentModeChannel.name]: sessionSetAgentModeChannel,
   [sessionForkChannel.name]: sessionForkChannel,
   [sessionRewindChannel.name]: sessionRewindChannel,
@@ -469,7 +469,6 @@ const coreInvokeChannels = {
   [settingsSetRuntimeDefaultsChannel.name]: settingsSetRuntimeDefaultsChannel,
   [settingsKodaxConfigGetChannel.name]: settingsKodaxConfigGetChannel,
   [settingsKodaxConfigSetCompactionChannel.name]: settingsKodaxConfigSetCompactionChannel,
-  [settingsKodaxConfigSetSandboxChannel.name]: settingsKodaxConfigSetSandboxChannel,
   [settingsKodaxConfigPlanIntegrationMigrationChannel.name]:
     settingsKodaxConfigPlanIntegrationMigrationChannel,
   [settingsKodaxConfigApplyIntegrationMigrationChannel.name]:
@@ -541,9 +540,11 @@ const coreInvokeChannels = {
 // Keep the declaration type in named parts: flattening the growing registry exceeds
 // TypeScript's declaration serialization limit while losing none of the channel types.
 export const invokeChannels: typeof coreInvokeChannels &
+  typeof extensionInvokeChannels &
   typeof connectorInvokeChannels &
   typeof connectorOnboardingInvokeChannels = {
   ...coreInvokeChannels,
+  ...extensionInvokeChannels,
   ...connectorInvokeChannels,
   ...connectorOnboardingInvokeChannels,
 };

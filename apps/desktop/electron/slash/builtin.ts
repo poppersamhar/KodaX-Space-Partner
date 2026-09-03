@@ -1,11 +1,10 @@
 // Builtin slash command handlers — FEATURE_031.
 //
 // 第一批 8 个对齐 KodaX REPL：
-//   /mode <plan|accept-edits|auto>      切 permission mode
-//   /auto-engine <llm|rules>            切 auto sub-engine
+//   /mode <plan|accept-edits|auto|full-access>  切 permission profile
 //   /model <name>                       switch the current provider model
 //   /provider <name>                    切 provider (kodaxHost.setProvider)
-//   /reasoning <off|auto|quick|balanced|deep>
+//   /reasoning <SDK effort token>
 //   /thinking <on|off>                  switch thinking output and reasoning mode
 //   /clear                              主动 emit 'session_clear' (renderer 自决清屏)
 //   /help                               列出所有命令
@@ -15,7 +14,6 @@
 
 import type {
   PermissionMode,
-  AutoModeEngine,
   AgentMode,
   WorkflowRunT,
   MemoryActionProposalT,
@@ -23,7 +21,9 @@ import type {
   MemoryGovernanceReportT,
   MemoryItemRefT,
   MemoryRejectResultT,
+  ReasoningMode,
 } from '@kodax-space/space-ipc-schema';
+import { reasoningModeSchema } from '@kodax-space/space-ipc-schema';
 import type {
   ReviewableLearningProposal,
   SkillTrustRecord,
@@ -56,23 +56,22 @@ import { getBuiltin } from '../providers/catalog.js';
 import { memoryGovernanceService } from '../memory/memory-service.js';
 import { runtimeHostAdapter } from '../kodax/runtime-host-adapter.js';
 
-const REASONING_MODES = ['off', 'auto', 'quick', 'balanced', 'deep'] as const;
-type ReasoningMode = (typeof REASONING_MODES)[number];
-
-const PERMISSION_MODES: readonly PermissionMode[] = ['plan', 'accept-edits', 'auto'];
-const AUTO_ENGINES: readonly AutoModeEngine[] = ['llm', 'rules'];
+const PERMISSION_MODES: readonly PermissionMode[] = [
+  'plan',
+  'accept-edits',
+  'auto',
+  'full-access',
+];
 const AGENT_MODES: readonly AgentMode[] = ['ama', 'sa'];
+const REASONING_EXAMPLES = ['off', 'auto', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 function isPermissionMode(s: string): s is PermissionMode {
   return PERMISSION_MODES.includes(s as PermissionMode);
 }
 
-function isAutoEngine(s: string): s is AutoModeEngine {
-  return AUTO_ENGINES.includes(s as AutoModeEngine);
-}
-
-function isReasoningMode(s: string): s is ReasoningMode {
-  return REASONING_MODES.includes(s as ReasoningMode);
+function parseReasoningMode(s: string): ReasoningMode | undefined {
+  const parsed = reasoningModeSchema.safeParse(s);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function normalizeAgentMode(s: string): AgentMode | 'toggle' | 'retired' | undefined {
@@ -107,6 +106,42 @@ function compactSlashMessage(message: string, max = 1900): string {
   if (message.length <= max) return message;
   return `${message.slice(0, max - 12)}\n... truncated`;
 }
+
+function fallbackChain(value: unknown): readonly string[] {
+  const entries: readonly unknown[] = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  return entries
+    .filter((entry: unknown): entry is string => typeof entry === 'string')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function runtimeEffectiveEntry(
+  snapshot: Awaited<ReturnType<typeof runtimeHostAdapter.readEffectiveRuntimeConfig>> | undefined,
+  key: string,
+) {
+  return snapshot?.entries[key];
+}
+
+function runtimeEffectiveValue(entry: ReturnType<typeof runtimeEffectiveEntry>): unknown {
+  return entry?.applied ? entry.value : undefined;
+}
+
+function runtimeEffectiveToggle(entry: ReturnType<typeof runtimeEffectiveEntry>): boolean {
+  const value = runtimeEffectiveValue(entry);
+  if (value === true || value === 1) return true;
+  if (typeof value === 'string') return parseToggleValue(value) === 'on';
+  return false;
+}
+
+function runtimeEffectiveSourceNote(entry: ReturnType<typeof runtimeEffectiveEntry>): string {
+  const source = entry?.source.replace('_', ' ') ?? 'unset';
+  return `Effective Runtime source: ${source}${entry && !entry.applied ? ' (not applied)' : ''}.`;
+}
+
 type AgentSdkModule = typeof import('@kodax-ai/kodax/agent');
 let agentSdkModule: Promise<AgentSdkModule> | null = null;
 
@@ -179,9 +214,13 @@ function learningProposalMatchesFilter(
   return destination === 'memdir_handoff';
 }
 
-function usesRuntimeLearning(sessionId: string): boolean {
+function usesRuntimeSession(sessionId: string): boolean {
   const session = kodaxHost.get(sessionId);
   return session?.surface === 'code' && runtimeHostAdapter.isRuntimeSelected();
+}
+
+function usesRuntimeLearning(sessionId: string): boolean {
+  return usesRuntimeSession(sessionId);
 }
 
 function runtimeLearningMatchesFilter(
@@ -1573,8 +1612,8 @@ function goalHelp(): string {
 export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: 'mode',
-    description: 'Show or switch permission mode (plan / accept-edits / auto)',
-    argsHint: '[plan|accept-edits|auto]',
+    description: 'Show or switch permission mode',
+    argsHint: '[plan|accept-edits|auto|full-access]',
     source: 'builtin',
     handler: async (ctx) => {
       const target = ctx.args[0] === 'auto-in-project' ? 'auto' : ctx.args[0];
@@ -1583,7 +1622,7 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
       if (!target) {
         return {
           ok: true,
-          message: `Current mode: ${session.permissionMode}\nUsage: /mode [plan|accept-edits|auto]`,
+          message: `Current mode: ${session.permissionMode}\nUsage: /mode [${PERMISSION_MODES.join('|')}]`,
           echo: true,
         };
       }
@@ -1597,36 +1636,6 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
         ctx.sessionId,
         () => kodaxHost.setPermissionMode(ctx.sessionId, target),
         `mode -> ${target}`,
-      );
-    },
-  },
-
-  {
-    name: 'auto-engine',
-    description: 'Show or switch auto-mode classifier engine (llm / rules)',
-    argsHint: '[llm|rules]',
-    source: 'builtin',
-    handler: async (ctx) => {
-      const session = kodaxHost.get(ctx.sessionId);
-      if (!session) return { ok: false, message: `session not found: ${ctx.sessionId}` };
-      const target = ctx.args[0];
-      if (!target) {
-        return {
-          ok: true,
-          message: `Classifier engine: ${session.autoModeEngine}\nUsage: /auto-engine [llm|rules]`,
-          echo: true,
-        };
-      }
-      if (!isAutoEngine(target)) {
-        return {
-          ok: false,
-          message: `unknown engine '${target}'; valid: ${AUTO_ENGINES.join(', ')}`,
-        };
-      }
-      return commitRuntimeSlashMutation(
-        ctx.sessionId,
-        () => kodaxHost.setAutoModeEngine(ctx.sessionId, target),
-        `auto-engine -> ${target}`,
       );
     },
   },
@@ -1703,7 +1712,7 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'reasoning',
     aliases: ['reason'],
     description: 'Show or switch reasoning mode',
-    argsHint: '[off|auto|quick|balanced|deep]',
+    argsHint: '[SDK effort]',
     source: 'builtin',
     handler: async (ctx) => {
       const session = kodaxHost.get(ctx.sessionId);
@@ -1712,20 +1721,21 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
       if (!target) {
         return {
           ok: true,
-          message: `Reasoning mode: ${session.reasoningMode}\nUsage: /reasoning [${REASONING_MODES.join('|')}]`,
+          message: `Reasoning mode: ${session.reasoningMode}\nUsage: /reasoning <SDK effort>; common: ${REASONING_EXAMPLES.join(', ')}`,
           echo: true,
         };
       }
-      if (!isReasoningMode(target)) {
+      const normalizedTarget = parseReasoningMode(target);
+      if (!normalizedTarget) {
         return {
           ok: false,
-          message: `unknown reasoning '${target}'; valid: ${REASONING_MODES.join(', ')}`,
+          message: `invalid reasoning effort token '${target}'`,
         };
       }
       return commitRuntimeSlashMutation(
         ctx.sessionId,
-        () => kodaxHost.setReasoningMode(ctx.sessionId, target),
-        `reasoning -> ${target}`,
+        () => kodaxHost.setReasoningMode(ctx.sessionId, normalizedTarget),
+        `reasoning -> ${normalizedTarget}`,
       );
     },
   },
@@ -1911,7 +1921,7 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: 'thinking',
     aliases: ['think', 't'],
     description: 'Show or change thinking/reasoning output for next turn.',
-    argsHint: '[on|off|auto|quick|balanced|deep]',
+    argsHint: '[on|off|<SDK effort>]',
     source: 'builtin',
     handler: async (ctx) => {
       const target = ctx.args[0];
@@ -1920,31 +1930,35 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
       if (!target) {
         return {
           ok: true,
-          message: `Thinking: ${session.thinking === undefined ? 'default' : session.thinking ? 'on' : 'off'}\nReasoning mode: ${session.reasoningMode}\nUsage: /thinking [on|off|auto|quick|balanced|deep]`,
+          message: `Thinking: ${session.thinking === undefined ? 'default' : session.thinking ? 'on' : 'off'}\nReasoning mode: ${session.reasoningMode}\nUsage: /thinking [on|off|<SDK effort>]; common: ${REASONING_EXAMPLES.join(', ')}`,
           echo: true,
         };
       }
-      if (target === 'on' || target === 'off') {
+      const normalizedTarget = parseReasoningMode(target);
+      if (normalizedTarget === 'on' || normalizedTarget === 'off') {
         return commitRuntimeSlashMutation(
           ctx.sessionId,
           () => {
-            const thinkingOk = kodaxHost.setThinking(ctx.sessionId, target === 'on');
+            const thinkingOk = kodaxHost.setThinking(ctx.sessionId, normalizedTarget === 'on');
             return (
               thinkingOk &&
-              kodaxHost.setReasoningMode(ctx.sessionId, target === 'on' ? 'auto' : 'off')
+              kodaxHost.setReasoningMode(ctx.sessionId, normalizedTarget === 'on' ? 'auto' : 'off')
             );
           },
-          `thinking -> ${target}; reasoning -> ${target === 'on' ? 'auto' : 'off'} (applies on next send)`,
+          `thinking -> ${normalizedTarget}; reasoning -> ${normalizedTarget === 'on' ? 'auto' : 'off'} (applies on next send)`,
         );
       }
-      if (isReasoningMode(target)) {
+      if (normalizedTarget) {
         return commitRuntimeSlashMutation(
           ctx.sessionId,
-          () => kodaxHost.setReasoningMode(ctx.sessionId, target),
-          `reasoning -> ${target} (applies on next send)`,
+          () => kodaxHost.setReasoningMode(ctx.sessionId, normalizedTarget),
+          `reasoning -> ${normalizedTarget} (applies on next send)`,
         );
       }
-      return { ok: false, message: 'Usage: /thinking [on|off|auto|quick|balanced|deep]' };
+      return {
+        ok: false,
+        message: `Usage: /thinking [on|off|<SDK effort>]; common: ${REASONING_EXAMPLES.join(', ')}`,
+      };
     },
   },
 
@@ -2618,7 +2632,6 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
         'Session Status:',
         `  Provider:    ${session.provider}${session.model ? ` / ${session.model}` : ''}`,
         `  Permission:  ${session.permissionMode}`,
-        `  Auto engine: ${session.autoModeEngine}`,
         `  Reasoning:   ${session.reasoningMode}`,
         `  Thinking:    ${session.thinking === undefined ? 'default' : session.thinking ? 'on' : 'off'}`,
         `  Agent Mode:  ${session.agentMode.toUpperCase()}`,
@@ -2664,83 +2677,48 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
       return commitRuntimeSlashMutation(
         ctx.sessionId,
         () => kodaxHost.setPermissionMode(ctx.sessionId, 'auto'),
-        `mode -> auto; auto-engine -> ${session.autoModeEngine}`,
+        'mode -> auto (Auto[LLM])',
       );
     },
   },
 
   {
-    name: 'auto-denials',
-    description: 'Show auto-mode classifier denial thresholds and current engine',
-    source: 'builtin',
-    handler: async (ctx) => {
-      const session = kodaxHost.get(ctx.sessionId);
-      if (!session) return { ok: false, message: `session not found: ${ctx.sessionId}` };
-      if (session.permissionMode !== 'auto') {
-        return {
-          ok: true,
-          message: `[auto-denials] not in auto mode. Current mode: ${session.permissionMode}. Use /mode auto first.`,
-          echo: true,
-        };
-      }
-      const runtimeSnapshot = runtimeHostAdapter.snapshot();
-      const runtimeSettings = runtimeHostAdapter.isRuntimeSelected()
-        ? await runtimeHostAdapter
-            .getSessionSettingsVersioned(ctx.sessionId)
-            .then((snapshot) => snapshot.value)
-            .catch(() => undefined)
-        : undefined;
-      const timeoutMs = runtimeSettings?.autoModeTimeoutMs;
-      const classifierModel =
-        runtimeSettings?.autoModeClassifierModel ??
-        runtimeSettings?.model ??
-        session.model ??
-        '(provider default)';
-      return {
-        ok: true,
-        message: [
-          '[auto-mode classifier stats]',
-          `  engine: ${session.autoModeEngine}`,
-          `  runtime: ${runtimeSnapshot.identity?.version ?? runtimeSnapshot.state}`,
-          `  classifier model: ${classifierModel}`,
-          `  timeout: ${timeoutMs !== undefined ? `${timeoutMs}ms (configured)` : 'SDK default (45s first / 90s retry)'}`,
-          '  thresholds:',
-          '    consecutive blocks: 3',
-          '    cumulative blocks: 20',
-          '    circuit breaker: 5 errors / 10 min',
-          '  counters: not exposed by the Space host yet',
-        ].join('\n'),
-        echo: true,
-      };
-    },
-  },
-
-  {
     name: 'fallback',
-    description: 'Configure the child-task provider fallback chain for this Space process',
+    description: 'Configure the child-task provider fallback chain',
     argsHint: '[status | <p1,p2,...> | off]',
     source: 'builtin',
     handler: async (ctx) => {
-      const current = (process.env.KODAX_FALLBACK_PROVIDERS ?? '')
-        .split(',')
-        .map((entry) => entry.trim())
-        .filter(Boolean);
+      const usesRuntime = usesRuntimeSession(ctx.sessionId);
+      const effective = usesRuntime
+        ? await runtimeHostAdapter.readEffectiveRuntimeConfig()
+        : undefined;
+      const configured = effective
+        ? runtimeEffectiveEntry(effective, 'fallbackProviders')
+        : undefined;
+      const currentSource = usesRuntime
+        ? runtimeEffectiveValue(configured)
+        : (process.env.KODAX_FALLBACK_PROVIDERS ?? '');
+      const current = fallbackChain(currentSource);
       const sub = ctx.args[0]?.toLowerCase();
       if (!sub || sub === 'status') {
+        const status =
+          current.length === 0
+            ? 'Child-task provider fallback: off (no chain configured)'
+            : `Child-task provider fallback: on\n  Order: ${current.join(' -> ')}`;
         return {
           ok: true,
-          message:
-            current.length === 0
-              ? 'Child-task provider fallback: off (no chain configured)'
-              : `Child-task provider fallback: on\n  Order: ${current.join(' -> ')}`,
+          message: usesRuntime ? `${status}\n${runtimeEffectiveSourceNote(configured)}` : status,
           echo: true,
         };
       }
       if (sub === 'off' || sub === 'clear' || sub === 'none') {
-        delete process.env.KODAX_FALLBACK_PROVIDERS;
+        if (usesRuntime) await runtimeHostAdapter.patchRuntimeConfig({ fallbackProviders: [] });
+        else delete process.env.KODAX_FALLBACK_PROVIDERS;
         return {
           ok: true,
-          message: 'Child-task provider fallback disabled for this Space process.',
+          message: usesRuntime
+            ? 'Child-task provider fallback disabled in persisted Coder daemon config.'
+            : 'Child-task provider fallback disabled for this Space process.',
           echo: true,
         };
       }
@@ -2752,10 +2730,11 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
       if (chain.length === 0) {
         return { ok: false, message: 'Usage: /fallback ark-coding,kimi-code (or /fallback off)' };
       }
-      process.env.KODAX_FALLBACK_PROVIDERS = chain.join(',');
+      if (usesRuntime) await runtimeHostAdapter.patchRuntimeConfig({ fallbackProviders: chain });
+      else process.env.KODAX_FALLBACK_PROVIDERS = chain.join(',');
       return {
         ok: true,
-        message: `Child-task fallback order: ${chain.join(' -> ')}\nNote: this is a runtime override for the current Space process.`,
+        message: `Child-task fallback order: ${chain.join(' -> ')}\n${usesRuntime ? 'Saved to persisted Coder daemon config.' : 'Applied to the current Space process.'}`,
         echo: true,
       };
     },
@@ -2767,18 +2746,38 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
     argsHint: '[on|off]',
     source: 'builtin',
     handler: async (ctx) => {
+      const usesRuntime = usesRuntimeSession(ctx.sessionId);
+      const runtimeConfig = usesRuntime
+        ? await runtimeHostAdapter.readEffectiveRuntimeConfig()
+        : undefined;
       const parsed = parseToggleValue(ctx.args[0]);
       if (!ctx.args[0]) {
+        const enabled = usesRuntime
+          ? runtimeEffectiveToggle(runtimeEffectiveEntry(runtimeConfig, 'verifierLog'))
+          : process.env.KODAX_VERIFIER_LOG === '1';
+        const source = usesRuntime
+          ? runtimeEffectiveSourceNote(runtimeEffectiveEntry(runtimeConfig, 'verifierLog'))
+          : undefined;
         return {
           ok: true,
-          message: `Sidecar Verifier log: ${process.env.KODAX_VERIFIER_LOG === '1' ? 'on' : 'off'}\nUsage: /verifier-log [on|off]`,
+          message: usesRuntime
+            ? `Sidecar Verifier log: ${enabled ? 'on' : 'off'}\n${source}\nUsage: /verifier-log [on|off]`
+            : `Sidecar Verifier log: ${enabled ? 'on' : 'off'}\nUsage: /verifier-log [on|off]`,
           echo: true,
         };
       }
       if (!parsed) return { ok: false, message: 'Usage: /verifier-log [on|off]' };
-      if (parsed === 'on') process.env.KODAX_VERIFIER_LOG = '1';
+      if (usesRuntime) {
+        await runtimeHostAdapter.patchRuntimeConfig({ verifierLog: parsed === 'on' });
+      } else if (parsed === 'on') process.env.KODAX_VERIFIER_LOG = '1';
       else delete process.env.KODAX_VERIFIER_LOG;
-      return { ok: true, message: `Sidecar Verifier log: ${parsed}`, echo: true };
+      return {
+        ok: true,
+        message: usesRuntime
+          ? `Sidecar Verifier log config saved: ${parsed}.`
+          : `Sidecar Verifier log: ${parsed} for this Space process`,
+        echo: true,
+      };
     },
   },
 
@@ -2788,18 +2787,38 @@ export const BUILTIN_SLASH_COMMANDS: readonly SlashCommandDef[] = [
     argsHint: '[on|off]',
     source: 'builtin',
     handler: async (ctx) => {
+      const usesRuntime = usesRuntimeSession(ctx.sessionId);
+      const runtimeConfig = usesRuntime
+        ? await runtimeHostAdapter.readEffectiveRuntimeConfig()
+        : undefined;
       const parsed = parseToggleValue(ctx.args[0]);
       if (!ctx.args[0]) {
+        const enabled = usesRuntime
+          ? runtimeEffectiveToggle(runtimeEffectiveEntry(runtimeConfig, 'stallLog'))
+          : process.env.KODAX_STALL_LOG === '1';
+        const source = usesRuntime
+          ? runtimeEffectiveSourceNote(runtimeEffectiveEntry(runtimeConfig, 'stallLog'))
+          : undefined;
         return {
           ok: true,
-          message: `Stall Sidecar log: ${process.env.KODAX_STALL_LOG === '1' ? 'on' : 'off'}\nUsage: /stall-log [on|off]`,
+          message: usesRuntime
+            ? `Stall Sidecar log: ${enabled ? 'on' : 'off'}\n${source}\nUsage: /stall-log [on|off]`
+            : `Stall Sidecar log: ${enabled ? 'on' : 'off'}\nUsage: /stall-log [on|off]`,
           echo: true,
         };
       }
       if (!parsed) return { ok: false, message: 'Usage: /stall-log [on|off]' };
-      if (parsed === 'on') process.env.KODAX_STALL_LOG = '1';
+      if (usesRuntime) {
+        await runtimeHostAdapter.patchRuntimeConfig({ stallLog: parsed === 'on' });
+      } else if (parsed === 'on') process.env.KODAX_STALL_LOG = '1';
       else delete process.env.KODAX_STALL_LOG;
-      return { ok: true, message: `Stall Sidecar log: ${parsed}`, echo: true };
+      return {
+        ok: true,
+        message: usesRuntime
+          ? `Stall Sidecar log config saved: ${parsed}.`
+          : `Stall Sidecar log: ${parsed} for this Space process`,
+        echo: true,
+      };
     },
   },
 

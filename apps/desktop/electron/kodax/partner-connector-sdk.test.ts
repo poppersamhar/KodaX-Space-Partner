@@ -12,10 +12,35 @@ import type { PartnerConnectorRunService } from './partner-connector-runtime.js'
 
 process.env.KODAX_TEST_ONBOARDING = `connector-sdk-${randomUUID()}`;
 process.env.KODAX_SPACE_ENABLE_SDK_EXTENSIONS = '0';
+const credentialEnv = 'CONNECTOR_TEST_UNUSED';
+const previousCredential = process.env[credentialEnv];
+process.env[credentialEnv] = 'connector-test-credential';
 const { applySdkHomeEnv, getKodaxDir } = await import('./data-paths.js');
 applySdkHomeEnv();
 const directory = getKodaxDir();
 const projectRoot = path.join(directory, 'workspace');
+await fs.mkdir(directory, { recursive: true });
+await fs.writeFile(
+  path.join(directory, 'config.json'),
+  `${JSON.stringify(
+    {
+      customProviders: [
+        {
+          name: 'space-connector-sdk-test',
+          protocol: 'openai',
+          baseUrl: 'https://example.invalid/v1',
+          apiKeyEnv: credentialEnv,
+          model: 'test',
+          reasoning: 'none',
+        },
+      ],
+    },
+    null,
+    2,
+  )}\n`,
+);
+const keychain = await import('../providers/keychain.js');
+keychain._resetMemoryStoreForTesting();
 const { RealKodaXSession } = await import('./real-session.js');
 const { setRendererTarget } = await import('../ipc/push.js');
 setRendererTarget(() => null);
@@ -150,7 +175,10 @@ afterEach(async () => {
 });
 after(async () => {
   unregister();
+  keychain._resetMemoryStoreForTesting();
   await fs.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  if (previousCredential === undefined) delete process.env[credentialEnv];
+  else process.env[credentialEnv] = previousCredential;
 });
 function makeSession(bindings?: readonly PartnerConnectorSnapshotT[]) {
   const events: SessionEvent[] = [];

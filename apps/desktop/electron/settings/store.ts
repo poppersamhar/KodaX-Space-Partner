@@ -19,6 +19,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import {
   coderRuntimeModeSchema,
+  reasoningModeSchema,
   terminalShellPreferenceSchema,
   windowCloseBehaviorSchema,
   type CoderRuntimeModeT,
@@ -46,9 +47,10 @@ const SETTINGS_FILE = path.join(SPACE_DATA_DIR, 'settings.json');
 const MAX_SETTINGS_MIGRATION_BYTES = 1024 * 1024;
 
 const runtimeDefaultFieldSchemas = {
-  permissionMode: z.enum(['plan', 'accept-edits', 'auto']).optional(),
+  permissionMode: z.enum(['plan', 'accept-edits', 'auto', 'full-access']).optional(),
+  /** Legacy input accepted only so normalizeRawSettings can remove it. */
   autoModeEngine: z.enum(['llm', 'rules']).optional(),
-  reasoningMode: z.enum(['off', 'auto', 'quick', 'balanced', 'deep']).optional(),
+  reasoningMode: reasoningModeSchema.optional(),
   agentMode: persistedAgentModeSchema.optional(),
 } as const;
 
@@ -193,10 +195,6 @@ function cleanRuntimeDefaults(defaults: unknown): SpaceRuntimeDefaultsT {
   if (raw.permissionMode !== undefined) {
     const parsed = runtimeDefaultFieldSchemas.permissionMode.safeParse(raw.permissionMode);
     if (parsed.success) cleaned.permissionMode = parsed.data;
-  }
-  if (raw.autoModeEngine !== undefined) {
-    const parsed = runtimeDefaultFieldSchemas.autoModeEngine.safeParse(raw.autoModeEngine);
-    if (parsed.success) cleaned.autoModeEngine = parsed.data;
   }
   if (raw.reasoningMode !== undefined) {
     const parsed = runtimeDefaultFieldSchemas.reasoningMode.safeParse(raw.reasoningMode);

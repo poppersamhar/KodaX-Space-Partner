@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 
 import type {
@@ -8,10 +9,12 @@ import type {
   RuntimeAppendNoticeInput,
   RuntimeCompactSessionInput,
   RuntimeCompactSessionResult,
+  RuntimeConfigPatch,
+  RuntimeCredentialBinding,
   RuntimeConversationHistory,
   RuntimeConversationHistoryBoundary,
   RuntimeConversationHistorySliceEntry,
-  RuntimeCredentialBroker,
+  RuntimeEffectiveConfigSnapshot,
   RuntimeDaemonManagementState,
   RuntimeDaemonPreflight,
   RuntimeDaemonRollbackResult,
@@ -36,6 +39,8 @@ import type {
   RuntimeSessionSettings,
   RuntimeSessionSettingsPatch,
   RuntimeSessionSummary,
+  RuntimeScopedCredentialBroker,
+  RuntimeScopedCredentialRequest,
   RuntimeStatusSnapshot,
   RuntimeDaemonStartRunInput,
   RuntimeSubmitInput,
@@ -79,6 +84,11 @@ import {
   runtimeProjectionController,
   type RuntimeProjectionController,
 } from './runtime/runtime-projection-controller.js';
+import {
+  parseRuntimeFailureDetail,
+  runtimeFailurePresentation,
+  runtimeRetryAvailableAt,
+} from './runtime/runtime-failure.js';
 import { pushToRenderer } from '../ipc/push.js';
 import { areLearningMutationsEnabled } from './learning-policy.js';
 import {
@@ -118,10 +128,21 @@ import {
   createRuntimeStartupTiming,
   type RuntimeStartupTimingFactory,
 } from './runtime-startup-timing.js';
+import {
+  listKnownProviderIds,
+  readProviderCredential,
+  resolveCredentialProviderIds,
+} from '../providers/credentials.js';
+import { createScopedRuntimeCredentialBroker } from '../providers/runtime-credential-broker.js';
 
 export type RuntimeHostMode = 'legacy' | 'runtime';
 export type RuntimeHostState =
-  'uninitialized' | 'initializing' | 'legacy' | 'ready' | 'failed' | 'closed';
+  | 'uninitialized'
+  | 'initializing'
+  | 'legacy'
+  | 'ready'
+  | 'failed'
+  | 'closed';
 export type RuntimeCapabilityOwner = 'runtime' | 'space-bridge' | 'legacy' | 'unavailable';
 export type RuntimeCapabilitySupport = 'supported' | 'partial' | 'unavailable';
 
@@ -1152,8 +1173,8 @@ type SpaceRuntimeConnectOptions = Omit<ConnectKodaXRuntimeOptions, 'requirements
   /** Opt-in lifecycle policy for Space-managed daemons. */
   readonly daemonOrphanExitMs?: number;
   readonly requirements?: NonNullable<ConnectKodaXRuntimeOptions['requirements']> & {
-    /** Windows sandbox ownership and filesystem-effect convergence use the v5 contract. */
-    readonly sandboxRuntime?: 5;
+    /** Sandbox-first Auto and Windows setup-generation-10 admission use the v11 contract. */
+    readonly sandboxRuntime?: 11;
     /** The current daemon host actually has Space's orphan idle-exit policy enabled. */
     readonly daemonOrphanExit?: 1;
     /** Managed Run lifecycle events have canonical persistence boundaries. */
@@ -1235,10 +1256,25 @@ interface RuntimeOwnerControl {
 
 interface SpaceCredentialLeaseBinding {
   readonly leaseId: string;
-  readonly provider: string;
+  readonly providers: readonly string[];
   readonly sessionId: string;
-  readonly runBinding: { boundRunId?: string };
-  readonly broker: RuntimeCredentialBroker;
+  readonly runBinding?: { boundRunId?: string };
+  readonly broker: RuntimeScopedCredentialBroker;
+}
+
+function isAuthorizedRunCredentialPurpose(
+  target: RuntimeScopedCredentialRequest['target'],
+  purpose: RuntimeScopedCredentialRequest['purpose'],
+): boolean {
+  switch (target.kind) {
+    case 'run':
+    case 'actor_turn':
+      return purpose !== 'workflow';
+    case 'workflow':
+      return true;
+    case 'operation':
+      return false;
+  }
 }
 
 interface RuntimeActorObservationState {
@@ -1254,7 +1290,10 @@ type DaemonShutdownVerification =
   | {
       readonly status: 'unverified';
       readonly reason:
-        'daemon_active' | 'containment_active' | 'containment_unavailable' | 'outcome_missing';
+        | 'daemon_active'
+        | 'containment_active'
+        | 'containment_unavailable'
+        | 'outcome_missing';
     };
 
 interface DaemonShutdownVerificationInput {
@@ -1295,7 +1334,8 @@ export interface RuntimeHostAdapterOptions {
   readonly identityStore?: RuntimeIdentityStoreLike;
   readonly projectionController?: RuntimeProjectionController;
   readonly push?: RuntimeProjectionPush;
-  readonly credentialResolver?: (provider: string) => Promise<string | undefined>;
+  readonly credentialResolver?: RuntimeProviderCredentialResolver;
+  readonly credentialProvidersResolver?: () => Promise<readonly string[]>;
   readonly runtimeEventParser?: RuntimeEventParser;
   readonly ownerControl?: RuntimeOwnerControl;
   readonly autoModeDefaultsResolver?: () => Promise<KodaxAutoModeDefaults>;
@@ -1315,6 +1355,8 @@ export interface RuntimeHostAdapterOptions {
   /** Test seam for the opt-in Runtime startup timing recorder. */
   readonly startupTimingFactory?: RuntimeStartupTimingFactory;
 }
+
+type RuntimeProviderCredentialResolver = (provider: string) => Promise<string | undefined>;
 
 const MAX_DIAGNOSTIC_ERROR = 512;
 const DAEMON_PROCESS_EXIT_TIMEOUT_MS = 15_000;
@@ -1386,9 +1428,33 @@ function runtimeCapabilityVersion(runtime: KodaXDaemonRuntime, name: string): nu
 }
 
 function assertSpaceDaemonRequiredCapabilities(runtime: KodaXDaemonRuntime): void {
-  if (runtimeCapabilityVersion(runtime, 'sandboxRuntime') < 5) {
+  if (runtimeCapabilityVersion(runtime, 'providerCredentialBroker') < 2) {
     throw new Error(
-      'KodaX Runtime does not support the required sandboxRuntime v5 capability. ' +
+      'KodaX Runtime does not support the required providerCredentialBroker v2 capability. ' +
+        'Install a compatible KodaX package and restart the Coder daemon.',
+    );
+  }
+  if (runtimeCapabilityVersion(runtime, 'effectiveConfig') < 1) {
+    throw new Error(
+      'KodaX Runtime does not support the required effectiveConfig v1 capability. ' +
+        'Install a compatible KodaX package and restart the Coder daemon.',
+    );
+  }
+  if (runtimeCapabilityVersion(runtime, 'sandboxRuntime') < 11) {
+    throw new Error(
+      'KodaX Runtime does not support the required sandboxRuntime v11 capability. ' +
+        'Install a compatible KodaX package and restart the Coder daemon.',
+    );
+  }
+  if (runtimeCapabilityVersion(runtime, 'runtimeAutoModeGuardrail') < 5) {
+    throw new Error(
+      'KodaX Runtime does not support the required runtimeAutoModeGuardrail v5 capability. ' +
+        'Install a compatible KodaX package and restart the Coder daemon.',
+    );
+  }
+  if (runtimeCapabilityVersion(runtime, 'sharedSessionSettings') < 2) {
+    throw new Error(
+      'KodaX Runtime does not support the required sharedSessionSettings v2 capability. ' +
         'Install a compatible KodaX package and restart the Coder daemon.',
     );
   }
@@ -1532,11 +1598,14 @@ async function createPublishedRuntime(
         readonly crashOutcomeModel?: number;
         readonly daemonOrphanExit?: number;
         readonly daemonShutdownVerification?: number;
+        readonly effectiveConfig?: number;
         readonly managedRunDurability?: number;
         readonly runtimeExitSettlement?: number;
         readonly runtimeEventCoalescing?: number;
+        readonly runtimeAutoModeGuardrail?: number;
         readonly sandboxRuntime?: number;
         readonly sessionEventJournal?: number;
+        readonly sharedSessionSettings?: number;
         readonly liveOutputSegments?: number;
       };
     },
@@ -1551,12 +1620,15 @@ export function assertSpaceRuntimeSdkRequiredCapabilities(sdk: {
     readonly crashOutcomeModel?: number;
     readonly daemonOrphanExit?: number;
     readonly daemonShutdownVerification?: number;
+    readonly effectiveConfig?: number;
     readonly liveOutputSegments?: number;
     readonly managedRunDurability?: number;
     readonly runtimeExitSettlement?: number;
     readonly runtimeEventCoalescing?: number;
+    readonly runtimeAutoModeGuardrail?: number;
     readonly sandboxRuntime?: number;
     readonly sessionEventJournal?: number;
+    readonly sharedSessionSettings?: number;
   };
 }): void {
   const capabilities = sdk.KODAX_RUNTIME_SDK_CAPABILITIES;
@@ -1566,12 +1638,17 @@ export function assertSpaceRuntimeSdkRequiredCapabilities(sdk: {
     ...(capabilities?.crashOutcomeModel === 2 ? [] : ['crashOutcomeModel v2']),
     ...(capabilities?.daemonOrphanExit === 1 ? [] : ['daemonOrphanExit v1']),
     ...(capabilities?.daemonShutdownVerification === 1 ? [] : ['daemonShutdownVerification v1']),
+    ...(capabilities?.effectiveConfig === 1 ? [] : ['effectiveConfig v1']),
     ...(capabilities?.liveOutputSegments === 1 ? [] : ['liveOutputSegments v1']),
     ...(capabilities?.managedRunDurability === 1 ? [] : ['managedRunDurability v1']),
     ...(capabilities?.runtimeExitSettlement === 2 ? [] : ['runtimeExitSettlement v2']),
     ...(capabilities?.runtimeEventCoalescing === 1 ? [] : ['runtimeEventCoalescing v1']),
-    ...((capabilities?.sandboxRuntime ?? 0) >= 5 ? [] : ['sandboxRuntime v5']),
+    ...((capabilities?.runtimeAutoModeGuardrail ?? 0) >= 5
+      ? []
+      : ['runtimeAutoModeGuardrail v5']),
+    ...((capabilities?.sandboxRuntime ?? 0) >= 11 ? [] : ['sandboxRuntime v11']),
     ...(capabilities?.sessionEventJournal === 1 ? [] : ['sessionEventJournal v1']),
+    ...((capabilities?.sharedSessionSettings ?? 0) >= 2 ? [] : ['sharedSessionSettings v2']),
   ];
   if (missing.length > 0) {
     throw new Error(
@@ -1829,9 +1906,15 @@ function runtimeFailureKind(value: unknown): RuntimeRunFailureKind | undefined {
     case 'auth':
     case 'rate_limit':
     case 'network':
+    case 'not_found':
+    case 'unknown_provider':
+    case 'request':
+    case 'upstream':
+    case 'cancelled':
     case 'provider_aborted':
     case 'invalid_response':
     case 'runtime_cleanup':
+    case 'context_capacity':
     case 'provider':
       return value;
     default:
@@ -1851,23 +1934,6 @@ function isReconnectableRunTransportLoss(error: unknown): boolean {
   return isRuntimeDaemonDisconnectFailure(error) && error.reconnectable;
 }
 
-function runtimeFailurePresentation(failureKind: unknown): {
-  readonly category: 'auth' | 'rate_limit' | 'network' | 'unknown';
-  readonly retriable: boolean;
-  readonly action?: 'retry' | 'open_provider_settings' | 'check_network';
-} {
-  switch (failureKind) {
-    case 'auth':
-      return { category: 'auth', retriable: false, action: 'open_provider_settings' };
-    case 'rate_limit':
-      return { category: 'rate_limit', retriable: true, action: 'retry' };
-    case 'network':
-      return { category: 'network', retriable: true, action: 'check_network' };
-    default:
-      return { category: 'unknown', retriable: false };
-  }
-}
-
 export class RuntimeHostAdapter {
   private mode: RuntimeHostMode;
   private readonly profileRoot: string;
@@ -1877,7 +1943,8 @@ export class RuntimeHostAdapter {
   private readonly identityStore: RuntimeIdentityStoreLike;
   private readonly projectionController: RuntimeProjectionController;
   private readonly push: RuntimeProjectionPush;
-  private readonly credentialResolver: (provider: string) => Promise<string | undefined>;
+  private readonly credentialResolver: RuntimeProviderCredentialResolver;
+  private readonly credentialProvidersResolver: () => Promise<readonly string[]>;
   private readonly ownerControl: RuntimeOwnerControl;
   private readonly idleDaemonStop: () => Promise<SafeDaemonStopResult>;
   private readonly daemonShutdownVerifier: DaemonShutdownVerifier;
@@ -2034,9 +2101,10 @@ export class RuntimeHostAdapter {
       options.integrationHealthPollMs ?? (options.runtimeFactory === undefined ? 2_000 : 0);
     this.startupTimingFactory =
       options.startupTimingFactory ?? ((scope) => createRuntimeStartupTiming(scope));
-    this.credentialResolver =
-      options.credentialResolver ??
-      (async (provider) => (await import('../ipc/provider.js')).readProviderCredential(provider));
+    this.credentialResolver = options.credentialResolver ?? readProviderCredential;
+    this.credentialProvidersResolver =
+      options.credentialProvidersResolver ??
+      (options.credentialResolver ? async () => [] : listKnownProviderIds);
   }
 
   selectedHost(): RuntimeHostMode {
@@ -2200,7 +2268,8 @@ export class RuntimeHostAdapter {
         interruptInput: 1,
         askUserTransport: 1,
         permissionCas: 1,
-        providerCredentialBroker: 1,
+        providerCredentialBroker: 2,
+        effectiveConfig: 1,
         runBoundHostTools: 2,
         coderOwnerFencing: 1,
         crashOutcomeModel: 2,
@@ -2214,18 +2283,18 @@ export class RuntimeHostAdapter {
         connectionLifecycle: 1,
         typedRuntimeEvents: 1,
         daemonSafeRunInput: 1,
-        sharedSessionSettings: 1,
+        sharedSessionSettings: 2,
         durableRecoveryQueries: 1,
         daemonManagement: 1,
         daemonOrphanExit: 1,
         managedRunDurability: 1,
         actorSettlementConvergence: 2,
         runtimeEventCoalescing: 1,
-        sandboxRuntime: 5,
+        sandboxRuntime: 11,
         sessionEventJournal: 1,
         liveOutputSegments: 1,
         integrationConfigResilience: 1,
-        runtimeAutoModeGuardrail: 4,
+        runtimeAutoModeGuardrail: 5,
       },
     };
   }
@@ -2666,6 +2735,7 @@ export class RuntimeHostAdapter {
       'learning:read',
       'learning:control',
       'credential:register',
+      'integration:admin',
       'host-tool:register',
       'owner:admin',
       'daemon:admin',
@@ -2762,14 +2832,14 @@ export class RuntimeHostAdapter {
       {
         id: 'runtime.autoMode.guardrail',
         version: version('runtimeAutoModeGuardrail'),
-        available: version('runtimeAutoModeGuardrail') >= 4,
+        available: version('runtimeAutoModeGuardrail') >= 5,
       },
       {
         id: 'runtime.tools.sandboxObservation',
         version: 1,
         available:
-          version('sandboxRuntime') >= 3 &&
-          version('runtimeAutoModeGuardrail') >= 4 &&
+          version('sandboxRuntime') >= 11 &&
+          version('runtimeAutoModeGuardrail') >= 5 &&
           available('typedRuntimeEvents'),
       },
       {
@@ -3541,6 +3611,7 @@ export class RuntimeHostAdapter {
   async compactSession(input: RuntimeCompactSessionInput): Promise<RuntimeCompactSessionResult> {
     const runtime = await this.requireRuntime();
     await this.assertCoderSession(runtime, input.sessionId);
+    const operationId = input.operation?.operationId ?? `space-compact-${randomUUID()}`;
     // Compaction lifecycle is Runtime-owned. Subscribe before issuing the command so the
     // renderer cannot miss the canonical start/finished/end sequence and the host does not need
     // to synthesize a second, revision-less compatibility sequence.
@@ -3551,12 +3622,31 @@ export class RuntimeHostAdapter {
       (this.localCompactionCallsBySession.get(input.sessionId) ?? 0) + 1,
     );
     let completedCompaction = false;
+    let registeredCredential:
+      | { readonly binding: RuntimeCredentialBinding; readonly leaseId: string }
+      | undefined;
     try {
-      const result = await runtime.sessions.compact(input);
+      registeredCredential =
+        !input.credential && input.provider && input.provider !== 'mock'
+          ? await this.registerCompactionCredentialLease(
+              runtime,
+              input.provider,
+              input.sessionId,
+              operationId,
+            )
+          : undefined;
+      const result = await runtime.sessions.compact({
+        ...input,
+        ...(registeredCredential ? { credential: registeredCredential.binding } : {}),
+        ...(input.provider !== 'mock' ? { operation: { ...input.operation, operationId } } : {}),
+      });
       completedCompaction = result.compacted;
       if (result.compacted) invalidatePersistedSessionCache(input.sessionId);
       return result;
     } finally {
+      if (registeredCredential) {
+        await this.revokeCredentialLease(runtime, registeredCredential.leaseId);
+      }
       const remaining = (this.localCompactionCallsBySession.get(input.sessionId) ?? 1) - 1;
       if (remaining > 0) this.localCompactionCallsBySession.set(input.sessionId, remaining);
       else this.localCompactionCallsBySession.delete(input.sessionId);
@@ -3748,11 +3838,8 @@ export class RuntimeHostAdapter {
     patch: RuntimeSessionSettingsPatch,
   ): Promise<RuntimeSessionSettingsPatch> {
     if (
-      current.autoModeTimeoutMs !== undefined &&
-      (current.autoModeClassifierModel !== undefined ||
-        patch.autoModeClassifierModel !== undefined) &&
-      (current.autoModeSpeculativeWindowMs !== undefined ||
-        patch.autoModeSpeculativeWindowMs !== undefined)
+      current.autoModeClassifierModel !== undefined ||
+      patch.autoModeClassifierModel !== undefined
     ) {
       return patch;
     }
@@ -3761,12 +3848,10 @@ export class RuntimeHostAdapter {
       defaults = await this.autoModeDefaultsResolver();
     } catch (error) {
       console.warn(
-        '[runtime] Auto LLM defaults load failed; falling back to engine=llm with SDK defaults:',
+        '[runtime] Auto LLM classifier defaults load failed; using SDK defaults:',
         sanitizeDiagnosticError(error),
       );
-      defaults = {
-        engine: 'llm',
-      };
+      defaults = {};
     }
     return {
       ...patch,
@@ -3774,16 +3859,6 @@ export class RuntimeHostAdapter {
       patch.autoModeClassifierModel === undefined &&
       defaults.classifierModel !== undefined
         ? { autoModeClassifierModel: defaults.classifierModel }
-        : {}),
-      ...(current.autoModeTimeoutMs === undefined &&
-      patch.autoModeTimeoutMs === undefined &&
-      defaults.timeoutMs !== undefined
-        ? { autoModeTimeoutMs: defaults.timeoutMs }
-        : {}),
-      ...(current.autoModeSpeculativeWindowMs === undefined &&
-      patch.autoModeSpeculativeWindowMs === undefined &&
-      defaults.speculativeWindowMs !== undefined
-        ? { autoModeSpeculativeWindowMs: defaults.speculativeWindowMs }
         : {}),
     };
   }
@@ -4538,24 +4613,27 @@ export class RuntimeHostAdapter {
         state.bindingRunIds.has(run.runId) &&
         !this.credentialLeases.has(credential.leaseId)
       ) {
+        const providers = await resolveCredentialProviderIds(
+          credential.provider,
+          this.credentialProvidersResolver,
+        );
+        const runBinding = { boundRunId: run.runId };
+        const leaseBinding: { leaseId?: string } = { leaseId: credential.leaseId };
         const binding: SpaceCredentialLeaseBinding = {
           leaseId: credential.leaseId,
-          provider: credential.provider,
+          providers,
           sessionId: run.sessionId,
-          runBinding: { boundRunId: run.runId },
-          broker: async (request) => {
-            if (
-              request.provider !== credential.provider ||
-              request.sessionId !== run.sessionId ||
-              request.runId !== run.runId
-            ) {
-              return undefined;
-            }
-            return this.credentialResolver(credential.provider);
-          },
+          runBinding,
+          broker: this.createRunCredentialBroker(
+            leaseBinding,
+            providers,
+            run.sessionId,
+            runBinding,
+            run.origin?.operationId,
+          ),
         };
         try {
-          await runtime.credentials.resume(credential.leaseId, binding.broker);
+          await runtime.credentials.resumeScoped(credential.leaseId, binding.broker);
           if (
             this.runtime === runtime &&
             this.state === 'ready' &&
@@ -4774,30 +4852,28 @@ export class RuntimeHostAdapter {
       session.model = session.model ?? resolveEffectiveProviderModel(session.provider, undefined);
     }
     session.thinking = settings.thinking;
-    if (
+    const effortMode = effortToReasoningMode(settings.effort);
+    if (effortMode !== undefined) {
+      session.reasoningMode = effortMode;
+    } else if (
       settings.reasoningMode === 'off' ||
       settings.reasoningMode === 'auto' ||
       settings.reasoningMode === 'quick' ||
       settings.reasoningMode === 'balanced' ||
       settings.reasoningMode === 'deep'
     ) {
-      session.reasoningMode = settings.reasoningMode;
-    } else {
-      const effortMode = effortToReasoningMode(settings.effort);
-      if (effortMode !== undefined) session.reasoningMode = effortMode;
+      session.reasoningMode = effortToReasoningMode(settings.reasoningMode) ?? 'auto';
     }
     if (
       settings.permissionMode === 'plan' ||
       settings.permissionMode === 'accept-edits' ||
-      settings.permissionMode === 'auto'
+      settings.permissionMode === 'auto' ||
+      settings.permissionMode === 'full-access'
     ) {
       session.permissionMode = settings.permissionMode;
     }
     if (settings.agentMode === 'ama' || settings.agentMode === 'sa') {
       session.agentMode = settings.agentMode;
-    }
-    if (settings.autoModeEngine === 'llm' || settings.autoModeEngine === 'rules') {
-      session.autoModeEngine = settings.autoModeEngine;
     }
     if (!isCurrentRevision()) return;
     await kodaxHost.persistRuntime(sessionId);
@@ -5241,22 +5317,34 @@ export class RuntimeHostAdapter {
         return;
       }
       const terminal = runtimeEventRecord(payload?.terminal);
-      const failureKind = runtimeFailureKind(terminal?.failureKind);
-      const terminalMessage =
-        event.type === 'run.failed' && typeof terminal?.message === 'string'
-          ? terminal.message.trim() || undefined
-          : undefined;
+      const failureDetailResult = parseRuntimeFailureDetail(payload?.failureDetail);
+      if (failureDetailResult.issuePaths.length > 0) {
+        console.warn('[runtime] sanitized malformed failureDetail', {
+          eventType: event.type,
+          runId: event.runId,
+          issuePaths: failureDetailResult.issuePaths,
+        });
+      }
+      const failureDetail = failureDetailResult.detail;
+      const failureKind = failureDetail?.failureKind ?? runtimeFailureKind(terminal?.failureKind);
       const error =
-        typeof payload?.error === 'string'
-          ? payload.error
-          : terminalMessage !== undefined
-            ? terminalMessage
-            : event.type === 'run.cancelled'
-              ? 'cancelled'
-              : event.type === 'run.interrupted'
-                ? 'Runtime run interrupted'
-                : 'Runtime run failed';
-      const failurePresentation = runtimeFailurePresentation(failureKind);
+        failureDetail?.safeMessage ??
+        (event.type === 'run.cancelled'
+          ? 'cancelled'
+          : event.type === 'run.interrupted'
+            ? 'Runtime run interrupted'
+            : 'Runtime run failed');
+      const endedAt = payload?.endedAt;
+      const retryAvailableAt = runtimeRetryAvailableAt(
+        typeof endedAt === 'string' || typeof endedAt === 'number' ? endedAt : undefined,
+        failureDetail?.retryAfterMs,
+      );
+      const failurePresentation = runtimeFailurePresentation(
+        failureKind,
+        failureDetail?.providerErrorCode,
+        retryAvailableAt !== undefined ? failureDetail?.retryAfterMs : undefined,
+      );
+      const hasStructuredFailure = failureDetail !== undefined;
       this.push('session.event', {
         ...runtimeSessionEventOrigin(runtimeId, event),
         kind: 'session_error',
@@ -5264,9 +5352,18 @@ export class RuntimeHostAdapter {
         ...(event.turnId ? { turnId: event.turnId } : {}),
         error,
         ...(failureKind !== undefined ? { failureKind } : {}),
-        category: event.type === 'run.cancelled' ? 'cancelled' : failurePresentation.category,
-        retriable: event.type === 'run.failed' ? failurePresentation.retriable : true,
-        ...(event.type === 'run.failed' && failurePresentation.action !== undefined
+        ...(failureDetail !== undefined ? { failureDetail } : {}),
+        category:
+          hasStructuredFailure || event.type !== 'run.cancelled'
+            ? failurePresentation.category
+            : 'cancelled',
+        retriable:
+          hasStructuredFailure || event.type === 'run.failed'
+            ? failurePresentation.retriable
+            : true,
+        ...(retryAvailableAt !== undefined ? { retryAvailableAt } : {}),
+        ...((hasStructuredFailure || event.type === 'run.failed') &&
+        failurePresentation.action !== undefined
           ? { action: failurePresentation.action }
           : {}),
       });
@@ -5470,9 +5567,14 @@ export class RuntimeHostAdapter {
     // validate and admit the exact Session operation itself.
     await this.ensureObserved(input.sessionId);
     const provider = input.options?.provider;
+    const operationId =
+      input.operation?.operationId ??
+      (!input.credential && provider && provider !== 'mock'
+        ? `space-run-${randomUUID()}`
+        : undefined);
     const registeredCredential =
-      !input.credential && provider
-        ? await this.registerCredentialLease(runtime, provider, input.sessionId)
+      !input.credential && provider && provider !== 'mock' && operationId
+        ? await this.registerCredentialLease(runtime, provider, input.sessionId, operationId)
         : undefined;
     const credentialBinding = input.credential ?? registeredCredential?.binding;
     let handle: RuntimeRunHandle;
@@ -5480,6 +5582,7 @@ export class RuntimeHostAdapter {
       handle = await runtime.runs.start({
         ...input,
         ...(credentialBinding ? { credential: credentialBinding } : {}),
+        ...(operationId ? { operation: { ...input.operation, operationId } } : {}),
         ...(!input.hostTools && this.hostToolLeaseId
           ? { hostTools: { leaseId: this.hostToolLeaseId } }
           : {}),
@@ -5493,7 +5596,7 @@ export class RuntimeHostAdapter {
     }
     if (registeredCredential) {
       const lease = this.credentialLeases.get(registeredCredential.leaseId);
-      if (lease) lease.runBinding.boundRunId = handle.runId;
+      if (lease?.runBinding) lease.runBinding.boundRunId = handle.runId;
     }
     this.spaceOwnedRunIds.add(handle.runId);
     this.activeRuns.set(input.sessionId, handle.runId);
@@ -5600,41 +5703,114 @@ export class RuntimeHostAdapter {
     runtime: KodaXDaemonRuntime,
     provider: string,
     sessionId: string,
+    operationId: string,
   ): Promise<
     | {
-        readonly binding: { readonly leaseId: string; readonly provider: string };
+        readonly binding: RuntimeCredentialBinding;
         readonly leaseId: string;
       }
     | undefined
   > {
-    if (!(await this.credentialResolver(provider))) return undefined;
-    const runBinding: SpaceCredentialLeaseBinding['runBinding'] = {};
-    const broker: RuntimeCredentialBroker = async (request) => {
-      if (request.provider !== provider || request.sessionId !== sessionId) return undefined;
-      if (runBinding.boundRunId !== undefined && request.runId !== runBinding.boundRunId) {
-        return undefined;
-      }
-      runBinding.boundRunId = request.runId;
-      return this.credentialResolver(provider);
-    };
-    const lease = await runtime.credentials.register({ providers: [provider] }, broker);
+    const providers = await resolveCredentialProviderIds(
+      provider,
+      this.credentialProvidersResolver,
+    );
+    const runBinding: NonNullable<SpaceCredentialLeaseBinding['runBinding']> = {};
+    const leaseBinding: { leaseId?: string } = {};
+    const broker = this.createRunCredentialBroker(
+      leaseBinding,
+      providers,
+      sessionId,
+      runBinding,
+      operationId,
+    );
+    const lease = await runtime.credentials.registerScoped({ providers }, broker);
+    leaseBinding.leaseId = lease.id;
     const tracked: SpaceCredentialLeaseBinding = {
       leaseId: lease.id,
-      provider,
+      providers,
       sessionId,
       runBinding,
       broker,
     };
     this.credentialLeases.set(lease.id, tracked);
     return {
-      binding: { leaseId: lease.id, provider },
+      binding: { leaseId: lease.id, mode: 'scoped', providers },
       leaseId: lease.id,
     };
   }
 
+  private async registerCompactionCredentialLease(
+    runtime: KodaXDaemonRuntime,
+    provider: string,
+    sessionId: string,
+    operationId: string,
+  ): Promise<{ readonly binding: RuntimeCredentialBinding; readonly leaseId: string }> {
+    const providers = await resolveCredentialProviderIds(
+      provider,
+      this.credentialProvidersResolver,
+    );
+    const leaseBinding: { leaseId?: string } = {};
+    const broker = createScopedRuntimeCredentialBroker({
+      leaseBinding,
+      providers,
+      sessionId,
+      authorize: (request) =>
+        request.purpose === 'compaction' &&
+        request.target.kind === 'operation' &&
+        request.target.operation === 'session.compact' &&
+        request.target.operationId === operationId,
+      readCredential: this.credentialResolver,
+    });
+    const lease = await runtime.credentials.registerScoped({ providers }, broker);
+    leaseBinding.leaseId = lease.id;
+    this.credentialLeases.set(lease.id, {
+      leaseId: lease.id,
+      providers,
+      sessionId,
+      broker,
+    });
+    return {
+      binding: { leaseId: lease.id, mode: 'scoped', providers },
+      leaseId: lease.id,
+    };
+  }
+
+  private createRunCredentialBroker(
+    leaseBinding: { leaseId?: string },
+    providers: readonly string[],
+    sessionId: string,
+    runBinding: { boundRunId?: string },
+    operationId?: string,
+  ): RuntimeScopedCredentialBroker {
+    return createScopedRuntimeCredentialBroker({
+      leaseBinding,
+      providers,
+      sessionId,
+      authorize: (request) => {
+        if (!isAuthorizedRunCredentialPurpose(request.target, request.purpose)) return false;
+        const target = request.target;
+        if (target.kind === 'run') {
+          if (operationId !== undefined && target.operationId !== operationId) return false;
+          if (runBinding.boundRunId !== undefined && target.runId !== runBinding.boundRunId) {
+            return false;
+          }
+          runBinding.boundRunId = target.runId;
+          return true;
+        }
+        return (
+          (target.kind === 'actor_turn' || target.kind === 'workflow') &&
+          runBinding.boundRunId !== undefined &&
+          target.parentRunId === runBinding.boundRunId
+        );
+      },
+      readCredential: this.credentialResolver,
+    });
+  }
+
   private resumeKnownCredentialLeases(runtime: KodaXDaemonRuntime): void {
     for (const [leaseId, binding] of [...this.credentialLeases]) {
-      void runtime.credentials.resume(leaseId, binding.broker).then(
+      void runtime.credentials.resumeScoped(leaseId, binding.broker).then(
         () => {
           if (
             this.runtime === runtime &&
@@ -5883,12 +6059,16 @@ export class RuntimeHostAdapter {
         'Interrupt input must reuse the active run credential and host-tool bindings.',
       );
     }
+    const operationId =
+      input.operation?.operationId ??
+      (!isInterrupt && !input.credential ? `space-after-turn-${randomUUID()}` : undefined);
     const registeredCredential =
-      !isInterrupt && !input.credential
+      !isInterrupt && !input.credential && operationId
         ? await this.registerCredentialLease(
             runtime,
             (await runtime.runs.get(input.afterRunId)).provider,
             input.sessionId,
+            operationId,
           )
         : undefined;
     const credentialBinding = input.credential ?? registeredCredential?.binding;
@@ -5897,6 +6077,7 @@ export class RuntimeHostAdapter {
       result = await runtime.runs.submitInput({
         ...input,
         ...(!isInterrupt && credentialBinding ? { credential: credentialBinding } : {}),
+        ...(operationId ? { operation: { ...input.operation, operationId } } : {}),
         ...(!isInterrupt && !input.hostTools && this.hostToolLeaseId
           ? { hostTools: { leaseId: this.hostToolLeaseId } }
           : {}),
@@ -5912,7 +6093,7 @@ export class RuntimeHostAdapter {
       await this.revokeCredentialLease(runtime, registeredCredential.leaseId);
     } else if (result.accepted && registeredCredential) {
       const lease = this.credentialLeases.get(registeredCredential.leaseId);
-      if (lease) lease.runBinding.boundRunId = result.runId;
+      if (lease?.runBinding) lease.runBinding.boundRunId = result.runId;
       this.continuationCredentialLeases.set(result.runId, registeredCredential.leaseId);
     }
     if (result.accepted && result.delivery === 'after_turn') {
@@ -6072,6 +6253,18 @@ export class RuntimeHostAdapter {
     const runtime = await this.requireRuntime();
     await runtime.config.reload();
     await this.refreshProfile(this.currentProfileCursor());
+  }
+
+  async readRuntimeConfig(): Promise<unknown> {
+    return (await this.requireRuntime()).config.read();
+  }
+
+  async readEffectiveRuntimeConfig(): Promise<RuntimeEffectiveConfigSnapshot> {
+    return (await this.requireRuntime()).config.readEffective();
+  }
+
+  async patchRuntimeConfig(patch: RuntimeConfigPatch): Promise<unknown> {
+    return (await this.requireRuntime()).config.patch(patch);
   }
 
   async listRuntimeCustomProviders(): Promise<readonly SdkCustomProviderConfig[]> {

@@ -2,7 +2,7 @@
 //
 // loader 是 SDK loadConfig 的薄包装；测试用 setUserConfigImpl 注入 mock 验证：
 //   - 默认值字段映射 (provider/model/thinking/reasoningMode/permissionMode/customProvidersCount)
-//   - permissionMode 只接 'plan' / 'accept-edits'，KodaX 的 'default'/'bypass-permissions' → undefined
+//   - permissionMode 四档规范值与旧别名迁移
 //   - reasoningCeiling > reasoningMode 优先 (v0.7.29 兼容)
 //   - registerKodaxCustomProviders 把数组传给 SDK；空 / undefined skip
 //   - SDK loadConfig 抛异常 fallback 全 undefined + count=0
@@ -20,14 +20,12 @@ import {
   loadKodaxCustomProviders,
   loadKodaxAutoModeDefaults,
   loadKodaxRunConfig,
-  loadKodaxSandboxConfig,
   loadKodaxUserDefaults,
   registerKodaxCustomProviders,
   removeKodaxConfigCustomProvider,
   setUserConfigImpl,
   updateKodaxCompactionConfig,
   updateKodaxConfigCustomProvider,
-  updateKodaxSandboxConfig,
   type KodaxUserConfigImpl,
 } from '../kodax/user-config.js';
 
@@ -68,7 +66,7 @@ function mockUserConfig(
   setUserConfigImpl(impl);
 }
 
-test('empty config → optional user fields undefined with explicit Auto LLM 0.7.80 defaults', async () => {
+test('empty config leaves optional user fields undefined', async () => {
   mockUserConfig({});
   const d = await loadKodaxUserDefaults();
   assert.equal(d.provider, undefined);
@@ -76,9 +74,7 @@ test('empty config → optional user fields undefined with explicit Auto LLM 0.7
   assert.equal(d.thinking, undefined);
   assert.equal(d.reasoningMode, undefined);
   assert.equal(d.permissionMode, undefined);
-  assert.equal(d.autoModeEngine, 'llm');
   assert.equal(d.autoModeClassifierModel, undefined);
-  assert.equal(d.autoModeTimeoutMs, undefined);
   assert.equal(d.customProvidersCount, 0);
 });
 
@@ -106,13 +102,13 @@ test('reasoningCeiling preferred over reasoningMode when both set (v0.7.29+ comp
     reasoningCeiling: 'deep',
   });
   const d = await loadKodaxUserDefaults();
-  assert.equal(d.reasoningMode, 'deep');
+  assert.equal(d.reasoningMode, 'max');
 });
 
 test('reasoningCeiling alone is used', async () => {
   mockUserConfig({ reasoningCeiling: 'balanced' });
   const d = await loadKodaxUserDefaults();
-  assert.equal(d.reasoningMode, 'balanced');
+  assert.equal(d.reasoningMode, 'medium');
 });
 
 test('effort preferred over legacy reasoning fields (v0.7.57 compat)', async () => {
@@ -122,7 +118,7 @@ test('effort preferred over legacy reasoning fields (v0.7.57 compat)', async () 
     reasoningMode: 'quick',
   });
   const d = await loadKodaxUserDefaults();
-  assert.equal(d.reasoningMode, 'balanced');
+  assert.equal(d.reasoningMode, 'medium');
 });
 
 test('effort aliases map to Space reasoning defaults', async () => {
@@ -130,35 +126,35 @@ test('effort aliases map to Space reasoning defaults', async () => {
   assert.equal((await loadKodaxUserDefaults()).reasoningMode, 'off');
 
   mockUserConfig({ effort: 'max' });
-  assert.equal((await loadKodaxUserDefaults()).reasoningMode, 'deep');
+  assert.equal((await loadKodaxUserDefaults()).reasoningMode, 'max');
+
+  mockUserConfig({ effort: 'xhigh' });
+  assert.equal((await loadKodaxUserDefaults()).reasoningMode, 'xhigh');
 
   mockUserConfig({ effort: 'vendor-custom' });
-  assert.equal((await loadKodaxUserDefaults()).reasoningMode, undefined);
+  assert.equal((await loadKodaxUserDefaults()).reasoningMode, 'vendor-custom');
 });
 
-test('reasoning invalid value → undefined', async () => {
-  mockUserConfig({ reasoningMode: 'nonsense' });
+test('reasoning unsafe value → undefined', async () => {
+  mockUserConfig({ reasoningMode: '../max' });
   const d = await loadKodaxUserDefaults();
   assert.equal(d.reasoningMode, undefined);
 });
 
-test('KodaX permissionMode "default" → undefined (Space schema has no "default")', async () => {
+test('retired KodaX permission aliases migrate to canonical profiles', async () => {
   mockUserConfig({ permissionMode: 'default' });
-  const d = await loadKodaxUserDefaults();
-  assert.equal(d.permissionMode, undefined);
-});
-
-test('KodaX permissionMode "bypass-permissions" → undefined (Space uses auto+rules instead)', async () => {
-  mockUserConfig({ permissionMode: 'bypass-permissions' });
-  const d = await loadKodaxUserDefaults();
-  assert.equal(d.permissionMode, undefined);
-});
-
-test('KodaX permissionMode "plan" / "accept-edits" → 1:1 map', async () => {
-  mockUserConfig({ permissionMode: 'plan' });
-  assert.equal((await loadKodaxUserDefaults()).permissionMode, 'plan');
-  mockUserConfig({ permissionMode: 'accept-edits' });
   assert.equal((await loadKodaxUserDefaults()).permissionMode, 'accept-edits');
+  mockUserConfig({ permissionMode: 'bypass-permissions' });
+  assert.equal((await loadKodaxUserDefaults()).permissionMode, 'full-access');
+  mockUserConfig({ permissionMode: 'auto-in-project' });
+  assert.equal((await loadKodaxUserDefaults()).permissionMode, 'auto');
+});
+
+test('KodaX canonical permission profiles map 1:1', async () => {
+  for (const permissionMode of ['plan', 'accept-edits', 'auto', 'full-access'] as const) {
+    mockUserConfig({ permissionMode });
+    assert.equal((await loadKodaxUserDefaults()).permissionMode, permissionMode);
+  }
 });
 
 test('SDK loadConfig throws → safe fallback', async () => {
@@ -292,6 +288,51 @@ test('registerKodaxCustomProviders forwards customProviders array to SDK', async
   ]);
 });
 
+test('registerKodaxCustomProviders preserves image-input capability from KodaX config', async () => {
+  const calls: Array<{ customProviders?: unknown[] }> = [];
+  mockUserConfig(
+    {
+      customProviders: [
+        {
+          name: 'vision-gateway',
+          protocol: 'openai',
+          baseUrl: 'https://vision.example.com/v1',
+          apiKeyEnv: 'VISION_GATEWAY_API_KEY',
+          model: 'qwen-vl',
+          imageInput: true,
+        },
+      ],
+    },
+    { registerCalls: calls },
+  );
+
+  assert.deepEqual(await loadKodaxCustomProviders(), [
+    {
+      id: 'vision-gateway',
+      displayName: 'vision-gateway',
+      protocol: 'openai',
+      baseUrl: 'https://vision.example.com/v1',
+      skipBaseUrlValidation: true,
+      apiKeyEnv: 'VISION_GATEWAY_API_KEY',
+      defaultModel: 'qwen-vl',
+      imageInput: true,
+    },
+  ]);
+
+  await registerKodaxCustomProviders();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].customProviders, [
+    {
+      name: 'vision-gateway',
+      protocol: 'openai',
+      baseUrl: 'https://vision.example.com/v1',
+      apiKeyEnv: 'VISION_GATEWAY_API_KEY',
+      model: 'qwen-vl',
+      imageInput: true,
+    },
+  ]);
+});
+
 test('registerKodaxCustomProviders merges Space custom providers into SDK registry config', async () => {
   const calls: Array<{ customProviders?: unknown[] }> = [];
   mockUserConfig(
@@ -334,6 +375,7 @@ test('registerKodaxCustomProviders merges Space custom providers into SDK regist
       defaultModel: 'space-model',
       models: ['space-model', 'space-alt'],
       promptCacheAffinity: true,
+      imageInput: true,
       contextWindow: 131_072,
     },
     {
@@ -371,6 +413,7 @@ test('registerKodaxCustomProviders merges Space custom providers into SDK regist
       model: 'space-model',
       models: [{ id: 'space-model', contextWindow: 262_144, maxOutputTokens: 16_384 }, 'space-alt'],
       promptCacheAffinity: true,
+      imageInput: true,
       contextWindow: 131_072,
       capabilityProfile: { supportsTools: true },
       maxOutputTokens: 32_768,
@@ -439,6 +482,7 @@ test('updateKodaxConfigCustomProvider writes back custom provider and renames se
     apiKeyEnv: 'NEW_API_KEY',
     defaultModel: 'new-model',
     models: ['new-model', 'new-alt'],
+    imageInput: true,
     contextWindow: 262_144,
   });
 
@@ -454,6 +498,7 @@ test('updateKodaxConfigCustomProvider writes back custom provider and renames se
       apiKeyEnv: 'NEW_API_KEY',
       model: 'new-model',
       models: ['new-model', 'new-alt'],
+      imageInput: true,
       contextWindow: 262_144,
     },
   ]);
@@ -475,6 +520,7 @@ test('updateKodaxConfigCustomProvider clears modeled opt-ins but preserves unmod
           { id: 'removed-model', contextWindow: 16_384 },
         ],
         promptCacheAffinity: true,
+        imageInput: true,
         contextWindow: 200_000,
         reasoning: { efforts: ['low', 'high'], default: 'high' },
         reasoningProfile: { effortStrategy: 'openai-chat-effort' },
@@ -506,6 +552,7 @@ test('updateKodaxConfigCustomProvider clears modeled opt-ins but preserves unmod
     false,
     'promptCacheAffinity must be cleared, not preserved',
   );
+  assert.equal('imageInput' in p, false, 'imageInput must be cleared, not preserved');
   assert.equal('contextWindow' in p, false, 'contextWindow must be cleared, not preserved');
   assert.deepEqual(p.models, [{ id: 'old-model', contextWindow: 131_072, maxOutputTokens: 8_192 }]);
   // unmodeled CLI fields survive:
@@ -631,69 +678,24 @@ test('load/update KodaX compaction config preserves unrelated config fields', as
   assert.match(overview.mcp.globalPath, /integrations[\\/]mcp\.json$/);
 });
 
-test('load/update KodaX sandbox envPass normalizes names and preserves unrelated fields', async () => {
-  const config: Record<string, unknown> = {
-    provider: 'zhipu-coding',
-    sandbox: {
-      envPass: [' GH_TOKEN ', 'INVALID-NAME', 'GH_TOKEN', 'NODE_OPTIONS', 42],
-      futurePolicy: 'keep-me',
-    },
-  };
-  const saveCalls: unknown[] = [];
-  mockUserConfig(config, { saveCalls });
+test('KodaX 0.7.96 Run config ignores legacy sandbox envPass', async () => {
+  const names = Array.from({ length: 129 }, (_, index) => `SPACE_ENV_${index}`);
+  mockUserConfig({ sandbox: { envPass: names } });
 
-  assert.deepEqual(await loadKodaxSandboxConfig(), {
-    envPass: ['GH_TOKEN', 'NODE_OPTIONS'],
-  });
-  assert.deepEqual(await loadKodaxRunConfig(), {
-    compaction: { enabled: true },
-    sandbox: { envPass: ['GH_TOKEN', 'NODE_OPTIONS'] },
-  });
-
-  const overview = await updateKodaxSandboxConfig({
-    envPass: ['GITHUB_TOKEN', ' GH_TOKEN ', 'GITHUB_TOKEN'],
-  });
-
-  assert.equal(saveCalls.length, 1);
-  assert.deepEqual(Object.keys(saveCalls[0] as object), ['sandbox']);
-  assert.equal(config.provider, 'zhipu-coding');
-  assert.deepEqual(config.sandbox, {
-    futurePolicy: 'keep-me',
-    envPass: ['GITHUB_TOKEN', 'GH_TOKEN'],
-  });
-  assert.deepEqual(overview.sandbox, {
-    envPass: ['GITHUB_TOKEN', 'GH_TOKEN'],
-    totalEnvPass: 2,
-    editable: true,
-  });
+  assert.deepEqual(await loadKodaxRunConfig(), { compaction: { enabled: true } });
+  const overview = await loadKodaxConfigOverview();
+  assert.equal(overview.sandbox.totalEnvPass, 129);
+  assert.equal(overview.sandbox.editable, false);
 });
 
-test('sandbox and compaction domain patches preserve concurrent top-level writes', async () => {
-  const sandboxConfig: Record<string, unknown> = {
-    provider: 'before-sandbox-write',
-    sandbox: { envPass: ['OLD_TOKEN'], futurePolicy: 'keep-me' },
-  };
-  const sandboxSaveCalls: unknown[] = [];
-  mockUserConfig(sandboxConfig, {
-    saveCalls: sandboxSaveCalls,
-    beforeSave: (current) => {
-      current.provider = 'written-concurrently';
-      current.compaction = { enabled: true, triggerPercent: 55 };
-    },
-  });
-
-  await updateKodaxSandboxConfig({ envPass: ['NEW_TOKEN'] });
-  assert.equal(sandboxConfig.provider, 'written-concurrently');
-  assert.deepEqual(sandboxConfig.compaction, { enabled: true, triggerPercent: 55 });
-  assert.deepEqual(Object.keys(sandboxSaveCalls[0] as object), ['sandbox']);
-
-  const compactionConfig: Record<string, unknown> = {
+test('compaction patches preserve concurrent unrelated config writes', async () => {
+  const config: Record<string, unknown> = {
     model: 'before-compaction-write',
     compaction: { enabled: true, triggerPercent: 75, futurePolicy: 'keep-me' },
   };
-  const compactionSaveCalls: unknown[] = [];
-  mockUserConfig(compactionConfig, {
-    saveCalls: compactionSaveCalls,
+  const saveCalls: unknown[] = [];
+  mockUserConfig(config, {
+    saveCalls,
     beforeSave: (current) => {
       current.model = 'written-concurrently';
       current.sandbox = { envPass: ['GH_TOKEN'] };
@@ -701,33 +703,9 @@ test('sandbox and compaction domain patches preserve concurrent top-level writes
   });
 
   await updateKodaxCompactionConfig({ enabled: true, triggerPercent: 60 });
-  assert.equal(compactionConfig.model, 'written-concurrently');
-  assert.deepEqual(compactionConfig.sandbox, { envPass: ['GH_TOKEN'] });
-  assert.deepEqual(Object.keys(compactionSaveCalls[0] as object), ['compaction']);
-});
-
-test('Run policy stays lossless when a CLI allow-list exceeds bounded IPC editing limits', async () => {
-  const names = Array.from({ length: 129 }, (_, index) => `SPACE_ENV_${index}`);
-  const longName = `SPACE_${'X'.repeat(260)}`;
-  mockUserConfig({ sandbox: { envPass: [...names, longName] } });
-
-  const runConfig = await loadKodaxRunConfig();
-  assert.deepEqual(runConfig.sandbox.envPass, [...names, longName]);
-
-  const overview = await loadKodaxConfigOverview();
-  assert.equal(overview.sandbox.editable, false);
-  assert.equal(overview.sandbox.totalEnvPass, 130);
-  assert.equal(overview.sandbox.envPass.length, 128);
-  assert.deepEqual(overview.sandbox.envPass, names.slice(0, 128));
-});
-
-test('KodaX run config always materializes an empty sandbox allow-list', async () => {
-  mockUserConfig({ sandbox: { envPass: ['bad-name', '', 1] } });
-
-  assert.deepEqual(await loadKodaxRunConfig(), {
-    compaction: { enabled: true },
-    sandbox: { envPass: [] },
-  });
+  assert.equal(config.model, 'written-concurrently');
+  assert.deepEqual(config.sandbox, { envPass: ['GH_TOKEN'] });
+  assert.deepEqual(Object.keys(saveCalls[0] as object), ['compaction']);
 });
 
 test('KodaX config overview reports the project split MCP integration source', async () => {
@@ -776,90 +754,35 @@ test('KodaX compaction stays enabled and clamps thresholds to 15-90', async () =
   assert.deepEqual(overview.compaction, { enabled: true, triggerPercent: 90 });
 });
 
-test('Auto LLM defaults omit timeoutMs when unconfigured (SDK 0.7.80 owns 45s/90s)', async () => {
-  mockUserConfig({});
-
-  assert.deepEqual(await loadKodaxAutoModeDefaults(), {
-    engine: 'llm',
-  });
-});
-
-test('Auto LLM config maps engine, classifier model and timeout', async () => {
+test('Auto[LLM] defaults contain only the optional classifier model', async () => {
   mockUserConfig({
     autoMode: {
       engine: 'rules',
       classifierModel: ' fast-provider:classifier ',
-      timeoutMs: 35_500.9,
+      timeoutMs: 35_500,
       speculativeWindowMs: 750,
     },
   });
 
   assert.deepEqual(await loadKodaxAutoModeDefaults(), {
-    engine: 'rules',
     classifierModel: 'fast-provider:classifier',
-    timeoutMs: 35_500,
-    speculativeWindowMs: 750,
   });
 });
 
-test('valid Auto LLM env overrides config while invalid values fall through', async () => {
-  const previous = {
-    engine: process.env.KODAX_AUTO_MODE_ENGINE,
-    classifierModel: process.env.KODAX_AUTO_MODE_CLASSIFIER_MODEL,
-    timeoutMs: process.env.KODAX_AUTO_MODE_TIMEOUT_MS,
-    speculativeWindowMs: process.env.KODAX_AUTO_SPECULATIVE_WINDOW_MS,
-  };
+test('Auto[LLM] classifier environment override still wins', async () => {
+  const previous = process.env.KODAX_AUTO_MODE_CLASSIFIER_MODEL;
   try {
-    process.env.KODAX_AUTO_MODE_ENGINE = 'llm';
     process.env.KODAX_AUTO_MODE_CLASSIFIER_MODEL = 'env-provider:classifier';
-    process.env.KODAX_AUTO_MODE_TIMEOUT_MS = '42000.8';
-    process.env.KODAX_AUTO_SPECULATIVE_WINDOW_MS = '0';
-    mockUserConfig({
-      autoMode: {
-        engine: 'rules',
-        classifierModel: 'file-provider:classifier',
-        timeoutMs: 31_000,
-        speculativeWindowMs: 640,
-      },
-    });
+    mockUserConfig({ autoMode: { classifierModel: 'file-provider:classifier' } });
     assert.deepEqual(await loadKodaxAutoModeDefaults(), {
-      engine: 'llm',
       classifierModel: 'env-provider:classifier',
-      timeoutMs: 42_000,
-      speculativeWindowMs: 0,
-    });
-
-    process.env.KODAX_AUTO_MODE_ENGINE = 'invalid';
-    process.env.KODAX_AUTO_MODE_CLASSIFIER_MODEL = '   ';
-    process.env.KODAX_AUTO_MODE_TIMEOUT_MS = '-1';
-    process.env.KODAX_AUTO_SPECULATIVE_WINDOW_MS = 'invalid';
-    mockUserConfig({
-      autoMode: {
-        engine: 'rules',
-        classifierModel: 'file-provider:classifier',
-        timeoutMs: 31_000,
-        speculativeWindowMs: 640,
-      },
-    });
-    assert.deepEqual(await loadKodaxAutoModeDefaults(), {
-      engine: 'rules',
-      classifierModel: 'file-provider:classifier',
-      timeoutMs: 31_000,
-      speculativeWindowMs: 640,
     });
   } finally {
-    restoreEnv('KODAX_AUTO_MODE_ENGINE', previous.engine);
-    restoreEnv('KODAX_AUTO_MODE_CLASSIFIER_MODEL', previous.classifierModel);
-    restoreEnv('KODAX_AUTO_MODE_TIMEOUT_MS', previous.timeoutMs);
-    restoreEnv('KODAX_AUTO_SPECULATIVE_WINDOW_MS', previous.speculativeWindowMs);
+    if (previous === undefined) delete process.env.KODAX_AUTO_MODE_CLASSIFIER_MODEL;
+    else process.env.KODAX_AUTO_MODE_CLASSIFIER_MODEL = previous;
     setUserConfigImpl(null);
   }
 });
-
-function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-}
 
 test('KodaX config overview clamps out-of-range compaction percentages', async () => {
   mockUserConfig({

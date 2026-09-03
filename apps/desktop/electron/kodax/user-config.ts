@@ -14,8 +14,6 @@
 //     不投影到 renderer）；只暴露 count
 //   - 默认值是 string / boolean / enum 标量，无 secret 风险
 
-// 不直接 import Space 的 PermissionMode（含 'auto'，KodaX 不会产生），改用窄子集。
-
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import {
@@ -28,7 +26,6 @@ import {
   type CustomProviderReasoning,
   type KodaxCompactionSettingsT,
   type KodaxConfigOverviewT,
-  type KodaxSandboxSettingsT,
 } from '@kodax-space/space-ipc-schema';
 import { validateApiKeyEnv } from '../providers/env-guard.js';
 import { validateBaseUrl } from '../providers/url-guard.js';
@@ -39,48 +36,34 @@ import {
 } from '../mcp/kodax-user-config-loader.js';
 import { getKodaxRuntimeDir } from './data-paths.js';
 import { effortToReasoningMode, isSpaceReasoningMode } from './reasoning-effort.js';
+import type { PermissionMode, ReasoningMode } from '@kodax-space/space-ipc-schema';
 
 type SdkRootModule = typeof import('@kodax-ai/kodax');
 type SdkLoadConfigReturn = ReturnType<SdkRootModule['loadConfig']>;
 type SdkWritableConfig = SdkLoadConfigReturn & Record<string, unknown>;
 export type SdkCustomProviderConfig = NonNullable<SdkLoadConfigReturn['customProviders']>[number];
 
-/** KodaX permissionMode 中能映射到 Space 的子集（'plan' / 'accept-edits'；其它 → undefined）。*/
-type KodaxMappablePermissionMode = 'plan' | 'accept-edits';
-
 /** Space 关心的子集 — schema 暴露给 renderer 时只露这些标量。 */
 export interface KodaxUserDefaults {
   readonly provider?: string;
   readonly model?: string;
   readonly thinking?: boolean;
-  readonly reasoningMode?: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
-  readonly permissionMode?: KodaxMappablePermissionMode;
-  readonly autoModeEngine?: 'llm' | 'rules';
+  readonly reasoningMode?: ReasoningMode;
+  readonly permissionMode?: PermissionMode;
   readonly autoModeClassifierModel?: string;
-  readonly autoModeTimeoutMs?: number;
-  readonly autoModeSpeculativeWindowMs?: number;
   /** customProviders 数量；具体配置不暴露给 renderer（SDK runtime 已注册可用）。*/
   readonly customProvidersCount: number;
 }
 
 export interface KodaxAutoModeDefaults {
-  readonly engine: 'llm' | 'rules';
   readonly classifierModel?: string;
-  /** 未配置时由 SDK 决定（0.7.80 起：首次 45s / 重试 90s）。*/
-  readonly timeoutMs?: number;
-  readonly speculativeWindowMs?: number;
 }
 
 export interface KodaxRunConfig {
   readonly compaction: KodaxCompactionSettingsT;
-  readonly sandbox: KodaxSandboxRunSettings;
 }
 
 /** KodaX accepts an unbounded allow-list; IPC editing limits must not alter Run policy. */
-export interface KodaxSandboxRunSettings {
-  readonly envPass: readonly string[];
-}
-
 export interface KodaxConfigCustomProvider {
   readonly id: string;
   readonly displayName: string;
@@ -91,6 +74,7 @@ export interface KodaxConfigCustomProvider {
   readonly defaultModel: string;
   readonly models?: readonly string[];
   readonly promptCacheAffinity?: boolean;
+  readonly imageInput?: boolean;
   readonly contextWindow?: number;
   readonly reasoning?: CustomProviderReasoning;
 }
@@ -104,6 +88,7 @@ export interface KodaxConfigCustomProviderUpdate {
   readonly defaultModel: string;
   readonly models?: readonly string[];
   readonly promptCacheAffinity?: boolean;
+  readonly imageInput?: boolean;
   readonly contextWindow?: number;
   readonly reasoning?: CustomProviderReasoning;
 }
@@ -116,6 +101,7 @@ export interface SpaceCustomProviderForSdk {
   readonly defaultModel: string;
   readonly models?: readonly string[];
   readonly promptCacheAffinity?: boolean;
+  readonly imageInput?: boolean;
   readonly contextWindow?: number;
   readonly reasoning?: CustomProviderReasoning;
 }
@@ -219,20 +205,14 @@ export async function loadKodaxUserDefaults(): Promise<KodaxUserDefaults> {
 
 /**
  * Runtime sessions do not load the REPL's `autoMode` config path themselves.
- * Resolve the same file/env precedence in Space. timeoutMs 仅在用户显式配置时
- * 透传——未配置时 omit，让 SDK 0.7.80 使用两次尝试默认 (45s / 90s)，避免单一值
- * 覆盖重试的更长截止时间。
+ * Resolve the same classifier-model precedence in Space. KodaX 0.7.96 uses
+ * Auto[LLM] exclusively; retired engine/timing fields are intentionally omitted.
  */
 export async function loadKodaxAutoModeDefaults(): Promise<KodaxAutoModeDefaults> {
   const defaults = await loadKodaxUserDefaults();
   return {
-    engine: defaults.autoModeEngine ?? 'llm',
     ...(defaults.autoModeClassifierModel !== undefined
       ? { classifierModel: defaults.autoModeClassifierModel }
-      : {}),
-    ...(defaults.autoModeTimeoutMs !== undefined ? { timeoutMs: defaults.autoModeTimeoutMs } : {}),
-    ...(defaults.autoModeSpeculativeWindowMs !== undefined
-      ? { speculativeWindowMs: defaults.autoModeSpeculativeWindowMs }
       : {}),
   };
 }
@@ -280,13 +260,8 @@ async function computeUserDefaults(): Promise<KodaxUserDefaults> {
     thinking: typeof raw.thinking === 'boolean' ? raw.thinking : undefined,
     reasoningMode,
     permissionMode: normalizePermissionMode(raw.permissionMode),
-    autoModeEngine: autoMode.engine,
     ...(autoMode.classifierModelEnv !== undefined || autoMode.classifierModel !== undefined
       ? { autoModeClassifierModel: autoMode.classifierModelEnv ?? autoMode.classifierModel }
-      : {}),
-    ...(autoMode.timeoutMs !== undefined ? { autoModeTimeoutMs: autoMode.timeoutMs } : {}),
-    ...(autoMode.speculativeWindowMs !== undefined
-      ? { autoModeSpeculativeWindowMs: autoMode.speculativeWindowMs }
       : {}),
     customProvidersCount: Array.isArray(raw.customProviders) ? raw.customProviders.length : 0,
   };
@@ -350,40 +325,22 @@ export async function loadKodaxCompactionConfig(): Promise<KodaxCompactionSettin
 }
 
 /**
- * Read the run-scoped KodaX config in one snapshot. `sandbox` is always
- * materialized, including an explicit empty allow-list, so SDK Runs do not
- * accidentally fall back to process-global KODAX_SANDBOX_ENV_PASS state.
+ * Read the run-scoped KodaX config in one snapshot. Sandbox envPass is retired
+ * in KodaX 0.7.96 and must not affect a Run.
  */
 export async function loadKodaxRunConfig(): Promise<KodaxRunConfig> {
   try {
     const raw = (await loadWritableKodaxConfig()) as SdkWritableConfig;
     return {
       compaction: normalizeCompactionSettings(raw.compaction),
-      sandbox: normalizeSandboxSettings(raw.sandbox),
     };
   } catch (err) {
     console.warn(
       '[kodax-user-config] run config ignored:',
       err instanceof Error ? err.message : err,
     );
-    return { compaction: { enabled: true }, sandbox: { envPass: [] } };
+    return { compaction: { enabled: true } };
   }
-}
-
-export async function loadKodaxSandboxConfig(): Promise<KodaxSandboxRunSettings> {
-  return (await loadKodaxRunConfig()).sandbox;
-}
-
-export async function updateKodaxSandboxConfig(
-  sandbox: KodaxSandboxSettingsT,
-  projectRoot?: string,
-): Promise<KodaxConfigOverviewT> {
-  const raw = (await loadWritableKodaxConfig()) as SdkWritableConfig;
-  const normalized = normalizeSandboxSettings(sandbox);
-  saveWritableKodaxConfigPatch({
-    sandbox: mergeSandboxSettings(raw.sandbox, normalized),
-  });
-  return loadKodaxConfigOverview(projectRoot);
 }
 
 export async function updateKodaxConfigCustomProvider(
@@ -505,25 +462,24 @@ export async function registerKodaxCustomProviders(
 
 // ---- helpers ----
 
-/** SDK 可能返回 string 标记的 reasoningMode；mapped 到 Space 的 union；其它值丢弃。*/
+/** SDK 可能返回自定义 reasoningMode；保留规范化 token，并兼容旧版 Space 别名。 */
 function normalizeReasoningMode(v: unknown): KodaxUserDefaults['reasoningMode'] {
   if (typeof v !== 'string') return undefined;
-  return isSpaceReasoningMode(v) ? v : undefined;
+  return isSpaceReasoningMode(v) ? effortToReasoningMode(v) : undefined;
 }
 
 /**
  * KodaX permissionMode (string) → Space PermissionMode union。
  *
- * KodaX 0.7.x 合法值：'plan' | 'default' | 'accept-edits' | 'bypass-permissions'
- * Space 合法值：     'plan' | 'accept-edits' | 'auto'
- *
- * 1:1 直接映射的只有 'plan' / 'accept-edits'。'default' / 'bypass-permissions' 没有
- * 直接对应——Space 用 'auto' + auto-rules.jsonc 模拟 bypass，'default' 是 KodaX 早期
- * 模式 Space 不复刻。返回 undefined 让 renderer 走 Space schema default ('accept-edits')。
+ * KodaX 0.7.96 canonical values map 1:1. Retired aliases are normalized once
+ * so existing user config keeps its intended authority level.
  */
-function normalizePermissionMode(v: unknown): KodaxMappablePermissionMode | undefined {
+function normalizePermissionMode(v: unknown): PermissionMode | undefined {
   if (typeof v !== 'string') return undefined;
-  if (v === 'plan' || v === 'accept-edits') return v;
+  if (v === 'plan' || v === 'accept-edits' || v === 'auto' || v === 'full-access') return v;
+  if (v === 'auto-in-project') return 'auto';
+  if (v === 'bypass-permissions') return 'full-access';
+  if (v === 'default') return 'accept-edits';
   return undefined;
 }
 
@@ -567,6 +523,7 @@ function normalizeKodaxConfigCustomProvider(
 
   const models = normalizeModelList(raw.models);
   const promptCacheAffinity = raw.promptCacheAffinity === true ? true : undefined;
+  const imageInput = raw.imageInput === true ? true : undefined;
   const contextWindow = normalizeCustomProviderContextWindow(raw.contextWindow);
   const reasoning = normalizeReasoningConfig(raw.reasoning);
   return {
@@ -579,6 +536,7 @@ function normalizeKodaxConfigCustomProvider(
     defaultModel: model,
     ...(models ? { models } : {}),
     ...(promptCacheAffinity ? { promptCacheAffinity } : {}),
+    ...(imageInput ? { imageInput } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(reasoning ? { reasoning } : {}),
   };
@@ -624,6 +582,9 @@ function spaceCustomProviderToSdk(provider: SpaceCustomProviderForSdk): SdkCusto
   }
   if (provider.promptCacheAffinity === true) {
     config.promptCacheAffinity = true;
+  }
+  if (provider.imageInput === true) {
+    config.imageInput = true;
   }
   if (provider.contextWindow !== undefined) {
     config.contextWindow = provider.contextWindow;
@@ -694,7 +655,6 @@ const MODELED_COMPACTION_KEYS = new Set([
   'triggerTokens',
   'contextWindow',
 ]);
-const MODELED_SANDBOX_KEYS = new Set(['envPass']);
 
 function getKodaxConfigPath(): string {
   return path.join(getKodaxRuntimeDir(), 'config.json');
@@ -811,7 +771,7 @@ function mergeCompactionSettings(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function normalizeSandboxSettings(raw: unknown): KodaxSandboxRunSettings {
+function normalizeSandboxSettings(raw: unknown): { readonly envPass: readonly string[] } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { envPass: [] };
   const envPass = (raw as { readonly envPass?: unknown }).envPass;
   if (!Array.isArray(envPass)) return { envPass: [] };
@@ -837,19 +797,6 @@ function projectSandboxOverview(raw: unknown): KodaxConfigOverviewT['sandbox'] {
       normalized.envPass.length <= KODAX_SANDBOX_ENV_PASS_MAX &&
       normalized.envPass.every((name) => name.length <= KODAX_SANDBOX_ENV_NAME_MAX),
   };
-}
-
-function mergeSandboxSettings(
-  currentRaw: unknown,
-  modeled: KodaxSandboxRunSettings,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (currentRaw && typeof currentRaw === 'object' && !Array.isArray(currentRaw)) {
-    for (const [key, value] of Object.entries(currentRaw as Record<string, unknown>)) {
-      if (!MODELED_SANDBOX_KEYS.has(key)) out[key] = value;
-    }
-  }
-  return { ...out, envPass: [...modeled.envPass] };
 }
 
 async function pathIsFile(filePath: string): Promise<boolean> {
@@ -974,6 +921,7 @@ const CUSTOM_PROVIDER_MODELED_KEYS: ReadonlySet<string> = new Set([
   'model',
   'models',
   'promptCacheAffinity',
+  'imageInput',
   'contextWindow',
   // 'reasoning' 是 Space 表单建模并作为其权威编辑器的字段（表单会用现有值预填,见
   // CustomProviderForm reasoningNone/reasoningEfforts/reasoningDefault）。必须纳入 modeled
@@ -1048,6 +996,7 @@ function customProviderUpdateToSdk(
     defaultModel: update.defaultModel,
     models: update.models,
     promptCacheAffinity: update.promptCacheAffinity,
+    imageInput: update.imageInput,
     contextWindow: update.contextWindow,
     ...(update.reasoning !== undefined ? { reasoning: update.reasoning } : {}),
   });

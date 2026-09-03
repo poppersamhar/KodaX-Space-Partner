@@ -1,7 +1,7 @@
 // F060 — WorkflowController: 进程事件转发 + host 归属 + list/get + 归属持久化 + schema round-trip.
 // 用 fake run manager（不碰真 SDK / LLM），real tmp-dir 持久化（DI），无 mock 文件系统。
 
-import { afterEach, beforeEach, test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,23 +12,11 @@ import {
   withDefaultWorkflowAgentTarget,
 } from '../kodax/workflow-controller.js';
 import { _setRepoIntelEntitlementForTesting } from '../kodax/repo-intel-gate.js';
-import { setUserConfigImpl, type KodaxUserConfigImpl } from '../kodax/user-config.js';
 import type {
   WorkflowRunManagerLike,
   WorkflowLifecycleLike,
 } from '../kodax/workflow-controller.js';
 import { workflowEventChannel, workflowProcessSnapshotSchema } from '@kodax-space/space-ipc-schema';
-
-function setWorkflowConfig(sandbox: { readonly envPass: readonly string[] }): void {
-  setUserConfigImpl({
-    loadConfig: (() => ({ sandbox })) as KodaxUserConfigImpl['loadConfig'],
-    saveConfig: (() => undefined) as KodaxUserConfigImpl['saveConfig'],
-    registerCustomProviders: () => undefined,
-  });
-}
-
-beforeEach(() => setWorkflowConfig({ envPass: [] }));
-afterEach(() => setUserConfigImpl(null));
 
 // ---- fake run manager（可手动 emit 进程事件 + 持有 snapshot）----
 interface FakeSnap {
@@ -65,7 +53,10 @@ function fakeManager() {
     },
     startFromOptions(input) {
       started.push(input);
-      return { runId: (input as { runId?: string }).runId };
+      return {
+        runId: String((input as { runId?: string }).runId ?? ''),
+        done: Promise.resolve(undefined),
+      };
     },
     _emit(e) {
       snaps.set(e.snapshot.runId, e.snapshot);
@@ -818,6 +809,70 @@ function generatedCapsule(name = 'generated-workflow') {
   return { manifest, source: 'export default {}' };
 }
 
+test('generated workflow creation binds both generation and execution to its session Provider', async () => {
+  const { dir, file } = freshFile();
+  let activeProvider: string | undefined;
+  const observed: string[] = [];
+  _setCodingSdkForTesting({
+    async generateWorkflowFromOptions() {
+      observed.push(`generate:${activeProvider ?? 'none'}`);
+      return generatedWorkflow('credential-bound-flow');
+    },
+  });
+  try {
+    async function runProviderOperation<T>(
+      provider: string,
+      operation: () => T,
+    ): Promise<Awaited<T>> {
+      activeProvider = provider;
+      try {
+        return await operation();
+      } finally {
+        activeProvider = undefined;
+      }
+    }
+    async function runDetachedProviderOperation<T extends { readonly done: Promise<unknown> }>(
+      provider: string,
+      workflowRunId: string,
+      operation: () => T,
+    ): Promise<T> {
+      observed.push(`lease:${provider}`);
+      activeProvider = provider;
+      try {
+        const handle = operation();
+        assert.equal(handle.done instanceof Promise, true);
+        assert.equal(workflowRunId.startsWith('wf_'), true);
+        return handle;
+      } finally {
+        activeProvider = undefined;
+      }
+    }
+    const ctrl = new WorkflowController(
+      () => {},
+      file,
+      join(dir, 'workflow-runs'),
+      runProviderOperation,
+      runDetachedProviderOperation,
+    );
+    const mgr = fakeManager();
+    mgr.startFromOptions = (input) => {
+      observed.push(`start:${activeProvider ?? 'none'}`);
+      mgr.started.push(input);
+      return { runId: String(input.runId), done: Promise.resolve(undefined) };
+    };
+    await ctrl.init(mgr);
+
+    const result = await ctrl.createGeneratedWorkflow('make it', LAUNCH_SESSION);
+
+    assert.ok('runId' in result, JSON.stringify(result));
+    assert.deepEqual(observed, ['generate:mock', 'lease:mock', 'start:mock']);
+    await ctrl.flush();
+  } finally {
+    _setCodingSdkForTesting(null);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('generated workflow controller methods delegate to SDK and start/save successfully', async () => {
   const { dir, file } = freshFile();
   try {
@@ -1286,35 +1341,6 @@ test('workflow launch enables repo-intelligence trace when licensed', async () =
     );
   } finally {
     _setRepoIntelEntitlementForTesting(null);
-    _setCodingSdkForTesting(null);
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('workflow launch forwards configured and explicit-empty sandbox envPass', async () => {
-  const { dir, file } = freshFile();
-  _setCodingSdkForTesting(launchSdk('sandbox-flow'));
-  try {
-    const ctrl = new WorkflowController(() => {}, file);
-    const mgr = fakeManager();
-    await ctrl.init(mgr);
-
-    setWorkflowConfig({ envPass: ['GH_TOKEN', 'GITHUB_TOKEN'] });
-    await ctrl.createGeneratedWorkflow('configured sandbox', LAUNCH_SESSION);
-    assert.deepEqual(
-      (mgr.started[0]!.options as { sandbox?: unknown }).sandbox,
-      { envPass: ['GH_TOKEN', 'GITHUB_TOKEN'] },
-      'independently launched workflows inherit the configured allow-list',
-    );
-
-    setWorkflowConfig({ envPass: [] });
-    await ctrl.createGeneratedWorkflow('empty sandbox', LAUNCH_SESSION);
-    assert.deepEqual(
-      (mgr.started[1]!.options as { sandbox?: unknown }).sandbox,
-      { envPass: [] },
-      'an explicit empty list prevents process-global fallback',
-    );
-  } finally {
     _setCodingSdkForTesting(null);
     rmSync(dir, { recursive: true, force: true });
   }

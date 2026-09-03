@@ -10,7 +10,6 @@ const session: SessionMeta = {
   provider: 'anthropic',
   reasoningMode: 'quick',
   permissionMode: 'accept-edits',
-  autoModeEngine: 'llm',
   agentMode: 'sa',
   surface: 'code',
   createdAt: 1,
@@ -44,7 +43,6 @@ test('renderer converges all Space-visible shared daemon settings', () => {
       reasoningMode: 'deep',
       permissionMode: 'plan',
       agentMode: 'ama',
-      autoModeEngine: 'rules',
     }),
   );
 
@@ -52,17 +50,23 @@ test('renderer converges all Space-visible shared daemon settings', () => {
     ...session,
     provider: 'openai',
     model: 'gpt-next',
-    reasoningMode: 'deep',
+    reasoningMode: 'max',
     permissionMode: 'plan',
     agentMode: 'ama',
-    autoModeEngine: 'rules',
   });
 });
 
 test('renderer maps daemon effort-only updates without erasing the effective model', () => {
   const [updated] = mergeRuntimeSettingsIntoSessions([session], projection({ effort: 'high' }));
-  assert.equal(updated?.reasoningMode, 'deep');
+  assert.equal(updated?.reasoningMode, 'high');
   assert.equal(updated?.model, 'old-model');
+});
+
+test('renderer keeps daemon xhigh and max effort updates distinct', () => {
+  const [xhigh] = mergeRuntimeSettingsIntoSessions([session], projection({ effort: 'xhigh' }));
+  const [max] = mergeRuntimeSettingsIntoSessions([session], projection({ effort: 'max' }));
+  assert.equal(xhigh?.reasoningMode, 'xhigh');
+  assert.equal(max?.reasoningMode, 'max');
 });
 
 test('renderer drops the previous provider model when a daemon provider change omits model', () => {

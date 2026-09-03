@@ -34,6 +34,7 @@ import {
   sdkTagToSurface,
   invalidatePersistedSessionListCache,
 } from './session-store.js';
+import { runWithExactProviderCredential } from '../providers/credential-scope.js';
 import {
   loadKodaxCustomProviders,
   loadKodaxUserDefaults,
@@ -52,6 +53,7 @@ import {
 } from '../ipc/clipboard.js';
 import { revokeSessionAttachmentPreviews } from '../window/session-attachment-protocol.js';
 import { runtimeHostAdapter } from './runtime-host-adapter.js';
+import { resolveSdkSpaceWireEffort, runtimeSettingEffort } from './reasoning-effort.js';
 
 // alpha.2: Real KodaX 内核 vs Mock 切换。
 //
@@ -181,7 +183,6 @@ export type ListMergedItem =
       readonly provider: string;
       readonly reasoningMode: ManagedSession['reasoningMode'];
       readonly permissionMode: ManagedSession['permissionMode'];
-      readonly autoModeEngine: ManagedSession['autoModeEngine'];
       readonly agentMode: ManagedSession['agentMode'];
       /** F045: 工作面归属（来自 runtime ManagedSession.surface）。*/
       readonly surface: ManagedSession['surface'];
@@ -238,9 +239,8 @@ class KodaXHost {
   createSession(opts: {
     projectRoot: string;
     provider: string;
-    reasoningMode?: 'off' | 'auto' | 'quick' | 'balanced' | 'deep';
+    reasoningMode?: import('@kodax-space/space-ipc-schema').ReasoningMode;
     permissionMode?: import('@kodax-space/space-ipc-schema').PermissionMode;
-    autoModeEngine?: import('@kodax-space/space-ipc-schema').AutoModeEngine;
     /** 缺省 'ama'。SA 是接口并发受限的 fallback；与 KodaX SDK 默认一致。*/
     agentMode?: import('@kodax-space/space-ipc-schema').AgentMode;
     /** F045: 工作面（'code' = Coder / 'partner' = Partner）。缺省 'code'。持久化为 SDK session tag。*/
@@ -301,7 +301,6 @@ class KodaXHost {
       reasoningMode: opts.reasoningMode ?? 'auto',
       // FEATURE_029: canonical 缺省 'accept-edits' — 与 sessionMetaSchema.default 同步
       permissionMode: opts.permissionMode ?? 'accept-edits',
-      autoModeEngine: opts.autoModeEngine ?? 'llm',
       agentMode: opts.agentMode ?? 'ama',
       surface,
       partnerExpert: opts.partnerExpert,
@@ -355,7 +354,6 @@ class KodaXHost {
       thinking: session.thinking,
       reasoningMode: session.reasoningMode,
       permissionMode: session.permissionMode,
-      autoModeEngine: session.autoModeEngine,
       agentMode: session.agentMode,
       partnerExpert: session.partnerExpert,
       partnerConnectors: session.partnerConnectors,
@@ -465,7 +463,6 @@ class KodaXHost {
       thinking: session.thinking,
       reasoningMode: session.reasoningMode,
       permissionMode: session.permissionMode,
-      autoModeEngine: session.autoModeEngine,
       agentMode: session.agentMode,
       partnerExpert: session.partnerExpert,
       partnerConnectors: session.partnerConnectors,
@@ -476,7 +473,6 @@ class KodaXHost {
       session.thinking = before.thinking;
       session.reasoningMode = before.reasoningMode;
       session.permissionMode = before.permissionMode;
-      session.autoModeEngine = before.autoModeEngine;
       session.agentMode = before.agentMode;
       session.partnerExpert = before.partnerExpert;
       session.partnerConnectors = before.partnerConnectors;
@@ -489,8 +485,12 @@ class KodaXHost {
         restore();
         return 'session-not-found';
       }
-      const autoModeEngineChanged = before.autoModeEngine !== session.autoModeEngine;
       if (session.surface === 'code' && runtimeHostAdapter.hasReadyRuntime()) {
+        const wireEffort = await resolveSdkSpaceWireEffort({
+          provider: session.provider,
+          ...(session.model ? { model: session.model } : {}),
+          reasoningMode: session.reasoningMode,
+        });
         // A newly-created Space session is intentionally admitted to the daemon
         // lazily. Settings can be changed before the first send, so admit it here
         // as well and seed the complete settings snapshot instead of applying only
@@ -501,11 +501,11 @@ class KodaXHost {
             provider: session.provider,
             model: session.model ?? null,
             thinking: session.thinking ?? null,
-            reasoningMode: session.reasoningMode,
+            effort: runtimeSettingEffort(session.reasoningMode, wireEffort),
+            reasoningMode: null,
             permissionMode: session.permissionMode,
             executionCwd: session.projectRoot,
             agentMode: session.agentMode,
-            autoModeEngine: session.autoModeEngine,
           },
           {
             sessionId,
@@ -516,31 +516,34 @@ class KodaXHost {
         );
       }
       if (await this.persistRuntime(sessionId)) {
-        if (autoModeEngineChanged) {
-          pushToRenderer('session.event', {
-            kind: 'auto_engine_change',
-            sessionId,
-            engine: session.autoModeEngine,
-            reason: 'manual',
-          });
-        }
         return 'ok';
       }
       if (session.surface === 'code' && runtimeHostAdapter.hasReadyRuntime()) {
+        const reasoningContextChanged =
+          before.provider !== session.provider ||
+          before.model !== session.model ||
+          before.reasoningMode !== session.reasoningMode;
+        const rollbackWireEffort = reasoningContextChanged
+          ? await resolveSdkSpaceWireEffort({
+              provider: before.provider,
+              ...(before.model ? { model: before.model } : {}),
+              reasoningMode: before.reasoningMode,
+            })
+          : undefined;
         const rollbackPatch = {
           ...(before.provider !== session.provider ? { provider: before.provider } : {}),
           ...(before.model !== session.model ? { model: before.model ?? null } : {}),
           ...(before.thinking !== session.thinking ? { thinking: before.thinking ?? null } : {}),
-          ...(before.reasoningMode !== session.reasoningMode
-            ? { reasoningMode: before.reasoningMode }
+          ...(reasoningContextChanged
+            ? {
+                effort: runtimeSettingEffort(before.reasoningMode, rollbackWireEffort),
+                reasoningMode: null,
+              }
             : {}),
           ...(before.permissionMode !== session.permissionMode
             ? { permissionMode: before.permissionMode }
             : {}),
           ...(before.agentMode !== session.agentMode ? { agentMode: before.agentMode } : {}),
-          ...(before.autoModeEngine !== session.autoModeEngine
-            ? { autoModeEngine: before.autoModeEngine }
-            : {}),
         };
         await runtimeHostAdapter
           .updateSessionSettings(sessionId, rollbackPatch)
@@ -682,7 +685,6 @@ class KodaXHost {
       ...(model !== undefined ? { model } : {}),
       reasoningMode: runtimeDefaults.reasoningMode,
       permissionMode: runtimeDefaults.permissionMode,
-      autoModeEngine: runtimeDefaults.autoModeEngine,
       agentMode: runtimeDefaults.agentMode,
       // F045: 从持久化的 SDK session tag 反推 surface——否则重启后 resume 的 Partner
       // session 会被默认成 Coder，in-flight 项又因 dedup 优先覆盖 persisted 项，整段
@@ -792,7 +794,6 @@ class KodaXHost {
       provider: s.provider,
       reasoningMode: s.reasoningMode,
       permissionMode: s.permissionMode,
-      autoModeEngine: s.autoModeEngine,
       agentMode: s.agentMode,
       surface: s.surface,
       partnerExpert: s.partnerExpert,
@@ -968,7 +969,7 @@ class KodaXHost {
     const s = this.sessions.get(sessionId);
     if (!s) return { ok: false, reason: `session not found: ${sessionId}` };
 
-    const usesRuntime = s.surface === 'code' && runtimeHostAdapter.hasReadyRuntime();
+    const usesRuntime = s.surface === 'code' && runtimeHostAdapter.isRuntimeSelected();
     // Runtime-backed sessions emit their own revisioned lifecycle. The compatibility events below
     // are retained only for embedded/legacy sessions, which do not have a daemon observation.
     if (!usesRuntime) pushToRenderer('session.event', { kind: 'compact_start', sessionId });
@@ -987,7 +988,9 @@ class KodaXHost {
               tokensAfter: 0,
               reason: err instanceof Error ? err.message : String(err),
             }))
-        : await compactPersistedSession(sessionId, compactInput);
+        : await runWithExactProviderCredential(s.provider, () =>
+            compactPersistedSession(sessionId, compactInput),
+          );
       if (!usesRuntime && result.compacted) {
         pushToRenderer('session.event', {
           kind: 'compact_stats',
@@ -1027,30 +1030,6 @@ class KodaXHost {
     const s = this.sessions.get(sessionId);
     if (!s) return false;
     s.permissionMode = mode;
-    return true;
-  }
-
-  /**
-   * FEATURE_029: 切 auto-mode 子档 engine ('llm' | 'rules')。
-   * 立即赋值到 session.autoModeEngine（即便当前不是 auto mode 也接受——
-   * 用户先选 engine 再切 auto mode 是合法 UX）。
-   *
-   * F030 wire 后：guardrail 通过 onEngineChange callback 反向通知 host 该字段，
-   * 此 setter 主要服务 user-initiated 切换 + emit 一条 auto_engine_change event 给 renderer。
-   */
-  setAutoModeEngine(sessionId: string, engine: ManagedSession['autoModeEngine']): boolean {
-    const s = this.sessions.get(sessionId);
-    if (!s) return false;
-    if (s.autoModeEngine === engine) return true; // 幂等：相同值不 emit event
-    s.autoModeEngine = engine;
-    if (!this.runtimeMutationsInProgress.has(sessionId)) {
-      pushToRenderer('session.event', {
-        kind: 'auto_engine_change',
-        sessionId,
-        engine,
-        reason: 'manual',
-      });
-    }
     return true;
   }
 
@@ -1155,7 +1134,6 @@ class KodaXHost {
         ...(src.model !== undefined ? { model: src.model } : {}),
         reasoningMode: src.reasoningMode,
         permissionMode: src.permissionMode,
-        autoModeEngine: src.autoModeEngine,
         // review MEDIUM-4: 之前漏传 agentMode → fork child 总被重置成默认 'ama'（即便 source 是
         // 'sa'）。补上与其他运行时设置一致地继承 source。
         agentMode: src.agentMode,
