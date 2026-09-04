@@ -195,17 +195,21 @@ Randomized early boot splash result: passed
 
 ### Source visual truth
 
-- Loading: `C:/Users/ADMIN/.codex/generated_images/01a019aa-ca04-7f01-9894-68873687b850/exec-a39c07ac-4327-4002-83c4-7cdd43c79916.png`
-- Empty: `C:/Users/ADMIN/.codex/generated_images/01a019aa-ca04-7f01-9894-68873687b850/exec-1cd5a910-b5a8-43a8-856f-869ab0289726.png`
-- Two tasks: `C:/Users/ADMIN/.codex/generated_images/01a019aa-ca04-7f01-9894-68873687b850/exec-90c8fbdf-7490-4064-a7b4-05e23480003e.png`
-- Recoverable error: `C:/Users/ADMIN/.codex/generated_images/01a019aa-ca04-7f01-9894-68873687b850/exec-a61e3327-ced8-4230-9684-c70b97790ae1.png`
+The generated-image files were machine-local; original absolute paths are intentionally omitted.
+
+- Loading: `exec-a39c07ac-4327-4002-83c4-7cdd43c79916.png`
+- Empty: `exec-1cd5a910-b5a8-43a8-856f-869ab0289726.png`
+- Two tasks: `exec-90c8fbdf-7490-4064-a7b4-05e23480003e.png`
+- Recoverable error: `exec-a61e3327-ced8-4230-9684-c70b97790ae1.png`
 
 ### Rendered implementation
 
-- Loading: `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-loading-implementation.png`
-- Empty: `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-empty-implementation.png`
-- Two tasks: `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-tasks-implementation.png`
-- Recoverable error: `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-error-implementation.png`
+The rendered files were machine-local; original absolute paths are intentionally omitted.
+
+- Loading: `external-agent-loading-implementation.png`
+- Empty: `external-agent-empty-implementation.png`
+- Two tasks: `external-agent-tasks-implementation.png`
+- Recoverable error: `external-agent-error-implementation.png`
 
 ### Capture normalization
 
@@ -221,17 +225,19 @@ Randomized early boot splash result: passed
 
 Full-view comparisons:
 
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-loading-comparison.png`
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-empty-comparison.png`
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-tasks-comparison.png`
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-error-comparison.png`
+- `external-agent-loading-comparison.png`
+- `external-agent-empty-comparison.png`
+- `external-agent-tasks-comparison.png`
+- `external-agent-error-comparison.png`
 
 Focused Task Dock comparisons:
 
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-loading-focused-comparison.png`
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-empty-focused-comparison.png`
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-tasks-focused-comparison.png`
-- `C:/Users/ADMIN/.codex/visualizations/2026/08/19/01a019aa-ca04-7f01-9894-68873687b850/external-agent-error-focused-comparison.png`
+- `external-agent-loading-focused-comparison.png`
+- `external-agent-empty-focused-comparison.png`
+- `external-agent-tasks-focused-comparison.png`
+- `external-agent-error-focused-comparison.png`
+
+These comparison files were also machine-local; original absolute paths are intentionally omitted.
 
 ## Findings
 
@@ -300,7 +306,7 @@ final result: passed
 
 ## Comparison target
 
-- Source visual truth: `/Users/samharadelijiang/Documents/kodax Space/outputs/kodax-space-standalone.html`, including its 28px header/menu controls and 300px context rail behavior.
+- Source visual truth: machine-local `kodax-space-standalone.html` (original absolute path intentionally omitted), including its 28px header/menu controls and 300px context rail behavior.
 - User override: the Partner context rail must contain three independent cards in the order 资料 → 待审核 → 成果, even though the standalone reference groups its sample 产物/来源 content.
 - Implementation: `http://127.0.0.1:5174/?qa=partner-context-cards`.
 - State: Partner active, context cards visible, detail sidebar closed, dark theme, no project selected.
@@ -352,7 +358,7 @@ final result: passed
 
 ## Comparison target
 
-- User-provided deletion target: `/var/folders/6r/d_8jkq_j46b5y5bzyc6jhfhr0000gn/T/codex-clipboard-4d5e1768-f96e-4307-a04b-01e9bb95188a.png`.
+- User-provided deletion target: temporary clipboard reference (original machine-local path intentionally omitted).
 - User decision: remove both the duplicated “文档工作区 · 知识工作” label and manual refresh control above the three context cards.
 - Before capture: `artifacts/design-qa/implementation-context-cards.png`.
 - Implementation capture: `artifacts/design-qa/implementation-context-header-removed.png`.
@@ -389,7 +395,7 @@ final result: passed
 
 ## Comparison target
 
-- Source/current icon capture: `/var/folders/6r/d_8jkq_j46b5y5bzyc6jhfhr0000gn/T/codex-clipboard-b8a69ea7-bd11-46dc-9f2c-2f3b43c4be2b.png`.
+- Source/current icon capture: temporary clipboard reference (original machine-local path intentionally omitted).
 - User target: replace the standalone vertical ellipsis with three vertically stacked “dot + horizontal line” rows.
 - Before capture: `artifacts/design-qa/implementation-context-header-removed.png`.
 - Implementation capture: `artifacts/design-qa/implementation-context-list-icon.png`.
@@ -429,8 +435,8 @@ final result: passed
 
 ## Comparison target and evidence
 
-- Source visual truth: `/var/folders/6r/d_8jkq_j46b5y5bzyc6jhfhr0000gn/T/codex-clipboard-ae3b68ad-55e0-4369-962c-93b06e3e7456.png` (user-supplied WorkBuddy connected Feishu card).
-- Implementation: `/Users/samharadelijiang/Documents/KodaX-Space-Partner/artifacts/partner-feishu-brand/electron-card.jpg` — actual packaged Electron, host 0.1.45, independent extension 0.5.1, light theme, connector connected, management modal closed.
+- Source visual truth: user-supplied WorkBuddy connected Feishu card (original temporary clipboard path intentionally omitted).
+- Implementation: `artifacts/partner-feishu-brand/electron-card.jpg` — actual packaged Electron, host 0.1.45, independent extension 0.5.1, light theme, connector connected, management modal closed.
 - Full-view evidence: `artifacts/partner-feishu-brand/reference-full.png` and `artifacts/partner-feishu-brand/electron-card.jpg`, opened together in the same comparison input.
 - Focused evidence: `artifacts/partner-feishu-brand/reference-card.png` and `artifacts/partner-feishu-brand/implementation-card.png`, opened together in that same input.
 - Source capture: 2400 × 1600 pixels; Electron capture: 1229 × 768 pixels. Source CSS viewport and device density were not supplied, and Computer Use's capture does not establish an exact CSS viewport. No pixel-perfect whole-window claim is made.

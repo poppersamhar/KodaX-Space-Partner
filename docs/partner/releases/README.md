@@ -1,7 +1,27 @@
 # Partner 发布记录
 
-本目录记录 Partner 产品线的独立预发布、安装包/Extension 验证和回滚证据。Space 的正式发布记录继续保留在 [`docs/releases/`](../../releases/)。
+本目录只管理 Partner 产品线自己的候选版本、Extension 产物、验收证据与回滚记录。Space 主应用的正式发布记录继续由 [`docs/releases/`](../../releases/) 管理，两条版本线不互相冒充。
 
-当前 PF001 仍为 `InProgress / Local`，没有可声明为正式发布的 Partner 版本。首个候选目标是 host `v0.1.61-p.1` 与 Partner library `0.9.1`；只有版本、自动门槛、真实服务人工项和安装/回滚证据一致后，才新增对应 release-readiness 文档。
+## 当前候选
 
-历史阶段结果继续保留在 [PF001 设计与证据](../features/v0.1.61-p.1.md#feature-pf001)中，不在这里冒充已发布状态。
+- Partner 产品：`0.1.0`
+- Partner 插件库：`0.1.0`
+- Space 兼容基线：`0.1.46-alpha.5`
+- KodaX：`0.7.96-beta.1`
+- Partner Host API：`4`
+- 必需宿主能力：`partnerNativeDocumentDeliveryV1`
+- 预留 tag：`partner-v0.1.0`（未创建；不得使用 plain `v0.1.0`）
+- 状态：本地 Release Candidate，未 push、未 tag、未创建 GitHub Release
+
+## 版本资料
+
+- [Partner Changelog](../CHANGELOG.md)
+- [0.1.0 Release Readiness](v0.1.0-release-readiness.md)
+- [0.1.0 人工与发布验收指南](../test-guides/FEATURE_F146_PARTNER_v0.1.0_TEST_GUIDE.md)
+- [PF001：Partner Extension & Expert Library](../features/v0.1.0.md#feature-pf001)
+- [PF002：Governed Connector Previews & Feishu Platform Expert](../features/v0.1.0.md#feature-pf002)
+- [PF003：Receipt-First Delivery & Unified Workspace](../features/v0.1.0.md#feature-pf003)
+
+PF001–PF003 当前均为 `InProgress / Local`，共同映射 Space `F146`。PF002 的连接器必须保持 Preview 口径，直到对应真实账号与真实资源验收完成；fixture 或 Mock 结果不能替代真实服务证据。
+
+只有精确候选提交的自动化、桌面人工、真实服务、安装/替换/回滚和 CI 证据一致后，才可以考虑把 RC 晋级。对外分发还受仓库 [`LICENSE`](../../../LICENSE) 约束：在取得适用书面授权前，不执行远端 push、远端 tag、产物上传或 GitHub Release。

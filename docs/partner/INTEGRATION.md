@@ -49,9 +49,15 @@ Partner 开发：Planned -> InProgress -> Completed
 Partner 融合：Local -> Ready -> Proposed -> Integrated
 ```
 
-| Partner Feature | Space Feature | Target        | Development | Integration | Evidence                                              | Updated    |
-| --------------- | ------------- | ------------- | ----------- | ----------- | ----------------------------------------------------- | ---------- |
-| PF001           | F146          | `v0.1.61-p.1` | InProgress  | Local       | [PF001 design](features/v0.1.61-p.1.md#feature-pf001) | 2026-09-04 |
+| Partner Feature | Space Feature | Target   | Development | Integration | Evidence                                         | Updated    |
+| --------------- | ------------- | -------- | ----------- | ----------- | ------------------------------------------------ | ---------- |
+| PF001           | F146          | `v0.1.0` | InProgress  | Local       | [PF001 design](features/v0.1.0.md#feature-pf001) | 2026-09-04 |
+| PF002           | F146          | `v0.1.0` | InProgress  | Local       | [PF002 design](features/v0.1.0.md#feature-pf002) | 2026-09-04 |
+| PF003           | F146          | `v0.1.0` | InProgress  | Local       | [PF003 design](features/v0.1.0.md#feature-pf003) | 2026-09-04 |
+
+```text
+F146 <- PF001, PF002, PF003
+```
 
 规则：
 
@@ -62,22 +68,22 @@ Partner 融合：Local -> Ready -> Proposed -> Integrated
 
 ## 6. 当前集成快照
 
-| 项目                  | 当前证据                                                        |
-| --------------------- | --------------------------------------------------------------- |
-| Partner branch        | `feature/f146-partner-plugin-library@60021b6`（本次文档迁移前） |
-| 已合入 Space baseline | `aba7359` 合并 `v0.1.46-alpha.3@1a310ae`                        |
-| 最新观察到的 upstream | `upstream/main@7528383`，当前 Partner 分支尚未包含              |
-| Partner Feature       | PF001 / F146，`InProgress / Local`                              |
-| Partner library       | `extensions/partner-library/manifest.json` 的 `0.9.1`           |
+| 项目                   | 当前证据                                                                 |
+| ---------------------- | ------------------------------------------------------------------------ |
+| Partner branch         | `integration/partner-upstream-20260904-v0.1.0@ea7d61c`（本次文档重整前） |
+| Space baseline         | `package-lock.json`：Space `0.1.46-alpha.5` / KodaX `0.7.96-beta.1`      |
+| Partner release target | `v0.1.0`                                                                 |
+| Partner library target | `0.1.0`                                                                  |
+| Partner Features       | PF001、PF002、PF003 / F146，均为 `InProgress / Local`                    |
 
-该表是带日期的集成快照，不替代 Git。每次同步后应更新提交证据和验证结果。
+该表是带日期的集成快照，不替代 Git。每次同步后应更新提交证据和验证结果；Partner library 的目标版本只有在 manifest 与打包产物同步后才成为发布事实。
 
 ## 7. 待协调的上游差异
 
-- Space F130 与 PF001/P9 对 Partner 右侧工作区、Results/Process/Files 和 Terminal 的产品描述需要在集成时统一。
-- Space F096 仍管理通用 Connector foundation；PF001 的有限连接器和风险路由不能自动把 F096 标记完成。
-- Experts 与独立 Partner 插件库属于 F146 fork 增量，在上游接受前只在 Partner 文档中作为当前实现事实。
-- Space 总文档中的正式版本与已交付声明不得被 fork-only `v0.1.61-p.1` 覆盖。
+- Space F130 与 PF003 对 Partner 统一详情工作区、任务卡和右侧资源打开的产品描述需要在集成时统一。
+- Space F096 仍管理通用 Connector foundation；PF002 的连接器预览、可信宿主和平台切片不能自动把 F096 标记完成。
+- PF001–PF003 都是 F146 的 Partner 内部切片；在上游接受前不复制成三个 Space Feature。
+- Partner `v0.1.0` 与 library `0.1.0` 是独立版本轴，不覆盖 Space `v0.1.46-alpha.5` 或 KodaX `0.7.96-beta.1`。
 
 ## 8. 上游同步与合并门槛
 

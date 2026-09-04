@@ -218,10 +218,14 @@ test('a single Feishu account creates and privately verifies one native document
     },
   );
   await readStarted;
+  let receiptDeadline: ReturnType<typeof setTimeout> | undefined;
   const task = await Promise.race([
     createPromise,
-    new Promise<null>((resolve) => setImmediate(() => resolve(null))),
+    new Promise<null>((resolve) => {
+      receiptDeadline = setTimeout(() => resolve(null), 1_000);
+    }),
   ]);
+  if (receiptDeadline) clearTimeout(receiptDeadline);
   if (!task) {
     releaseRead();
     await createPromise;
@@ -426,11 +430,15 @@ test('one admitted turn retries the same native document invocation without a se
     { title: '周报', content: '本周进展' },
   );
   assert.notEqual(newTurn.id, first.id);
-  await waitForDocumentTask(
-    f.service,
-    f.context,
-    newTurn.id,
-    (candidate) => candidate.contentVerification === 'verified',
+  await Promise.all(
+    [first.id, newTurn.id].map((id) =>
+      waitForDocumentTask(
+        f.service,
+        f.context,
+        id,
+        (candidate) => candidate.contentVerification === 'verified',
+      ),
+    ),
   );
   assert.equal(createCalls, 2);
 });
@@ -1131,11 +1139,10 @@ test('disconnect also waits for document verification spawned by an admitted cre
     };
   };
 
-  const creating = f.service.createDocument(
-    f.context,
-    'a15f80de-b447-4dd2-a416-28f1f6c7e2f8',
-    { title: '停用并发测试', content: '正文' },
-  );
+  const creating = f.service.createDocument(f.context, 'a15f80de-b447-4dd2-a416-28f1f6c7e2f8', {
+    title: '停用并发测试',
+    content: '正文',
+  });
   await createStarted;
   const disconnecting = f.service
     .disconnect({

@@ -1,5 +1,8 @@
 # Partner 插件库（P1–P5 与首次连接）— 人工测试指导
 
+> [!IMPORTANT]
+> **历史测试证据，不是当前验收入口。** 本文保留原 fork `v0.1.61-p.1`、Partner Library `0.9.1` / `0.9.0` / `0.5.1` 以及 P1–P9 测试过程，不能据此宣称 Partner `v0.1.0` 已通过或已发布。当前测试入口是 [Partner v0.1.0 测试指南](FEATURE_F146_PARTNER_v0.1.0_TEST_GUIDE.md)，当前设计是 [Partner v0.1.0 / PF001–PF003](../features/v0.1.0.md)；P1–P3 → PF001、P4–P7 → PF002、P8–P9 → PF003，三者共同映射 Space `F146`。
+
 ## 功能概述
 
 功能：F146 Partner Plugin Library Extension。规划版本：v0.1.61（fork）；当前宿主仍为 0.1.45，SDK 仍为 0.7.95。测试日期：2026-08-31；测试人员：待填写。

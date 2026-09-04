@@ -1,8 +1,10 @@
 # KodaX Space Partner 产品需求文档（PRD）
 
 > 状态：持续演进
-> 当前主 Feature：PF001
-> Space 映射：F146
+> 当前版本目标：Partner v0.1.0（本地 Release Candidate）
+> 当前 Feature：PF001、PF002、PF003
+> Space 映射：F146 <- PF001, PF002, PF003
+> 兼容基线：KodaX Space v0.1.46-alpha.5 / KodaX 0.7.96-beta.1
 > Feature 状态以 [Partner Feature List](FEATURE_LIST.md) 为准。
 
 ## 1. 文档职责
@@ -148,25 +150,32 @@ Partner 通过可安装的插件包扩展两类能力：
 - 共享 Shell、IPC、会话或主进程改动必须验证 Coder。
 - 插件与宿主通过能力握手判断兼容，不能只猜版本字符串。
 
-## 8. PF001 与 F146
+## 8. PF001–PF003 与 F146
 
-`PF001 — Partner Plugin Library Extension` 是当前 Partner 内部主 Feature，映射 Space `F146`。
+Partner `v0.1.0` 将原 F146 / P1–P9 的实现记录重整为三个可独立验收的内部 Feature：
 
-| 维度                   | 权威来源                                                       |
-| ---------------------- | -------------------------------------------------------------- |
-| Partner 开发与集成状态 | [Partner Feature List](FEATURE_LIST.md)                        |
-| Space 正式状态         | [Space Feature List](../FEATURE_LIST.md)                       |
-| Partner 版本设计       | [PF001 design](features/v0.1.61-p.1.md#feature-pf001)          |
-| 详细阶段和证据         | [F146 开发计划](features/v0.1.61-partner-plugin-library.md)    |
-| 人工验收               | [F146 测试指南](test-guides/FEATURE_146_v0.1.61_TEST_GUIDE.md) |
+| Partner Feature | 产品边界                                         | 历史阶段 | Space 映射 |
+| --------------- | ------------------------------------------------ | -------- | ---------- |
+| PF001           | Extension 生命周期、专家库、会话快照与可选 Skill | P1–P3    | F146       |
+| PF002           | 受控连接器预览、飞书平台专家、读取与受审操作     | P4–P7    | F146       |
+| PF003           | receipt-first 平台交付与统一详情工作区           | P8–P9    | F146       |
 
-初始映射为 `F146 <- PF001`。如果后续能力需要独立生命周期，可以新增 PF；只有形成新的 Space 级交付时，才通过全局 `feature-manager` 申请新的 `F###`。
+| 维度                   | 权威来源                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| Partner 开发与集成状态 | [Partner Feature List](FEATURE_LIST.md)                                          |
+| Space 正式状态         | [Space Feature List](../FEATURE_LIST.md)                                         |
+| Partner 版本设计       | [v0.1.0 / PF001–PF003](features/v0.1.0.md)                                       |
+| 当前人工验收           | [Partner v0.1.0 测试指南](test-guides/FEATURE_F146_PARTNER_v0.1.0_TEST_GUIDE.md) |
+| 历史阶段和证据         | [F146 / P1–P9 开发计划](features/v0.1.61-partner-plugin-library.md)              |
+| 历史测试记录           | [原 v0.1.61 测试指南](test-guides/FEATURE_146_v0.1.61_TEST_GUIDE.md)             |
+
+当前映射为 `F146 <- PF001, PF002, PF003`。三个 PF 只拆分 Partner 内部责任和验收边界，不自动产生三个 Space Feature；只有形成新的 Space 级交付时，才通过全局 `feature-manager` 申请新的 `F###`。
 
 ## 9. 当前范围与非目标
 
-PF001 包含插件库、专家、连接器、可信宿主、受控远端操作、任务详情工作区和 Space/Coder 融合验证。
+PF001–PF003 共同覆盖插件库、专家、连接器、可信宿主、受控远端操作、任务详情工作区和 Space/Coder 融合验证；各自的精确边界以 [Partner v0.1.0 设计](features/v0.1.0.md)为准。
 
-当前不包含任意第三方主进程代码、通用插件市场、新 Runtime、Skill 系统重写、无范围账号访问，以及删除、覆盖、权限修改、群发或后台自动同步。
+当前不包含任意第三方主进程代码、通用插件市场、新 Runtime、Skill 系统重写、无范围账号访问，以及删除、覆盖、权限修改、群发或后台自动同步。Partner `v0.1.0` 的本地整理也不代表已经对外发布；公开安装包、Extension 分发、Git tag 或 GitHub Release 必须先满足仓库 `LICENSE` 及适用书面授权要求。
 
 ## 10. 成功标准
 
@@ -178,7 +187,7 @@ PF001 包含插件库、专家、连接器、可信宿主、受控远端操作�
 - 插件禁用、卸载、授权取消和失败路径可恢复。
 - 自动化、人工验收和真实服务结果分开记录。
 - 共享链路通过 Coder 回归并在 [Integration](INTEGRATION.md) 留证。
-- 只有真实进入 Space 主线后，PF001 才可标记 `Integrated`。
+- 只有对应目标提交真实进入 Space 主线后，PF001–PF003 才可分别标记 `Integrated`。
 
 ## 11. 相关文档
 
@@ -187,3 +196,5 @@ PF001 包含插件库、专家、连接器、可信宿主、受控远端操作�
 - [Partner Integration](INTEGRATION.md)
 - [Partner Development](DEVELOPMENT.md)
 - [Partner Feature List](FEATURE_LIST.md)
+- [Partner v0.1.0 版本设计](features/v0.1.0.md)
+- [Partner v0.1.0 Release Readiness](releases/v0.1.0-release-readiness.md)

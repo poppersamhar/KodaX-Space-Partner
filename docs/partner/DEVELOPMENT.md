@@ -61,7 +61,7 @@
 
 - Partner 可集成基线：`7c869d1`。
 - 未审核本地材料归档：`archive/local-only-f146-unreviewed-20260904`，提交 `1b45875`。
-- 当次上游基线：`upstream/main` 的 `1a310ae`，标签 `v0.1.46-alpha.3`。
+- 当次上游基线：`upstream/main` 的 `0376cb4`，标签 `v0.1.46-alpha.5`；本地合并提交为 `ea7d61c`。
 
 ## 每次开始和结束开发
 
@@ -180,13 +180,14 @@ Space Trusted Host
 
 ## 版本号
 
-- Space 应用版本跟随实际合入的 `upstream` 发布线，不为每个 Partner 提交升级。
-- Partner Library 使用独立 SemVer；当前 manifest 为 `0.9.1`。
+- Partner 产品线使用独立 SemVer；当前首个整理目标为 `v0.1.0`。其范围和 PF 边界以 [Partner v0.1.0 设计](features/v0.1.0.md)为准。
+- Partner Library 也使用独立 SemVer；首个候选与产品版本对齐为 `0.1.0`，归档名为 `kodax.partner-library-0.1.0.space-extension`。以后 library 可以按兼容性需要独立演进，不能反向决定 Space 版本。
+- Space 应用版本只跟随实际合入的 `upstream` 发布线；当前兼容基线为 `v0.1.46-alpha.5`，KodaX 为 `0.7.96-beta.1`。整理或发布 Partner `v0.1.0` 时不得修改根 `package.json`、Desktop package 或 lockfile 中的 Space/KodaX 版本来配合名称。
 - `hostApiVersion` 只在宿主协议出现不兼容变化时升级。
 - 功能可用性通过 `requiredHostCapabilities` 与宿主能力握手判断，不按应用或插件版本字符串猜测。
-- 如果同步后仍需发布临时整包，版本名应绑定真实上游基线，例如 `0.1.46-partner.1`；最终名称在完成上游同步后确定。
+- Partner Git 标签固定使用 `partner-vX.Y.Z`，例如 `partner-v0.1.0`；不要使用 Space 的 `vX.Y.Z` 命名空间，也不要执行会把全部上游标签一起推送的 `git push --tags`。
 
-历史阶段文档仍会出现 Partner Library `0.9.0` / `0.5.1`；它们只描述当时证据。当前目标以 [Partner Feature List](FEATURE_LIST.md) 为准，发布前必须再次统一 manifest、host、文档和 release-readiness，不能根据历史片段直接打标签。
+历史阶段文档仍会出现 fork `v0.1.61-p.1` 和 Partner Library `0.9.1` / `0.9.0` / `0.5.1`；它们只描述当时证据，不是当前发布入口。当前目标以 [Partner Feature List](FEATURE_LIST.md)、[v0.1.0 设计](features/v0.1.0.md)和 [Release Readiness](releases/v0.1.0-release-readiness.md)为准，不能根据历史片段直接打标签。
 
 ## 测试与验证矩阵
 
@@ -231,9 +232,10 @@ git push -u origin feature/f146-partner-plugin-library
 - 已同步并验证最新 `upstream/main`。
 - 完整自动测试、类型检查、lint 和打包 smoke 通过。
 - 真实连接器验收与自动夹具结果分开记录；夹具不能宣称第三方真实成功。
-- package、lockfile、Partner manifest、CHANGELOG 和 release-readiness 的版本一致。
+- 根/Desktop package 与 lockfile 仍准确表达 Space `v0.1.46-alpha.5` / KodaX `0.7.96-beta.1`；Partner manifest、归档、CHANGELOG 和 release-readiness 准确表达 Partner `v0.1.0`。
+- 已核对仓库 `LICENSE`，并取得覆盖目标接收方、用途和分发物的适用书面授权；没有该证据时只能保留本地候选，不能发布公开安装包、Extension、Git tag 或 GitHub Release。
 
-正式发布时再创建唯一的 release commit、annotated tag 和 GitHub Release。不要给当前 InProgress 的 F146 基线打发布标签。
+正式发布时再创建唯一的 release commit、`partner-v0.1.0` annotated tag 和 GitHub Release，并逐个推送明确的 Partner 标签；不要使用 plain `v0.1.0`，也不要给仍处于 `InProgress / Local` 的候选冒充最终发布。当前整理阶段只建立本地 Release Candidate，直到技术、人工、集成和授权门槛都有可复核证据。
 
 ## 恢复本地归档材料
 

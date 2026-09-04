@@ -132,6 +132,13 @@ partner-checkpoints*
 
 Space 应用版本、Partner library SemVer 和 Host API/capability 分别管理。源码目录整理不能顺便改变产品身份、持久化 key 或授权含义。
 
+当前 `v0.1.0` 候选采用以下兼容边界：
+
+- Partner 产品目标为 `v0.1.0`，首个 Partner Library 归档与之对齐为 `0.1.0`。
+- Space 宿主保持上游兼容基线 `v0.1.46-alpha.5`，KodaX 依赖保持 `0.7.96-beta.1`；整理 Partner 版本不得修改 Space 根版本。
+- Host API 与 capability 继续独立协商；当前能力依赖以 manifest 和 typed contract 为准，而不是从 `0.1.0` 版本字符串推断。
+- Partner 发布标签使用 `partner-vX.Y.Z` 命名空间，避免与 Space 的 `vX.Y.Z` 标签混淆。
+
 ## 11. 失败、恢复与回滚
 
 - Extension action 和单个 connector 可以独立禁用。
@@ -141,4 +148,4 @@ Space 应用版本、Partner library SemVer 和 Host API/capability 分别管理
 
 ## 12. 架构决策
 
-跨 Space/Coder 的决策继续写入全局 ADR。Partner 内部决策放在 [`ADR/`](ADR/)；何时建立新 ADR 见 [Partner ADR 索引](ADR/README.md)。当前 Feature 的具体接口与阶段设计见 [PF001](features/v0.1.61-p.1.md#feature-pf001)和[详细计划](features/v0.1.61-partner-plugin-library.md)。
+跨 Space/Coder 的决策继续写入全局 ADR。Partner 内部决策放在 [`ADR/`](ADR/)；何时建立新 ADR 见 [Partner ADR 索引](ADR/README.md)。当前版本的具体接口分别见 [PF001](features/v0.1.0.md#feature-pf001)、[PF002](features/v0.1.0.md#feature-pf002)和[PF003](features/v0.1.0.md#feature-pf003)；原 P1–P9 的详细过程保留在[历史开发计划](features/v0.1.61-partner-plugin-library.md)中。

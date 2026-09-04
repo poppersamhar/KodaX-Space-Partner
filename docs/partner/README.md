@@ -32,17 +32,21 @@ Partner 当前包含三条相互配合的主线：
 2. **插件库**：专家与连接器的发现、选择、配置和会话绑定。
 3. **Space 融合**：复用 Space Runtime、Electron 可信宿主、权限、IPC、Skill、Artifact 和共享 Shell，同时保持 Coder 行为稳定。
 
-## 当前主 Feature
+## 当前版本与 Feature
 
-- Partner Feature：`PF001 — Partner Plugin Library Extension`
-- Space 映射：`F146`
+- Partner 版本目标：`v0.1.0`（本地 Release Candidate，尚未发布）
+- Partner Library 版本目标：`0.1.0`
+- 兼容基线：KodaX Space `v0.1.46-alpha.5` / KodaX `0.7.96-beta.1`
+- Partner Feature：`PF001 — Partner Extension & Expert Library`、`PF002 — Governed Connector Previews & Feishu Platform Expert`、`PF003 — Receipt-First Delivery & Unified Workspace`
+- Space 映射：`F146 <- PF001, PF002, PF003`
 - Partner 状态：[Partner Feature List](FEATURE_LIST.md)
 - Space 状态：[Space Feature List](../FEATURE_LIST.md)
-- Partner 版本设计：[PF001 / v0.1.61-p.1](features/v0.1.61-p.1.md#feature-pf001)
-- 详细开发计划：[F146 Partner 插件库开发计划](features/v0.1.61-partner-plugin-library.md)
-- 人工验收：[F146 测试指南](test-guides/FEATURE_146_v0.1.61_TEST_GUIDE.md)
+- Partner 版本设计：[Partner v0.1.0 / PF001–PF003](features/v0.1.0.md)
+- 当前人工验收：[Partner v0.1.0 测试指南](test-guides/FEATURE_F146_PARTNER_v0.1.0_TEST_GUIDE.md)
+- 发布准备：[Partner v0.1.0 Release Readiness](releases/v0.1.0-release-readiness.md)
+- 历史实施证据：[F146 / P1–P9 开发计划](features/v0.1.61-partner-plugin-library.md)和[原 v0.1.61 测试指南](test-guides/FEATURE_146_v0.1.61_TEST_GUIDE.md)
 
-`PF001` 管理 Partner 分支内的实现与验收，`F146` 管理该能力是否进入 Space。P1–P9 是 PF001 的实施阶段，不是九个独立 Feature。
+三个 PF 分别管理 Partner 分支内可独立验收的产品接缝：P1–P3 映射 PF001，P4–P7 映射 PF002，P8–P9 映射 PF003。`F146` 管理这组能力是否进入 Space；Partner 的版本与 Feature 状态不能代替 Space 的版本与集成状态。
 
 ## 文档导航
 
@@ -62,9 +66,13 @@ Partner 当前包含三条相互配合的主线：
 - [`releases/`](releases/)：Partner 独立版本记录；Space 正式发布继续记录在全局发布目录。
 - [`ADR/`](ADR/)：Partner 内部决策；影响 Space/Coder 的决策继续写入全局 ADR。
 
-### PF001 / F146 现有材料
+### Partner v0.1.0 / F146 现有材料
 
-- [开发计划](features/v0.1.61-partner-plugin-library.md)
+- [v0.1.0 版本设计（PF001–PF003）](features/v0.1.0.md)
+- [v0.1.0 人工测试指南](test-guides/FEATURE_F146_PARTNER_v0.1.0_TEST_GUIDE.md)
+- [v0.1.0 发布准备](releases/v0.1.0-release-readiness.md)
+- [历史 P1–P9 开发计划](features/v0.1.61-partner-plugin-library.md)
+- [历史 v0.1.61 人工测试指南](test-guides/FEATURE_146_v0.1.61_TEST_GUIDE.md)
 - [P1–P3 评审](features/F146-plugin-library-review.md)
 - [P4/P5 飞书切片](features/f146-p4-p5-feishu.md)
 - [P4/P5 评审](features/F146-p4-p5-review.md)

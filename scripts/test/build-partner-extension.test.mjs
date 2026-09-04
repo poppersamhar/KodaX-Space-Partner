@@ -72,7 +72,7 @@ test('builds an independently installable, self-contained Partner library archiv
   const html = await zip.file('ui/index.html').async('string');
   assert.equal(manifest.id, 'kodax.partner-library');
   assert.equal(manifest.hostApiVersion, 4);
-  assert.equal(manifest.version, '0.9.1');
+  assert.equal(manifest.version, '0.1.0');
   assert.deepEqual(manifest.requiredHostCapabilities, ['partnerNativeDocumentDeliveryV1']);
   assert.equal(manifest.experts.length, 10);
   assert.equal(manifest.experts[0].id, 'writing-mentor');
@@ -138,7 +138,7 @@ test('the library contains eight stable scene experts with original tasks and re
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), 'partner-scene-experts-'));
   t.after(() => fs.rm(outDir, { recursive: true, force: true }));
   const { manifest } = await buildPartnerExtension({ outDir });
-  assert.equal(manifest.version, '0.9.1');
+  assert.equal(manifest.version, '0.1.0');
   assert.deepEqual(
     manifest.experts.map((expert) => expert.id),
     ['writing-mentor', ...migratedScenes.map(([id]) => id), 'feishu-office-suite'],
