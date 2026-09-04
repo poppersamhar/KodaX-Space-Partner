@@ -169,7 +169,7 @@ host tests, not a claim that a user's real Feishu account has been authenticated
 or a real remote document has been written.
 
 The first-connection contract, cancellation and private-install boundaries are
-documented in [F146 onboarding](../../docs/features/f146-feishu-onboarding.md).
+documented in [F146 onboarding](../../docs/partner/features/f146-feishu-onboarding.md).
 Cancelling stops local waiting; it does not revoke consent already granted on
 Feishu's website. Disconnecting makes the Space account binding unavailable,
 without logging out another app or deleting CLI credentials and remote documents.

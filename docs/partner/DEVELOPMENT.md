@@ -1,6 +1,43 @@
-# Partner 本地 Git 与 Space 融合工作流
+# Partner 开发与 Git 工作流
 
-这份文档用于管理 F146 Partner 插件库的长期开发。目标是同时满足三件事：本地改动可恢复、尚未完成的内容不会被误发布、Partner 能持续吸收 Coder 所在的 Space 上游变化。
+这份文档用于管理 Partner 产品线的代码放置、PF Feature、本地 Git、验证、上游同步和发布。目标是同时满足三件事：本地改动可恢复、尚未完成的内容不会被误发布、Partner 能持续吸收 Coder 所在的 Space 上游变化。
+
+产品要求见 [PRD](PRD.md)，内部架构见 [HLD](HLD.md)，共享接缝与当前同步证据见 [INTEGRATION](INTEGRATION.md)，功能状态见 [Partner Feature List](FEATURE_LIST.md)。
+
+## 目录与维护责任
+
+| 路径                                                                 | 主要维护     | 额外评审                               |
+| -------------------------------------------------------------------- | ------------ | -------------------------------------- |
+| `docs/partner/**`                                                    | Partner      | 融合契约变化需 Space 评审              |
+| `extensions/partner-library/**`                                      | Partner      | manifest/Host API 变化需 Space 评审    |
+| `apps/desktop/renderer/src/features/partner/**`                      | Partner      | Shell 接缝需 Space 评审                |
+| `apps/desktop/renderer/src/features/extensions/Partner*`、`partner*` | Partner      | 通用 provider/bridge 变化需 Space 评审 |
+| `apps/desktop/electron/partner-connectors/**`                        | Partner      | 安全、凭据、远端写入需共同评审         |
+| `resources/brands/**`、`resources/partner-connectors/**`             | Partner 内容 | 来源、供应链和打包复核                 |
+| `apps/desktop/electron/space-extensions/**`、IPC、Shell/Main/Window  | Space 共享   | Partner/Coder 双向回归                 |
+
+### 改动应该放在哪里
+
+- 专家、连接器声明或独立插件 UI：`extensions/partner-library/`。
+- Partner 工作区交互：`apps/desktop/renderer/src/features/partner/`。
+- OAuth、CLI、凭据、scope 和远端调用：`apps/desktop/electron/partner-connectors/`。
+- 通用插件安装/校验：`apps/desktop/electron/space-extensions/`，需要共享评审。
+- 新 IPC：先改 `packages/space-ipc-schema/`，再接 Electron handler/preload/Renderer。
+- 模式切换、侧边栏或输入框公共外壳：`apps/desktop/renderer/src/shell/`，需要共享评审。
+- Partner 产品、Feature、测试和发布证据：`docs/partner/`。
+- Space 正式发布声明：Space 总文档，由双方评审。
+
+### 为什么不把代码搬进 `docs/partner/`
+
+`docs/partner/` 是文档所有权边界，不是构建边界。Partner 源码已经按 Electron、Renderer、Extension 和共享 package 正确分层：
+
+- Desktop 的 TypeScript、Vite、esbuild 和测试 glob 只覆盖既有应用目录，移出后可能不再构建或静默漏测。
+- Connector host 不能进入 Renderer/Extension，否则会破坏凭据与进程安全边界。
+- IPC schema 必须留在共享 package，避免 Main/Preload/Renderer 出现多份协议。
+- `space-extensions` 是通用宿主，即使最初随 F146 增加，也不属于 Partner 私有实现。
+- 构建脚本、品牌资源、CLI bundle 和 installer 对当前路径有明确依赖。
+
+本次“迁移后删除旧内容”只适用于使用 `git mv` 迁入本目录的 Partner 专项文档，不适用于共享源码、Extension 源码或用户运行数据。
 
 ## 仓库与分支职责
 
@@ -54,6 +91,20 @@ docs(f146): ...
 
 提交正文至少说明用户效果、关键边界、已运行的验证和仍未完成的人工或发布步骤。`git commit` 是本地版本；`git push` 只是把分支备份到 GitHub；只有发布标签和 Release 才代表产品发布。
 
+## Partner Feature 生命周期
+
+Partner 功能使用 `partner-feature-manager`，固定写入：
+
+```text
+docs/partner/FEATURE_LIST.md
+docs/partner/features/v{VERSION}.md
+docs/partner/features/unplanned.md
+docs/partner/FEATURES_ARCHIVED.md
+docs/partner/INTEGRATION.md
+```
+
+PF 使用 `PF###` 编号，并分别管理开发状态 `Planned → InProgress → Completed` 与集成状态 `Local → Ready → Proposed → Integrated`。该 Skill 不修改 Space 总 `docs/FEATURE_LIST.md`；需要新的 Space `F###` 时走全局 Feature 流程。
+
 ## Partner 短分支生命周期
 
 先从干净、最新的 F146 集成分支创建一个具体切片：
@@ -104,23 +155,7 @@ git branch -d integration/partner-upstream-YYYYMMDD
 
 推荐至少每周同步一次，并在每次准备可安装版本之前再同步一次。不要在脏工作区直接执行 `git pull`。
 
-基于完整 Partner 基线与 `upstream/main` 预演出的 13 个文本冲突有：
-
-- `apps/desktop/electron/ipc/session.ts`
-- `apps/desktop/electron/ipc/version.ts`
-- `apps/desktop/electron/kodax/real-session.ts`
-- `apps/desktop/electron/kodax/session-runtime-store.ts`
-- `apps/desktop/package.json`
-- `apps/desktop/renderer/src/i18n/messages.ts`
-- `apps/desktop/renderer/src/shell/ModeSelector.tsx`
-- `docs/FEATURE_LIST.md`
-- `package-lock.json`
-- `package.json`
-- `packages/space-ipc-schema/package.json`
-- `packages/space-ui-kit/package.json`
-- `scripts/smoke-pack.mjs`
-
-即使 Git 自动合并，也要重点复查 `host.ts`、`session-adapter.ts`、Coder action manifest、`BottomBar.tsx`、`ModeSelector.tsx`、Space Control、IPC schema、package/lockfile 和打包脚本。这些位置同时影响 Coder 与 Partner，文本无冲突不等于行为兼容。
+易变化的上游提交、冲突预演和兼容差异不在本稳定指南维护；它们记录在 [Integration 当前快照](INTEGRATION.md#6-当前集成快照)。即使 Git 自动合并，也要复查 Host、Session、Shell、IPC、package/lockfile 和打包脚本；文本无冲突不等于行为兼容。
 
 ## Partner 与 Coder 的长期代码边界
 
@@ -151,7 +186,36 @@ Space Trusted Host
 - 功能可用性通过 `requiredHostCapabilities` 与宿主能力握手判断，不按应用或插件版本字符串猜测。
 - 如果同步后仍需发布临时整包，版本名应绑定真实上游基线，例如 `0.1.46-partner.1`；最终名称在完成上游同步后确定。
 
-当前文档仍混有 Partner Library `0.9.0` / `0.5.1`，应用包仍写 `0.1.61-p.1`。这些是发布阻塞项，但不影响本地恢复基线；不能据此打标签。
+历史阶段文档仍会出现 Partner Library `0.9.0` / `0.5.1`；它们只描述当时证据。当前目标以 [Partner Feature List](FEATURE_LIST.md) 为准，发布前必须再次统一 manifest、host、文档和 release-readiness，不能根据历史片段直接打标签。
+
+## 测试与验证矩阵
+
+按改动范围先运行定向门槛，再在合并或发布前运行完整门槛：
+
+```sh
+# 独立插件包
+npm run build:packages
+node --test scripts/test/build-partner-extension.test.mjs
+npm run build:partner-extension
+node --test --import tsx apps/desktop/electron/space-extensions/*.test.ts
+
+# 连接器可信宿主
+node --test --import tsx apps/desktop/electron/partner-connectors/*.test.ts
+
+# IPC 契约与 Desktop
+npm test -w @kodax-space/space-ipc-schema
+npm test -w @kodax-space/desktop
+
+# 合并前完整门槛
+NODE_OPTIONS=--no-experimental-webstorage npm test
+npm run typecheck
+npm run lint
+npm run format:check
+npm run build:smoke
+git diff --check
+```
+
+正式可安装包还需运行当前平台对应的构建与安装 smoke。独立 Partner Extension 不包含在普通主应用 smoke 的全部断言中，因此 `build:smoke` 与 `build:partner-extension` 都要验证。真实第三方账号/资源验收必须单独记录，不能由 fixture 代替。
 
 ## 推送与发布门槛
 
@@ -186,3 +250,10 @@ git restore --source=archive/local-only-f146-unreviewed-20260904 --worktree -- <
 ```
 
 修正本机绝对路径、授权或来源问题后，再作为独立提交加入功能分支。
+
+## 文档迁移与链接维护
+
+- Partner 专项设计、评审、测试和发布证据放在 `docs/partner/**`。
+- Space 的历史版本、全局 ADR 和共享架构留在原位置，只从 Partner 文档链接。
+- 移动文档使用 `git mv`，同一提交修复所有入站与相对链接，并执行 Markdown 本地链接检查。
+- 不保留两份可继续编辑的旧文档；需要兼容外部旧链接时才增加明确的迁移说明，而不是复制正文。

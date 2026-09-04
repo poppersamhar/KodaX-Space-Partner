@@ -379,6 +379,7 @@ npm run e2e:headed
 | [docs/HLD.md](docs/HLD.md)                                                                                       | 高层架构与系统设计。                                                       |
 | [docs/ADR/](docs/ADR/)                                                                                           | 架构决策记录。                                                             |
 | [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md)                                                                     | Feature ledger、roadmap 和 release planning 状态。                         |
+| [docs/partner/README.md](docs/partner/README.md)                                                                 | Partner 产品线文档、内部 Feature 与 Space/Coder 融合入口。                 |
 | [docs/FEATURES_ARCHIVED.md](docs/FEATURES_ARCHIVED.md)                                                           | 已归档版本索引、reviewed-out 决策和 reopen gates。                         |
 | [docs/KODAX_CAPABILITY_LEDGER.md](docs/KODAX_CAPABILITY_LEDGER.md)                                               | KodaX SDK 能力消费和降级说明。                                             |
 | [CHANGELOG.md](CHANGELOG.md)                                                                                     | 版本历史。                                                                 |

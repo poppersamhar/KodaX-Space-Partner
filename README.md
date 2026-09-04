@@ -447,6 +447,7 @@ npm run e2e:headed
 | [docs/HLD.md](docs/HLD.md)                                                                                       | High-level architecture and system design.                                               |
 | [docs/ADR/](docs/ADR/)                                                                                           | Architecture decision records.                                                           |
 | [docs/FEATURE_LIST.md](docs/FEATURE_LIST.md)                                                                     | Feature ledger, roadmap, and release planning status.                                    |
+| [docs/partner/README.md](docs/partner/README.md)                                                                 | Partner product-line docs, internal features, and Space/Coder integration entry point.   |
 | [docs/FEATURES_ARCHIVED.md](docs/FEATURES_ARCHIVED.md)                                                           | Archived release index, reviewed-out decisions, and reopen gates.                        |
 | [docs/KODAX_CAPABILITY_LEDGER.md](docs/KODAX_CAPABILITY_LEDGER.md)                                               | KodaX SDK capability consumption and fallback notes.                                     |
 | [CHANGELOG.md](CHANGELOG.md)                                                                                     | Release history.                                                                         |

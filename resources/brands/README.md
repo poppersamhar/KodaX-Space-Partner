@@ -24,7 +24,7 @@ Both the renderer and the independent offline HTML use identical asset bytes.
 | Local file            | Size      | Official source                                                                                                                                                                                             |
 | --------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wecom.png`           | 48 × 48   | [Enterprise WeChat homepage favicon](https://wwcdn.weixin.qq.com/node/wwnl/wwnl/style/images/independent/favicon/favicon_48h$c976bd14.png), referenced by [work.weixin.qq.com](https://work.weixin.qq.com/) |
-| `dingtalk.png`        | 200 × 200 | Official DingTalk homepage asset; exact URL and SHA-256 in [provider evidence](../../docs/features/f146-dingtalk-evidence.md)                                                                               |
+| `dingtalk.png`        | 200 × 200 | Official DingTalk homepage asset; exact URL and SHA-256 in [provider evidence](../../docs/partner/features/f146-dingtalk-evidence.md)                                                                               |
 | `tencent-meeting.png` | 128 × 128 | [Tencent Meeting homepage logo](https://cdn.meeting.tencent.com/assets/next-website/logo128.png), referenced by [meeting.tencent.com](https://meeting.tencent.com/)                                         |
 
 ## Hosted MCP and app-registration connectors (2026-09-02)
