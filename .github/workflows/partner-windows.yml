@@ -1,0 +1,78 @@
+name: Partner Windows preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['integration/partner-*']
+    paths: ['.github/workflows/partner-windows.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+      KODAX_BUILD_TARGET_PLATFORM: win32
+      SPACE_PACK_OUT_DIR: out/partner-windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Build the published preview source, not a moving development branch.
+          ref: 243bb2ea58151390c7be9c1a86fbe3c71ce98140
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build:smoke
+      - run: node scripts/prepare-feishu-cli.mjs win32-x64
+      - name: Configure Partner Windows artifacts and update feed
+        shell: pwsh
+        run: |
+          @'
+          extends: ./electron-builder.partner.yml
+          directories:
+            output: out/partner-windows
+          win:
+            publish:
+              provider: github
+              owner: poppersamhar
+              repo: KodaX-Space-Partner
+              releaseType: prerelease
+          nsis:
+            artifactName: KodaX-Space-Partner-Setup-0.1.0-x64.${ext}
+          portable:
+            artifactName: KodaX-Space-Partner-Portable-0.1.0-x64.${ext}
+          '@ | Set-Content -Encoding utf8 electron-builder.partner-windows.yml
+      - name: Build Windows x64 installers
+        run: npx electron-builder --config electron-builder.partner-windows.yml --win --x64 -p never
+      - name: Verify update feed
+        shell: pwsh
+        run: |
+          $feed = Get-Content -Raw out/partner-windows/win-unpacked/resources/app-update.yml
+          if ($feed -notmatch 'owner: poppersamhar' -or $feed -notmatch 'repo: KodaX-Space-Partner' -or $feed -match 'icetomoyo') {
+            throw 'Unexpected Windows update feed'
+          }
+      - name: Packaged Windows boot smoke
+        run: node e2e/boot-smoke-packaged.mjs
+      - name: Create checksums
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem out/partner-windows/*-0.1.0-x64.exe)
+          if ($files.Count -ne 2) { throw 'Expected Setup and Portable executables' }
+          $lines = $files | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          }
+          $lines | Set-Content -Encoding ascii out/partner-windows/SHA256SUMS-Windows.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: partner-0.1.0-windows-x64
+          if-no-files-found: error
+          path: |
+            out/partner-windows/*-0.1.0-x64.exe
+            out/partner-windows/SHA256SUMS-Windows.txt
