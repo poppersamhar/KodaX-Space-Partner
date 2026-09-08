@@ -1,0 +1,45 @@
+# Deliver the already verified Windows artifacts without routing large files
+# through a developer machine. This supplements the existing 0.1.0 release.
+name: Deliver Partner 0.1.0 Windows assets
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['integration/partner-*']
+    paths: ['.github/workflows/partner-windows-assets.yml']
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  deliver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: poppersamhar/KodaX-Space-Partner
+    steps:
+      - name: Verify the exact successful Windows build
+        run: |
+          gh api repos/$GH_REPO/actions/runs/34209355634 > run.json
+          jq -e '.conclusion == "success" and .name == "Partner Windows preview" and (.head_sha | startswith("c9d165a"))' run.json
+          gh release view partner-v0.1.0 --repo "$GH_REPO" --json isDraft,isPrerelease | jq -e '.isDraft == false and .isPrerelease == true'
+      - uses: actions/download-artifact@v4
+        with:
+          repository: poppersamhar/KodaX-Space-Partner
+          run-id: 34209355634
+          github-token: ${{ github.token }}
+          name: partner-0.1.0-windows-x64
+          path: windows-assets
+      - name: Verify checksums and upload to the existing release
+        working-directory: windows-assets
+        run: |
+          tr -d '\r' < SHA256SUMS-Windows.txt > checksums.txt
+          test "$(wc -l < checksums.txt)" -eq 2
+          sha256sum --strict --check checksums.txt
+          cat checksums.txt
+          gh release upload partner-v0.1.0 --repo "$GH_REPO" \
+            KodaX-Space-Partner-Setup-0.1.0-x64.exe \
+            KodaX-Space-Partner-Portable-0.1.0-x64.exe \
+            SHA256SUMS-Windows.txt
