@@ -78,9 +78,24 @@ test('repository builtin snapshot contains the formal Feishu expert skill and de
   const result = await registerSpaceBuiltinSkills(repositoryBuiltinRoot);
 
   assert.deepEqual(result.skillNames, [
+    'call-prep',
+    'copywriting',
+    'customer-research',
+    'draft-response',
     'feishu-office-suite',
     'frontend-slides',
     'huashu-design',
+    'interview-prep',
+    'knowledge-synthesis',
+    'onboarding',
+    'partner-business-communication',
+    'partner-data-analysis',
+    'partner-deep-research',
+    'partner-meeting-minutes',
+    'partner-product-management',
+    'partner-project-management',
+    'process-doc',
+    'status-report',
   ]);
 
   const sdk = await import('@kodax-ai/kodax/skills');

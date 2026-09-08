@@ -94,6 +94,7 @@ export function createPartnerConnectorBinding(api: PartnerConnectorApi) {
     if (context.surface !== 'partner' || !context.projectRoot)
       throw new Error('Open a Partner project first');
     if (snapshot.changing) throw new Error('Connector configuration is still being saved');
+    if (snapshot.loading) throw new Error('Wait for connector configuration to finish loading');
     const expectedEpoch = epoch;
     const expectedLoad = ++loadRevision;
     revision += 1;
@@ -153,11 +154,13 @@ export function createPartnerConnectorBinding(api: PartnerConnectorApi) {
       loadRevision += 1;
       publish({ state, loading: false, error: null });
     },
-    select: (selection: PartnerConnectorSelectionT): Promise<void> =>
-      change([
+    select: async (selection: PartnerConnectorSelectionT): Promise<void> => {
+      if (snapshot.error) throw new Error(snapshot.error);
+      return change([
         ...selections().filter((item) => item.connectionId !== selection.connectionId),
         structuredClone(selection),
-      ]),
+      ]);
+    },
     remove: async (connectionId: string): Promise<void> => {
       if (snapshot.context.sessionId)
         return change(selections().filter((item) => item.connectionId !== connectionId));

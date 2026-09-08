@@ -5,7 +5,7 @@ import type {
   PartnerProjectSourceT,
   PartnerRemoteRecordsT,
 } from '@kodax-space/space-ipc-schema';
-import { AlertCircle, Bot, ChevronRight, FileOutput, FolderOpen, Plus } from 'lucide-react';
+import { AlertCircle, Bot, FileOutput, FolderOpen, Plus } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
 import { openPartnerDeliveryInViewer, previewFileInViewer } from '../../lib/openPath.js';
@@ -54,6 +54,7 @@ export interface ContextLoadResult {
   readonly summary: PartnerContextSummary;
   readonly materials: readonly TaskCardItem[];
   readonly artifacts: readonly TaskCardItem[];
+  readonly reviews: readonly TaskCardItem[];
   readonly failed: boolean;
 }
 
@@ -143,6 +144,16 @@ export async function loadPartnerContext(input: ContextLoadInput): Promise<Conte
     }),
     materials,
     artifacts: artifactsList,
+    reviews:
+      remoteRecords?.proposals
+        .filter((proposal) => proposal.operation === 'append' && proposal.status === 'pending')
+        .map((proposal) =>
+          detailItem(`remote-proposal:${proposal.id}`, proposal.title, {
+            kind: 'remoteProposal',
+            proposalId: proposal.id,
+            title: proposal.title,
+          }),
+        ) ?? [],
     failed: contextLoadFailed(input.sessionId, sources, artifacts, deliveries, remote),
   };
 }
@@ -175,9 +186,8 @@ function materialItems(
     ),
     ...remote.map((source) =>
       detailItem(`remote-source:${source.id}`, source.title, {
-        kind: 'browser',
-        initialUrl: source.url,
-        resourceKey: `remote-source-${source.id}`,
+        kind: 'remoteSource',
+        sourceId: source.id,
         title: source.title,
       }),
     ),
@@ -279,7 +289,6 @@ function TaskCard({
   count,
   items,
   icon,
-  onOpen,
   onOpenItem,
   footer,
 }: {
@@ -289,7 +298,6 @@ function TaskCard({
   readonly count: number;
   readonly items: readonly TaskCardItem[];
   readonly icon: ReactNode;
-  readonly onOpen: () => void;
   readonly onOpenItem: (item: TaskCardItem) => void;
   readonly footer?: ReactNode;
 }): JSX.Element {
@@ -298,26 +306,23 @@ function TaskCard({
       className="overflow-hidden rounded-xl border border-border-default bg-surface-2 shadow-sm"
       data-testid={`${testId}-card`}
     >
-      <button
-        type="button"
-        onClick={onOpen}
-        className="group flex w-full items-center gap-2 px-3 py-3 text-left hover:bg-hover-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-border"
+      <div
+        className="flex w-full items-center gap-2 px-3 py-3 text-left"
         aria-label={`${title}: ${count}`}
         data-testid={testId}
       >
-        <span className="text-fg-muted group-hover:text-fg-primary" aria-hidden>
+        <span className="text-fg-muted" aria-hidden>
           {icon}
         </span>
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg-primary">{title}</span>
         <span className="min-w-5 rounded-full bg-surface-3 px-1.5 py-0.5 text-center text-[10px] tabular-nums text-fg-muted">
           {count}
         </span>
-        <ChevronRight className="h-3.5 w-3.5 text-fg-muted" strokeWidth={1.75} aria-hidden />
-      </button>
+      </div>
       <div className="border-t border-border-default/70 px-2 py-2">
         {items.length > 0 ? (
           <div className="space-y-0.5">
-            {items.slice(0, 3).map((item) => (
+            {items.map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -326,7 +331,6 @@ function TaskCard({
                 title={item.label}
               >
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                <ChevronRight className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
               </button>
             ))}
           </div>
@@ -345,6 +349,7 @@ const EMPTY_LOAD_RESULT: ContextLoadResult = {
   summary: EMPTY_PARTNER_CONTEXT_SUMMARY,
   materials: [],
   artifacts: [],
+  reviews: [],
   failed: false,
 };
 
@@ -422,6 +427,7 @@ export function PartnerContextRail({
 
   const collaborationItems = useMemo<readonly TaskCardItem[]>(
     () => [
+      ...scopedLoaded.reviews,
       ...(collaboration.expert
         ? [
             detailItem(
@@ -435,7 +441,7 @@ export function PartnerContextRail({
         detailItem(`skill:${skill.name}`, skill.name, { kind: 'skill', skill }),
       ),
     ],
-    [collaboration.expert, collaboration.skills],
+    [collaboration.expert, collaboration.skills, scopedLoaded.reviews],
   );
   const summary: PartnerContextSummary = {
     ...scopedLoaded.summary,
@@ -472,7 +478,6 @@ export function PartnerContextRail({
           count={summary.materials.count}
           items={scopedLoaded.materials}
           icon={<FolderOpen className="h-4 w-4" strokeWidth={1.75} />}
-          onOpen={() => onOpenDetail({ kind: 'materials' })}
           onOpenItem={openItem}
           footer={
             <button
@@ -493,7 +498,6 @@ export function PartnerContextRail({
           count={summary.collaboration.count}
           items={collaborationItems}
           icon={<Bot className="h-4 w-4" strokeWidth={1.75} />}
-          onOpen={() => onOpenDetail({ kind: 'collaboration' })}
           onOpenItem={openItem}
         />
         <TaskCard
@@ -503,7 +507,6 @@ export function PartnerContextRail({
           count={summary.artifacts.count}
           items={scopedLoaded.artifacts}
           icon={<FileOutput className="h-4 w-4" strokeWidth={1.75} />}
-          onOpen={() => onOpenDetail({ kind: 'outputs' })}
           onOpenItem={openItem}
         />
       </div>

@@ -12,7 +12,21 @@ import { resolveBundledFeishuCliArchivePath } from './feishu-cli-bundle.js';
 import { createWecomConnector } from './wecom-cli.js';
 import { createDingtalkConnector } from './dingtalk-connector.js';
 import { createTencentMeetingConnector } from './tencent-meeting-connector.js';
-import { createOfficialRemoteConnectorBundle } from './official-remote-runtime.js';
+import {
+  createOfficialRemoteConnectorBundle,
+  createVerifiedCredentialStore,
+} from './official-remote-runtime.js';
+import { getKey, setKey, deleteKey } from '../providers/keychain.js';
+import { createTencentDocsConnector } from './tencent-docs-connector.js';
+import { createMailConnector } from './mail-connector.js';
+import { ReadConnectorError } from './read-connector.js';
+import type { FeishuOnboardingInput } from './feishu-onboarding-cli.js';
+const credentials = createVerifiedCredentialStore({ get: getKey, set: setKey, delete: deleteKey });
+async function requestMailCredentials(input: FeishuOnboardingInput) {
+  const value = await input.requestInput?.('mail_credentials');
+  if (!value || !('email' in value)) throw new ReadConnectorError('authorization_failed');
+  return value;
+}
 
 let service: PartnerConnectorService | undefined;
 let tasks: PartnerConnectorTasks | undefined;
@@ -64,6 +78,17 @@ export function getPartnerConnectorService(): PartnerConnectorService {
     {
       cli: new FeishuCli((request) => cli().runner(request)),
       readConnectors: {
+        'tencent-docs-mcp': createTencentDocsConnector({ credentials }),
+        'netease-mail-imap': createMailConnector({
+          id: 'netease-mail-imap',
+          credentials,
+          requestCredentials: requestMailCredentials,
+        }),
+        'qq-mail-imap': createMailConnector({
+          id: 'qq-mail-imap',
+          credentials,
+          requestCredentials: requestMailCredentials,
+        }),
         ...createOfficialRemoteConnectorBundle({
           root: path.join(getSpaceDataDir(), 'partner-connectors'),
         }),

@@ -193,38 +193,51 @@
       }
       .expert-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr));
+        gap: 16px;
       }
-      .expert-card {
-        padding: 20px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--background);
-      }
-      .expert-card h3 {
-        margin: 0 0 9px;
-        font-size: 16px;
-      }
-      .expert-card p {
-        min-height: 44px;
-        margin: 0;
-        font-size: 13px;
-        line-height: 1.8;
-        color: var(--muted);
-      }
-      .expert-meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-bottom: 10px;
-      }
-      .expert-meta span {
-        border-radius: 999px;
-        padding: 3px 8px;
-        background: var(--background);
-        color: var(--muted);
-        font-size: 11px;
+      .expert-card { border: 1px solid var(--line); border-radius: 18px; background: var(--background); overflow: hidden; }
+      .expert-open { display: flex; flex-direction: column; align-items: stretch; gap: 18px; width: 100%; height: 100%; padding: 24px; border: 0; text-align: left; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+      .expert-card:hover { border-color: var(--muted); background: var(--surface); }
+      .expert-card:has(.expert-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
+      .expert-open:focus-visible { outline: none; }
+      .expert-identity { display: flex; align-items: center; gap: 16px; min-width: 0; }
+      .expert-avatar { display: grid; place-items: center; flex-shrink: 0; width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background: var(--accent-wash); color: var(--accent); font-size: 23px; font-weight: 600; }
+      .expert-card h3 { margin: 0; font-size: 18px; line-height: 1.4; font-weight: 650; }
+      .expert-identity > div { min-width: 0; }
+      .expert-open, .expert-detail { overflow-wrap: anywhere; }
+      .expert-subtitle { margin-top: 5px; font-size: 12px; color: var(--muted); }
+      .expert-card p { margin: 0; font-size: 14px; line-height: 1.75; color: var(--muted); }
+      .expert-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: auto; }
+      .expert-tags span { border-radius: 6px; padding: 5px 9px; background: var(--surface); color: var(--muted); font-size: 12px; line-height: 1.3; }
+      .expert-detail { width: min(780px, calc(100% - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 22px; color: var(--text); background: var(--background); box-shadow: 0 24px 80px #0003; }
+      .expert-detail::backdrop { background: #18182066; }
+      .expert-detail-header { position: sticky; top: 0; z-index: 1; padding: 28px 32px 22px; background: var(--background); border-bottom: 1px solid var(--line); }
+      .expert-detail-header .expert-avatar { width: 80px; height: 80px; }
+      .expert-detail h2 { margin: 0; padding-right: 25px; font-size: 24px; line-height: 1.4; }
+      .expert-detail h3 { font-size: 15px; margin: 0 0 12px; }
+      .expert-detail-close { position: absolute; top: 16px; right: 18px; width: 32px; height: 32px; border: 0; border-radius: 50%; background: var(--surface); color: var(--muted); font-size: 24px; cursor: pointer; }
+      .expert-detail-body { padding: 26px 32px 32px; display: grid; gap: 28px; }
+      .expert-detail-body p { margin: 0; font-size: 14px; line-height: 1.8; }
+      .expert-detail-body ul { padding-left: 20px; margin: 0; font-size: 14px; line-height: 1.8; }
+      .expert-task-example { padding: 15px 18px; margin-top: 8px !important; border-radius: 12px; background: var(--surface); }
+      .expert-method { padding: 18px; border: 1px solid var(--line); border-radius: 12px; }
+      .expert-method label { display: flex; align-items: center; gap: 9px; margin-top: 14px; font-size: 13px; }
+      .expert-method input { accent-color: var(--accent); }
+      .expert-detail-body .expert-help { color: var(--muted); font-size: 12px; line-height: 1.75; }
+      .expert-detail summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+      .expert-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.8; padding: 16px; background: var(--surface); border-radius: 10px; }
+      .expert-detail .expert-actions { justify-content: flex-start; margin-top: 16px; }
+      .expert-detail .primary { padding: 10px 22px; font-size: 14px; }
+      #expert-dialog-status { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+      #expert-dialog-status[data-error='true'] { color: #ce5252; }
+      @media (max-width: 520px) {
+        main { padding: 24px 18px; }
+        .expert-open { padding: 20px; }
+        .expert-detail-header { padding: 24px 20px 18px; }
+        .expert-detail-body { padding: 22px 20px; }
+        .expert-detail h2 { font-size: 21px; }
+        .expert-detail-header .expert-avatar { width: 64px; height: 64px; }
       }
       .expert-empty {
         grid-column: 1 / -1;
@@ -583,15 +596,6 @@
             >
               任务专家<span class="expert-type-count" data-expert-count="task">0</span>
             </button>
-            <button
-              class="expert-type-tab"
-              type="button"
-              aria-pressed="false"
-              data-expert-type="platform"
-              tabindex="-1"
-            >
-              平台专家<span class="expert-type-count" data-expert-count="platform">0</span>
-            </button>
           </div>
           <div>
             <button class="action" type="button" id="refresh-experts">刷新</button>
@@ -618,7 +622,6 @@
           <select id="editor-type" required>
             <option value="role">岗位专家</option>
             <option value="task">任务专家</option>
-            <option value="platform">平台专家</option>
           </select>
           <label for="editor-category">分类（可选）</label>
           <input
@@ -643,6 +646,19 @@
           <p>
             只填写一个现有 Skill 的准确名称；留空时仅使用提示词。这里不会搜索、安装或创建 Skill。
           </p>
+          <label for="editor-inputs">需要的资料（可选，每行一项）</label>
+          <textarea id="editor-inputs" maxlength="4096" rows="3"></textarea>
+          <label for="editor-deliverables">交付物（每行一项）</label>
+          <textarea id="editor-deliverables" maxlength="4096" rows="3"></textarea>
+          <label for="editor-checks">交付检查（每行一项）</label>
+          <textarea id="editor-checks" maxlength="4096" rows="3"></textarea>
+          <p>
+            填写工作方法时，请同时说明资料、交付物与检查标准，每项最多 512 字、每组最多 8
+            项。全部留空可使用提示词专家。
+          </p>
+          <fieldset id="editor-connector-needs">
+            <legend>连接器能力需求（不代表已授权）</legend>
+          </fieldset>
           <p class="editor-error" id="editor-error" role="alert" hidden></p>
           <div class="editor-actions">
             <button class="action" type="button" id="cancel-editor">取消</button>
@@ -678,6 +694,7 @@
         >
       </div>
     </main>
+    <dialog id="expert-dialog" class="expert-detail" aria-labelledby="expert-dialog-title"></dialog>
     <script>
       (() => {
         let token = null;
@@ -690,12 +707,42 @@
         const editorError = document.getElementById('editor-error');
         const saveButton = document.getElementById('save-expert');
         const editorField = (name) => document.getElementById(`editor-${name}`);
+        const connectorOperations = {
+          read: '读取资料',
+          search: '搜索邮件',
+          append: '追加文档',
+          createDocument: '新建文档',
+          createBase: '新建多维表格',
+        };
+        for (const [operation, labelText] of Object.entries(connectorOperations)) {
+          const label = document.createElement('label');
+          label.textContent = labelText;
+          const select = document.createElement('select');
+          select.id = `editor-need-${operation}`;
+          label.htmlFor = select.id;
+          for (const [value, text] of [
+            ['none', '不需要'],
+            ['optional', '按任务需要'],
+            ['required', '必须具备'],
+          ]) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = text;
+            select.append(option);
+          }
+          const reason = document.createElement('input');
+          reason.id = `editor-reason-${operation}`;
+          reason.maxLength = 280;
+          reason.placeholder = '使用这项能力的场景';
+          reason.setAttribute('aria-label', `${labelText}的用途`);
+          document.getElementById('editor-connector-needs').append(label, select, reason);
+        }
+
         const expertTypeTabs = [...document.querySelectorAll('.expert-type-tab')];
         const expertCategoryTabs = document.getElementById('expert-category-tabs');
         const expertTypeLabels = {
           role: '岗位专家',
           task: '任务专家',
-          platform: '平台专家',
         };
         const reservedExpertCategories = new Set(['全部', '专家团', 'all', 'team']);
         let expertCatalog = [];
@@ -720,10 +767,28 @@
           saveButton.textContent = !expert ? '保存专家' : isUser ? '保存新版本' : '保存为我的副本';
           editorField('name').value = expert?.name ?? '';
           editorField('description').value = expert?.description ?? '';
-          editorField('type').value = expert?.expertType ?? selectedExpertType;
+          editorField('type').value = expert ? expertTypeOf(expert) : selectedExpertType;
           editorField('category').value = expert?.category ?? '';
           editorField('prompt').value = expert?.prompt ?? '';
           editorField('skill').value = expert?.skillRef ?? '';
+          for (const [field, key] of [
+            ['inputs', 'inputs'],
+            ['deliverables', 'deliverables'],
+            ['checks', 'qualityChecks'],
+          ])
+            editorField(field).value = (expert?.workflow?.[key] ?? []).join('\n');
+          for (const operation of Object.keys(connectorOperations)) {
+            const need = expert?.workflow?.connectorNeeds?.find(
+              (entry) => entry.operation === operation,
+            );
+            editorField(`need-${operation}`).value = need
+              ? need.required
+                ? 'required'
+                : 'optional'
+              : 'none';
+            editorField(`reason-${operation}`).value = need?.reason ?? '';
+          }
+
           for (let index = 1; index <= 4; index += 1)
             editorField(`task-${index}`).value = expert?.starterTasks[index - 1] ?? '';
           editorError.hidden = true;
@@ -759,6 +824,43 @@
             editorError.hidden = false;
             return;
           }
+          const lines = (field) =>
+            editorField(field)
+              .value.split('\n')
+              .map((line) => line.trim())
+              .filter(Boolean);
+          const workflow = {
+            inputs: lines('inputs'),
+            deliverables: lines('deliverables'),
+            qualityChecks: lines('checks'),
+            connectorNeeds: [],
+          };
+          for (const operation of Object.keys(connectorOperations)) {
+            const mode = editorField(`need-${operation}`).value;
+            if (mode !== 'none')
+              workflow.connectorNeeds.push({
+                operation,
+                required: mode === 'required',
+                reason:
+                  editorField(`reason-${operation}`).value.trim() || connectorOperations[operation],
+              });
+          }
+          const sections = [workflow.inputs, workflow.deliverables, workflow.qualityChecks];
+          const hasWorkflow =
+            sections.some((items) => items.length) || workflow.connectorNeeds.length > 0;
+          if (
+            hasWorkflow &&
+            sections.some(
+              (items) =>
+                items.length < 1 || items.length > 8 || items.some((item) => item.length > 512),
+            )
+          ) {
+            editorError.textContent =
+              '请完整填写资料、交付物与交付检查；每组 1–8 项，每项不超过 512 字。';
+            editorError.hidden = false;
+            return;
+          }
+          values.workflow = hasWorkflow ? workflow : null;
           const controls = [...editor.querySelectorAll('input, textarea, select, button')];
           for (const control of controls) control.disabled = true;
           try {
@@ -780,7 +882,15 @@
             for (const control of controls) control.disabled = false;
           }
         }
+        const expertPresentation = /*__EXPERT_PRESENTATION__*/ { avatars: {}, experts: {} };
+        const expertDialog = document.getElementById('expert-dialog');
         function setStatus(message, error = false) {
+          const dialogStatus = document.getElementById('expert-dialog-status');
+          if (expertDialog.open && dialogStatus) {
+            dialogStatus.textContent = message;
+            dialogStatus.dataset.error = String(error);
+            dialogStatus.setAttribute('role', error ? 'alert' : 'status');
+          }
           status.textContent = message;
           status.dataset.error = String(error);
           status.setAttribute('role', error ? 'alert' : 'status');
@@ -829,9 +939,11 @@
                   return;
                 }
                 await loadExperts();
+                if (expertDialog.open) expertDialog.close();
                 setStatus('已删除专家。历史会话中的专家快照仍会保留。');
                 return;
               }
+              if (expertDialog.open) expertDialog.close();
               setStatus(
                 method === 'expert.select'
                   ? '专家已选择，请在 Partner 中继续对话。'
@@ -897,45 +1009,111 @@
           }
           if (restoreFocus) activeButton?.focus();
         }
+        function expertVisual(expert) {
+          const known = Object.hasOwn(expertPresentation.experts, expert.id) ? expertPresentation.experts[expert.id] : null;
+          if (known) return known;
+          return { tags: [expert.category || expertTypeLabels[expertTypeOf(expert)]] };
+        }
+        function expertElement(tag, className, text) {
+          const node = document.createElement(tag);
+          if (className) node.className = className;
+          if (text) node.textContent = text;
+          return node;
+        }
+        function expertAvatar(expert) {
+          const source = expertPresentation.avatars[expertVisual(expert).avatar];
+          const avatar = expertElement(source ? 'img' : 'span', 'expert-avatar', source ? '' : expert.name.slice(0, 1));
+          if (source) { avatar.src = source; avatar.alt = ''; avatar.width = 80; avatar.height = 80; }
+          else avatar.setAttribute('aria-hidden', 'true');
+          return avatar;
+        }
+        function expertTags(expert) {
+          const tags = expertElement('div', 'expert-tags');
+          for (const label of expertVisual(expert).tags) tags.append(expertElement('span', '', label));
+          return tags;
+        }
+        function expertIdentity(expert, detailed = false) {
+          const identity = expertElement('div', 'expert-identity');
+          const text = expertElement('div');
+          const title = expertElement(detailed ? 'h2' : 'h3', '', expert.name);
+          if (detailed) title.id = 'expert-dialog-title';
+          text.append(title, expertElement('div', 'expert-subtitle', [expert.category, expertTypeLabels[expertTypeOf(expert)]].filter(Boolean).join(' · ')));
+          identity.append(expertAvatar(expert), text);
+          return identity;
+        }
         function createExpertCard(expert) {
-          const card = document.createElement('article');
-          card.className = 'expert-card';
-          const title = document.createElement('h3');
-          title.textContent = expert.name;
-          const meta = document.createElement('div');
-          meta.className = 'expert-meta';
-          if (expert.category) {
-            const category = document.createElement('span');
-            category.textContent = expert.category;
-            meta.append(category);
-          }
-          if (expert.listingType === 'team') {
-            const team = document.createElement('span');
-            team.textContent = '专家团';
-            meta.append(team);
-          }
-          const description = document.createElement('p');
-          description.textContent = expert.description;
-          const actions = document.createElement('div');
-          actions.className = 'expert-actions';
-          const editButton = document.createElement('button');
-          editButton.type = 'button';
-          editButton.className = 'action';
-          editButton.textContent = expert.id.startsWith('user.') ? '编辑' : '修改副本';
-          editButton.addEventListener('click', () => openEditor(expert));
-          actions.append(
-            editButton,
-            makeAction('详情', 'expert.details', expert),
-            makeAction('使用专家', 'expert.select', expert),
-          );
-          if (expert.id.startsWith('user.'))
-            actions.prepend(makeAction('删除', 'expert.delete', expert));
-          if (expert.skillRef)
-            actions.append(makeAction('仅用提示词', 'expert.select', expert, { useSkill: false }));
-          card.append(title);
-          if (meta.childElementCount) card.append(meta);
-          card.append(description, actions);
+          const card = expertElement('article', 'expert-card');
+          const open = expertElement('button', 'expert-open');
+          open.type = 'button';
+          open.setAttribute('aria-label', `查看 ${expert.name} 详情`);
+          open.setAttribute('aria-haspopup', 'dialog');
+          open.append(expertIdentity(expert), expertElement('p', '', expert.description), expertTags(expert));
+          open.addEventListener('click', () => openExpertBriefing(expert));
+          card.append(open);
           return card;
+        }
+        function expertListSection(title, items) {
+          if (!items?.length) return null;
+          const section = expertElement('section');
+          const list = expertElement('ul');
+          for (const item of items) list.append(expertElement('li', '', item));
+          section.append(expertElement('h3', '', title), list);
+          return section;
+        }
+        function expertTaskSection(expert) {
+          const section = expertElement('section');
+          section.append(expertElement('h3', '', '你可以这样问'));
+          for (const task of expert.starterTasks) section.append(expertElement('p', 'expert-task-example', task));
+          return section;
+        }
+        function expertMethodSection(expert, selection) {
+          const section = expertElement('section', 'expert-method');
+          section.append(expertElement('h3', '', '工作方法'));
+          section.append(expertElement('p', '', expertVisual(expert).method || (expert.skillRef ? '结合专家角色与配置的方法完成任务。' : '使用专家角色和交付标准完成任务。')));
+          if (expert.skillRef) {
+            const label = expertElement('label');
+            const toggle = document.createElement('input');
+            toggle.type = 'checkbox'; toggle.checked = true;
+            toggle.addEventListener('change', () => { selection.useSkill = toggle.checked; });
+            label.append(toggle, document.createTextNode('使用默认方法'));
+            section.append(label, expertElement('p', 'expert-help', '关闭后仅使用专家角色。使用后，也可在会话中调整方法。'));
+          }
+          section.append(expertElement('p', 'expert-help', '选择后，本会话的后续对话和任务会持续使用该专家，直到你切换或移除。'));
+          return section;
+        }
+        function expertAdvancedSection(expert) {
+          const section = expertElement('details');
+          section.append(expertElement('summary', '', '专家设置与提示词'));
+          section.append(expertElement('pre', '', expert.prompt));
+          if (expert.skillRef) section.append(expertElement('p', 'expert-help', `默认 Skill：${expert.skillRef}`));
+          const actions = expertElement('div', 'expert-actions');
+          const edit = expertElement('button', 'action', expert.id.startsWith('user.') ? '编辑' : '修改副本');
+          edit.type = 'button';
+          edit.addEventListener('click', () => { expertDialog.close(); openEditor(expert); editor.scrollIntoView({ block: 'start' }); });
+          actions.append(edit, makeAction('在侧栏查看', 'expert.details', expert));
+          if (expert.id.startsWith('user.')) actions.append(makeAction('删除', 'expert.delete', expert));
+          section.append(actions);
+          return section;
+        }
+        function openExpertBriefing(expert) {
+          const header = expertElement('div', 'expert-detail-header');
+          const close = expertElement('button', 'expert-detail-close', '×');
+          close.type = 'button'; close.setAttribute('aria-label', '关闭专家详情');
+          close.addEventListener('click', () => expertDialog.close());
+          const selection = expert.skillRef ? { useSkill: true } : {};
+          const actions = expertElement('div', 'expert-actions');
+          actions.append(makeAction('使用专家', 'expert.select', expert, selection));
+          const feedback = expertElement('p'); feedback.id = 'expert-dialog-status'; feedback.setAttribute('role', 'status');
+          header.append(close, expertIdentity(expert, true), actions, feedback);
+          const body = expertElement('div', 'expert-detail-body');
+          body.append(expertElement('p', '', expert.description), expertTags(expert));
+          if (expert.starterTasks.length) body.append(expertTaskSection(expert));
+          for (const section of [expertListSection('会交付什么', expert.workflow?.deliverables), expertListSection('开始前请提供', expert.workflow?.inputs), expertListSection('如何检查结果', expert.workflow?.qualityChecks)]) if (section) body.append(section);
+          body.append(expertMethodSection(expert, selection));
+          if (expert.workflow?.connectorNeeds.length) body.append(expertListSection('资料与工具', expert.workflow.connectorNeeds.map((need) => `${connectorOperations[need.operation]} · ${need.required ? '需要' : '按需使用'}：${need.reason}`)), expertElement('p', 'expert-help', '外部资料与操作取决于当前会话已连接、已授权的能力。'));
+          body.append(expertAdvancedSection(expert));
+          expertDialog.replaceChildren(header, body);
+          expertDialog.showModal(); expertDialog.scrollTop = 0;
         }
         function renderExperts() {
           updateExpertTypeTabs();
@@ -996,16 +1174,27 @@
             'data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+QWlydGFibGU8L3RpdGxlPjxwYXRoIGQ9Ik0xMS45OTIgMS45NjZjLS40MzQgMC0uODcuMDg2LTEuMjguMjU3TDEuNzc5IDUuOTE3Yy0uNTAzLjIwOC0uNDkuOTA4LjAxMiAxLjExNmw4Ljk4MiAzLjU1OGEzLjI2NiAzLjI2NiAwIDAgMCAyLjQ1NCAwbDguOTgyLTMuNTU4Yy41MDMtLjE5Ni41MDMtLjkwOC4wMTItMS4xMTZsLTguOTU3LTMuNjk0YTMuMjU1IDMuMjU1IDAgMCAwLTEuMjcyLS4yNTd6TTIzLjQgOC4wNTZhLjU4OS41ODkgMCAwIDAtLjIyMi4wNDVsLTEwLjAxMiAzLjg3N2EuNjEyLjYxMiAwIDAgMC0uMzguNTY0djguODk2YS42LjYgMCAwIDAgLjgyMS41NTJMMjMuNjIgMTguMWEuNTgzLjU4MyAwIDAgMCAuMzgtLjU1MVY4LjY1M2EuNi42IDAgMCAwLS42LS41OTZ6TS42NzYgOC4wOTVhLjY0NC42NDQgMCAwIDAtLjQ4LjE5Qy4wODYgOC4zOTYgMCA4LjUzIDAgOC42OXY4LjM1NWMwIC40NDIuNTE1LjczNy45MDguNTRsNi4yNy0zLjAwNi4zMDctLjE0NyAyLjk2OS0xLjQzNmMuNDY2LS4yMi40My0uOTA4LS4wNjEtMS4wOTJMLjg4MyA4LjEzOGEuNTcuNTcgMCAwIDAtLjIwNy0uMDQ0eiIvPjwvc3ZnPgo=',
           'atlassian-mcp':
             'data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+QXRsYXNzaWFuPC90aXRsZT48cGF0aCBkPSJNNy4xMiAxMS4wODRhLjY4My42ODMgMCAwMC0xLjE2LjEyNkwuMDc1IDIyLjk3NGEuNzAzLjcwMyAwIDAwLjYzIDEuMDE4aDguMTlhLjY3OC42NzggMCAwMC42My0uMzljMS43NjctMy42NS42OTYtOS4yMDMtMi40MDYtMTIuNTJ6TTExLjQzNC4zODZhMTUuNTE1IDE1LjUxNSAwIDAwLS45MDYgMTUuMzE3bDMuOTUgNy45YS43MDMuNzAzIDAgMDAuNjI4LjM4OGg4LjE5YS43MDMuNzAzIDAgMDAuNjMtMS4wMTdMMTIuNjMuMzhhLjY2NC42NjQgMCAwMC0xLjE5Ni4wMDZ6Ii8+PC9zdmc+Cg==',
+          'github-api':
+            'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iOTgiIGhlaWdodD0iOTYiIHZpZXdCb3g9IjAgMCA5OCA5NiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGcgY2xpcC1wYXRoPSJ1cmwoI2NsaXAwXzczMF8yNzEyNikiPgo8cGF0aCBkPSJNNDEuNDM5NSA2OS4zODQ4QzI4LjgwNjYgNjcuODUzNSAxOS45MDYyIDU4Ljc2MTcgMTkuOTA2MiA0Ni45OTAyQzE5LjkwNjIgNDIuMjA1MSAyMS42Mjg5IDM3LjAzNzEgMjQuNSAzMy41OTE4QzIzLjI1NTkgMzAuNDMzNiAyMy40NDczIDIzLjczNDQgMjQuODgyOCAyMC45NTlDMjguNzEwOSAyMC40ODA1IDMzLjg3ODkgMjIuNDkwMiAzNi45NDE0IDI1LjI2NTZDNDAuNTc4MSAyNC4xMTcyIDQ0LjQwNjIgMjMuNTQzIDQ5LjA5NTcgMjMuNTQzQzUzLjc4NTIgMjMuNTQzIDU3LjYxMzMgMjQuMTE3MiA2MS4wNTg2IDI1LjE2OTlDNjQuMDI1NCAyMi40OTAyIDY5LjI4OTEgMjAuNDgwNSA3My4xMTcyIDIwLjk1OUM3NC40NTcgMjMuNTQzIDc0LjY0ODQgMzAuMjQyMiA3My40MDQzIDMzLjQ5NjFDNzYuNDY2OCAzNy4xMzI4IDc4LjA5MzcgNDIuMDEzNyA3OC4wOTM3IDQ2Ljk5MDJDNzguMDkzNyA1OC43NjE3IDY5LjE5MzQgNjcuNjYyMSA1Ni4zNjkxIDY5LjI4OTFDNTkuNjIzIDcxLjM5NDUgNjEuODI0MiA3NS45ODgzIDYxLjgyNDIgODEuMjUyTDYxLjgyNDIgOTEuMjA1MUM2MS44MjQyIDk0LjA3NjIgNjQuMjE2OCA5NS43MDMxIDY3LjA4NzkgOTQuNTU0N0M4NC40MTAyIDg3Ljk1MTIgOTggNzAuNjI4OSA5OCA0OS4xOTE0Qzk4IDIyLjEwNzQgNzUuOTg4MyA2LjY5NTM5ZS0wNyA0OC45MDQzIDQuMzA5ZS0wN0MyMS44MjAzIDEuOTIyNjFlLTA3IC0xLjk0NzllLTA3IDIyLjEwNzQgLTQuMzM0M2UtMDcgNDkuMTkxNEMtNi4yMDYzMWUtMDcgNzAuNDM3NSAxMy40OTQxIDg4LjA0NjkgMzEuNjc3NyA5NC42NTA0QzM0LjI2MTcgOTUuNjA3NCAzNi43NSA5My44ODQ4IDM2Ljc1IDkxLjMwMDhMMzYuNzUgODMuNjQ0NUMzNS40MTAyIDg0LjIxODggMzMuNjg3NSA4NC42MDE2IDMyLjE1NjIgODQuNjAxNkMyNS44Mzk4IDg0LjYwMTYgMjIuMTA3NCA4MS4xNTYzIDE5LjQyNzcgNzQuNzQ0MUMxOC4zNzUgNzIuMTYwMiAxNy4yMjY2IDcwLjYyODkgMTUuMDI1NCA3MC4zNDE4QzEzLjg3NyA3MC4yNDYxIDEzLjQ5NDEgNjkuNzY3NiAxMy40OTQxIDY5LjE5MzRDMTMuNDk0MSA2OC4wNDQ5IDE1LjQwODIgNjcuMTgzNiAxNy4zMjIzIDY3LjE4MzZDMjAuMDk3NyA2Ny4xODM2IDIyLjQ5MDIgNjguOTA2MyAyNC45Nzg1IDcyLjQ0NzNDMjYuODkyNiA3NS4yMjI3IDI4LjkwMjMgNzYuNDY2OCAzMS4yOTQ5IDc2LjQ2NjhDMzMuNjg3NSA3Ni40NjY4IDM1LjIxODcgNzUuNjA1NSAzNy40MTk5IDczLjQwNDNDMzkuMDQ2OSA3MS43NzczIDQwLjI5MSA3MC4zNDE4IDQxLjQzOTUgNjkuMzg0OFoiIGZpbGw9ImJsYWNrIi8+CjwvZz4KPGRlZnM+CjxjbGlwUGF0aCBpZD0iY2xpcDBfNzMwXzI3MTI2Ij4KPHJlY3Qgd2lkdGg9Ijk4IiBoZWlnaHQ9Ijk2IiBmaWxsPSJ3aGl0ZSIvPgo8L2NsaXBQYXRoPgo8L2RlZnM+Cjwvc3ZnPgo=',
           'zoom-mcp':
             'data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+Wm9vbTwvdGl0bGU+PHBhdGggZD0iTTUuMDMzIDE0LjY0OUguNzQzYS43NC43NCAwIDAgMS0uNjg2LS40NTguNzQuNzQgMCAwIDEgLjE2LS44MDhMMy4xOSAxMC40MUgxLjA2QTEuMDYgMS4wNiAwIDAgMSAwIDkuMzVoMy45NTdjLjMwMSAwIC41Ny4xOC42ODYuNDU4YS43NC43NCAwIDAgMS0uMTYxLjgwOEwxLjUxIDEzLjU5aDIuNDY0Yy41ODUgMCAxLjA2LjQ3NSAxLjA2IDEuMDZ6TTI0IDExLjMzOGMwLTEuMTQtLjkyNy0yLjA2Ni0yLjA2Ni0yLjA2Ni0uNjEgMC0xLjE1OC4yNjUtMS41MzcuNjg2YTIuMDYxIDIuMDYxIDAgMCAwLTEuNTM2LS42ODZjLTEuMTQgMC0yLjA2Ni45MjYtMi4wNjYgMi4wNjZ2My4zMTFhMS4wNiAxLjA2IDAgMCAwIDEuMDYtMS4wNnYtMi4yNTFhMS4wMDQgMS4wMDQgMCAwIDEgMi4wMTMgMHYyLjI1MWMwIC41ODYuNDc0IDEuMDYgMS4wNiAxLjA2di0zLjMxMWExLjAwNCAxLjAwNCAwIDAgMSAyLjAxMiAwdjIuMjUxYzAgLjU4Ni40NzUgMS4wNiAxLjA2IDEuMDZ6TTE2LjI2NSAxMmEyLjcyOCAyLjcyOCAwIDEgMS01LjQ1NyAwIDIuNzI4IDIuNzI4IDAgMCAxIDUuNDU3IDB6bS0xLjA2IDBhMS42NjkgMS42NjkgMCAxIDAtMy4zMzggMCAxLjY2OSAxLjY2OSAwIDAgMCAzLjMzOCAwem0tNC44MiAwYTIuNzI4IDIuNzI4IDAgMSAxLTUuNDU4IDAgMi43MjggMi43MjggMCAwIDEgNS40NTcgMHptLTEuMDYgMGExLjY2OSAxLjY2OSAwIDEgMC0zLjMzOCAwIDEuNjY5IDEuNjY5IDAgMCAwIDMuMzM4IDB6Ii8+PC9zdmc+Cg==',
+        });
+        Object.assign(connectorLogos, {
+          'netease-mail-imap':
+            'data:image/png;base64,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',
+          'qq-mail-imap':
+            'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAMAAADVRocKAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAK7OHOkAAAMAUExURUdwTIbJM4LFOfvDK/hvCvi4J9e6Nfb47fDKjYzKSvJVJu5BDqTWZvJdMpTPTf2cffrBKPm5Ee9QJ/rFNe3z4c3WgoPHLvq/HqPWYvD04/l/WK3aeaHTbPvJOPvGJqXWZfvAGvBKGfx1SKzac/m8LJ3SZPFdMfauNPJZK7vglP/9/PBRIv3TVvy4o8nlqP/bzqzZeLjekPWBXv/+/vvQWPu8E/rBF/FjOfnAIfrBI6XXZ/JsR/vEK////vzMPfrAI/3Vq/JXKf////FHFZPPRfNuR/RoPfzfj/vOQ/SAXfnOb5vRX/ePcPbp1v////Lz1vN9WvJYKvvCIf2pjfmJZv3Fsvy+qv2liK3bcvjAQvmih/vGSf3z3P/////WW/////jDTrzel/nSffJzTv////SUdvmsldPssszop/////9EBHvEHXnDHfesBXjCHO83APevBiid4HbBHCue4HrEHfixB/M6Afu/C/q8CvizBxyY3/1CA/A4Afm3CTKh4R+Z3yGa3/U7AXO/HPq6Cfo/A/I5AS2f4BSU3hmX33XAHC+g4fg+AnK+HBWV3heW3/euBhKU3v5DBPu+CnzFHfarBfm4CTSi4fc9AnfCHG67HBuX3/xBAySb4DWi4SOb3/i0CO84ACWc4G+8HHrDHfm2CGu6HHC9HP/9+////nK/6/v+//exF/b78PyHYfp9VVu16Ear5Dum45TO8P779fvFKMnmpsPk91Kw5/P6/X7EJ5zS8f/y7v5aIv5QFv2vlnS+J/zdkPvCGYnJ7nzDMfrFQ+334dnuwf3Cr//56PVVJPzVc/3bgP7HtfnIWLzglp/TYuX01fE9BvyliZnSUX/F7bjf9anY89/x++Tz/P7z1P3kpnjBKM/p+LLcgP28p6bXa//p4/NJFI/NQP7wy/7sveHyzPzSZv5JC/5jL67bePdDCdbt+uv2/PvYhvdpPP723v/PvpLMV/vPV9LrtfVrQP3lr2a66v2Rbf3il267Iv/77xKT3vapBf7h2KLU8azZ823VbUsAAABpdFJOUwD8/tIH/g4SA/TI/qk35P1I/RS3CBv+3pob7YjL+fh7L/H6M/Dj7ySik0j5oH5r/KBexzbXFfe3xIdNpWxXxVhOaSH5++LybuGpwtqUYGqfinmX4tmxY77k7pWHya8y6vGNltTPZVew4xXDEE0AAAeHSURBVGjerZp3WBRHGIeX3kRURKNRY4+9J2rU2HtL770Pp5wQBdSTop4FbICiUYkk5nJ39N6LVEVRPFCxooDYW9TYUnfv9u52Zmdn98D3eeSP8/i9O/PtzgwzS1GS8Jg5aNSsrt2Kivz8ioq6dR21cMFIB+p58dmgWd38TBTdP3D5GQBxTQ9++H7+c5C0eZ0JD2fT0440qgEAmvSaiAhZRETEtA/6d2pJ+iuDOJfuV3S4EeiJo+NNdOgzxLGZ8d1f9/P39wtnSXuSCtj8hgiYacPsmxNvQ6f6GfPTzqqBkYtIPt1ZVq3aW9o57qZLZzxHUk3xoEmGw+oli/LHv8qNL70LOFyX4WndS/rl24RDl6/m5oMGAYEs+wWpdyb38sOLLgOYCJkgrT2k5I/155J2BsmPkxGwek003tadGx/e9RBAiVgqjCxbrNb2NvD18/NBw1ISMnIh7DuK5oMLRMHSRa2k5xedweSDMtl+IgSDLdw//mcBlguLiHh5CfWS4xj/Ndz8K/h8kFpDNiySCVT6Lejy16Q9ExCAuCoRQzb2bp24BuYyEESTbkU2WGGeuJfbwvn3AQl1eoMXidb8AnSE8/3vEgUaoCmvIRl4hR6LdNBhIIJGA5qqBPN3Zfcid9CaQ0AKxy/uF1I4wYIxO2CuAImUXfTahcXnRWiERvJ3NALJHK/CGzpwJ+qOSH5XYAkPrHxwcIaMNqsQnlgkAHHXcQJOE2xQAbbEp0+dSExKjkpOStTmnI+B/6+8A6kJ3X9DKOWnx5xMjDISSf9LSsmCG1HDF1gZV2TuqOAAL/98ZhRK8inoqVBf4Ak2sjeSfVtUwJsHTkVFYtDC/ZTutRGBHTDGI/Gr2mqQ/H8j8SCG8mxE4GN4nG3QBhxF8jMiAwQohr/YhBr0ZbZtuw9m+RH4124lBQhynmjw0Y8XE/eh/An/VrFwfkAm0timc6u5+DDzgvtyFLjGt6JCCGSgT/VGTv5G/YDUG83fB69FU0j5IVr0hjsGNWEuXYJ9aL4d/IQlrSMRmYXOE1VcAV2ENstQ4Of45joyGbyByZrbSR7UxzwBPBvn/EgmhffUl6/eZGL1cMqdJ4BnS62IQMsft66bBZuGUTYigkxyvnciZvQuMQu6UL15gtvQtyO9ySRhBvZ0s6A1X7AEGktjRPK9kzELDrW1SeBE2S1BgQRZYoKAGFwTfjdiTcWSBcW/iJGDW/iVsPmbSqhlREGt914xQm5hDMeMLThH8fKXcIv86GdxijFVKDMKCqllW1E4o3Xt3iBx1mVhmvDHrwbOUbFo/mLOc1AcJAVcFY6ZBHa8FnCWjcmBUsA9CmWsoITqjeZvN8+YNwOlcRNjsDYIrKkPeS0wj6YpK6SRghFcNAicqFFoCbaa54NHEgWJuCL8pGcuNWcxilmQvJsmaDeJQOZHCEZQbhB0ob7iCWJNXwrasCEwJ2UDiRwt/WMF7kkwCIZRk3iCxeah2jvxPIhJJuR7Z4GTmbg5AaQaBMMph9jtCLHoumvDFkFShNf0hUx+oQNFfYEK7NCvagXzsQ8xSwkjYFZec1ABsnKMyYnaLESQ9rSgwNpQY4qaiQrgPZCYxM0kQk4TBczCy+Ho3xB28Lrrv/VkMgW7SKVSFeo3tz+JhQToylRE4C1YZFrQR798X9DINdxGvle7YhuRE0ICOl/VXy/opLlbaoyP5W9CZYSY0wK1GbUZ2iDzB+u1MUJ/oTM9xG7NfwrA5aN2dHrpgVSA+/vvRJL3lr9WJGtPZRk/yFy3ZdveqMSUWsGbqNzUQxQ1QG1YbIAWkFuQkJefl1BnCkmnBUNYQbvOoIWkul31NJB3z7izp1I5mQ4WnKtblj/0mqeZAnZSNpaYwdW3oAXxmuqrnlwq9R8Wqpw4ZwrOurpm51/q6QmTn8vswahUX3J2W1x1zW5DXb4nihszoXEqwNBP6dusOuTGe/LJY0rwdDi8qTxVqYy3/D69l+eJ4xKIe9oF2RScrFQq71yy9PLDaDCCeyDdiXe+5kwb6g9aEK8uyF8ZFoZVVIKqIbyN03Y9FLQiIVfqvXnw2kqGMJxjKFiI2Rp31SkU0cr6ArW0+D0MHAf3PlV/gz1We1PBoKyoU4uOO3lr97DgFPGfT8Fvv/eLjlYwraioJnSUujLhxloGjIJ1DB0pdIDgLNcrFApdwsFU7KBW+Tg/NHQtC6QwN6N6gPARiLOcVUQrdQ/dKrm3rfqfOrc7N3bShJoVuGY8nkA65KINRgd9TyldKh4mJMTHxyfcqdgZHBy8kyU0VKAZdH78BOIxlKPeYFbolAqdTqH09Q1mEVPEDxA7qesn5yj0zWDw9TU5MAqzw22k+FHjZBc56xBR8Itx9e0pUg4zXXvI5XK4p1AFvqfy3pV4bG07OhpWSOupnvOlH1ibGyGuYHsq/30L3oFwdLQd5yKXW9BTNzpPsvSlgXajeQrhZvQc3JxXH9qNk6a40Xlwe6o50B31Rt9osZ6qeOe95r64YSj3bI4DVtCO+s4ftejVE/aMbd7XA6P5PVU/Y8Tg5/eGjse3s0dM7zvQRSePdpk6cMb0EfO+kxj+P03t4kmtpHCxAAAAAElFTkSuQmCC',
+          'tencent-docs-mcp':
+            'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCI+PGcgZmlsbD0ibm9uZSIgZmlsbC1ydWxlPSJldmVub2RkIj48cGF0aCBmaWxsPSIjMUU2RkZGIiBkPSJNMzguMjcxIDNINy44OTNjLS40MTkgMC0uNzc4LjMtLjg1LjcxNEwuMDEyIDQzLjU3OGEuODYzLjg2MyAwIDAgMCAuODUgMS4wMTNIMTcuNjFsMS4zMjctLjQxMWg3Ljc3N2wxLjA4Ny40MTFoMTIuOWMuNDIgMCAuNzc4LS4zLjg1LS43MTNsNS43ODItMzIuNzl6Ii8+PHBhdGggZmlsbD0iIzAwRENGRiIgZD0iTTM3Ljg3NCAxMS4wODhoOS40NkwzOC4yNyAzbC0xLjI0NyA3LjA3NWEuODYzLjg2MyAwIDAgMCAuODUgMS4wMTMiLz48cGF0aCBmaWxsPSIjRkZGIiBkPSJtMjQuNjQ5IDQuNzA3LTEuNjk5IDkuNjY4LTE2LjU3My4wMjggNy4yMDEgNy43OTFoNy45OTFMMTcuNjEgNDQuNTkxaDEwLjE5MWwzLjk2My0yMi4zOTdoMTIuMDMybC40MTktLjAxeiIvPjwvZz48L3N2Zz4=',
         });
         const monochromeConnectorAdapters = new Set([
           'notion-mcp',
           'airtable-mcp',
           'atlassian-mcp',
           'zoom-mcp',
+          'github-api',
         ]);
-        const configurationRequiredAdapters = new Set(['slack-mcp', 'zoom-mcp']);
+        const configurationRequiredAdapters = new Set();
         let connectorLoading = false;
         let connectorRefreshPending = false;
         async function loadConnectors() {

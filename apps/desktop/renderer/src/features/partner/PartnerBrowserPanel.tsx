@@ -1,5 +1,5 @@
 import { PARTNER_BROWSER_PARTITION } from '@kodax-space/space-ipc-schema';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   ArrowLeft,
@@ -27,6 +27,7 @@ import {
 
 interface PartnerBrowserPanelProps {
   readonly initialUrl?: string;
+  readonly navigationRevision?: number;
 }
 
 interface BrowserToolbarButtonProps {
@@ -71,7 +72,10 @@ function errorMessageKey(
   }
 }
 
-export function PartnerBrowserPanel({ initialUrl }: PartnerBrowserPanelProps): JSX.Element {
+export function PartnerBrowserPanel({
+  initialUrl,
+  navigationRevision = 0,
+}: PartnerBrowserPanelProps): JSX.Element {
   const { t } = useI18n();
   const [history, setHistory] = useState<PartnerBrowserHistory>(() =>
     createPartnerBrowserHistory(initialUrl),
@@ -81,14 +85,23 @@ export function PartnerBrowserPanel({ initialUrl }: PartnerBrowserPanelProps): J
   const [draft, setDraft] = useState(history.currentUrl ?? '');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(history.currentUrl));
+  const lastNavigationRef = useRef({ initialUrl, navigationRevision });
 
-  const applyHistory = (next: PartnerBrowserHistory): void => {
+  const applyHistory = useCallback((next: PartnerBrowserHistory): void => {
     setHistory(next);
-    setFrameNavigation(next);
+    setFrameNavigation((current) => ({ ...next, revision: current.revision + 1 }));
     setDraft(next.currentUrl ?? '');
     setError(null);
     setLoading(Boolean(next.currentUrl));
-  };
+  }, []);
+
+  useEffect(() => {
+    const previous = lastNavigationRef.current;
+    if (previous.initialUrl === initialUrl && previous.navigationRevision === navigationRevision)
+      return;
+    lastNavigationRef.current = { initialUrl, navigationRevision };
+    if (initialUrl) applyHistory(navigatePartnerBrowser(history, initialUrl));
+  }, [applyHistory, history, initialUrl, navigationRevision]);
 
   useEffect(() => {
     const webview = webviewRef.current;

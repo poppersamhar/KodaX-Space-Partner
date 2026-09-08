@@ -87,30 +87,6 @@ export function applyPartnerSceneTemplate(input: {
   };
 }
 
-export function applyPartnerDeliveryInstruction(input: {
-  readonly currentDraft: string;
-  readonly previousInstruction: string | null;
-  readonly nextInstruction: string | null;
-}): { readonly draft: string; readonly instruction: string | null } {
-  let baseDraft = input.currentDraft;
-  if (input.previousInstruction !== null) {
-    const suffix = `\n\n${input.previousInstruction}`;
-    if (baseDraft.endsWith(suffix)) {
-      baseDraft = baseDraft.slice(0, -suffix.length);
-    } else if (baseDraft === input.previousInstruction) {
-      baseDraft = '';
-    }
-  }
-  if (input.nextInstruction === null) {
-    return { draft: baseDraft, instruction: null };
-  }
-  const separator = baseDraft.trim().length > 0 ? '\n\n' : '';
-  return {
-    draft: `${baseDraft}${separator}${input.nextInstruction}`,
-    instruction: input.nextInstruction,
-  };
-}
-
 interface PartnerUserMessageAdmission {
   readonly operationId?: string;
   readonly sendAdmissionSettled?: true;

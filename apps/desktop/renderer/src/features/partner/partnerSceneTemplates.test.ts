@@ -2,41 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyPartnerSceneTemplate,
-  applyPartnerDeliveryInstruction,
   hasAcceptedPartnerUserMessage,
   shouldShowPartnerSceneShortcuts,
 } from './partnerSceneTemplates.js';
-
-test('delivery format remains visible in the editable draft and can be replaced or cleared', () => {
-  const pdf = applyPartnerDeliveryInstruction({
-    currentDraft: 'Analyze the data.',
-    previousInstruction: null,
-    nextInstruction: 'Delivery format: PDF.',
-  });
-  assert.deepEqual(pdf, {
-    draft: 'Analyze the data.\n\nDelivery format: PDF.',
-    instruction: 'Delivery format: PDF.',
-  });
-  assert.deepEqual(
-    applyPartnerDeliveryInstruction({
-      currentDraft: pdf.draft,
-      previousInstruction: pdf.instruction,
-      nextInstruction: 'Delivery format: XLSX.',
-    }),
-    {
-      draft: 'Analyze the data.\n\nDelivery format: XLSX.',
-      instruction: 'Delivery format: XLSX.',
-    },
-  );
-  assert.deepEqual(
-    applyPartnerDeliveryInstruction({
-      currentDraft: pdf.draft,
-      previousInstruction: pdf.instruction,
-      nextInstruction: null,
-    }),
-    { draft: 'Analyze the data.', instruction: null },
-  );
-});
 
 test('scene template inserts into an empty draft', () => {
   assert.deepEqual(

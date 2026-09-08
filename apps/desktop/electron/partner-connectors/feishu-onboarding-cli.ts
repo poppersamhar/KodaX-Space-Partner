@@ -17,11 +17,22 @@ export { FeishuOnboardingError } from './feishu-auth-process.js';
 const NEVER_ABORTED_SIGNAL = new AbortController().signal;
 
 export interface FeishuOnboardingProgress {
-  phase: 'preparing' | 'installing' | 'waiting_app' | 'waiting_authorization' | 'verifying';
+  phase:
+    | 'preparing'
+    | 'installing'
+    | 'waiting_app'
+    | 'waiting_authorization'
+    | 'verifying'
+    | 'waiting_input';
   authorizationUrl?: string;
   expiresAt?: string;
 }
 export interface FeishuOnboardingInput {
+  requestInput?: (
+    kind: NonNullable<
+      import('@kodax-space/space-ipc-schema').PartnerConnectorOnboardingT['inputKind']
+    >,
+  ) => Promise<import('@kodax-space/space-ipc-schema').PartnerConnectorOnboardingValueT>;
   profile: string;
   installCli: boolean;
   signal: AbortSignal;

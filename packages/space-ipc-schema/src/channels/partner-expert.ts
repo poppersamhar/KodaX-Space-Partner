@@ -61,6 +61,31 @@ export const spaceExpertCapabilityGuideSchema = z
   .strict();
 export type SpaceExpertCapabilityGuideT = z.infer<typeof spaceExpertCapabilityGuideSchema>;
 
+const workflowItems = z.array(z.string().trim().min(1).max(512)).min(1).max(8);
+/** Work expectations, never executable tools, account grants, or an orchestration graph. */
+export const spaceExpertWorkflowSchema = z
+  .object({
+    inputs: workflowItems,
+    deliverables: workflowItems,
+    qualityChecks: workflowItems,
+    connectorNeeds: z
+      .array(
+        z
+          .object({
+            operation: z.enum(['read', 'search', 'append', 'createDocument', 'createBase']),
+            required: z.boolean(),
+            reason: z.string().trim().min(1).max(280),
+          })
+          .strict(),
+      )
+      .max(5)
+      .refine(
+        (needs) => new Set(needs.map((need) => need.operation)).size === needs.length,
+        'Connector operations must be unique',
+      ),
+  })
+  .strict();
+
 /** Skill is an optional explicit existing name, never an installation or discovery rule. */
 const spaceExpertDefinitionFieldsSchema = z
   .object({
@@ -71,6 +96,9 @@ const spaceExpertDefinitionFieldsSchema = z
     prompt: z.string().trim().min(1).max(8_000),
     starterTasks: z.array(z.string().min(1).max(512)).max(4).default([]),
     skillRef: skillMetaSchema.shape.name.optional(),
+    workflow: spaceExpertWorkflowSchema.optional(),
+    /** Hidden from new selection; existing session snapshots remain usable. */
+    retired: z.boolean().optional(),
     /** Display-only catalog taxonomy; these fields do not grant tools or enable orchestration. */
     expertType: spaceExpertTypeSchema.optional(),
     category: spaceExpertCategorySchema.optional(),
@@ -79,23 +107,16 @@ const spaceExpertDefinitionFieldsSchema = z
     capabilityGuide: spaceExpertCapabilityGuideSchema.optional(),
   })
   .strict();
-export const spaceExpertDefinitionSchema = spaceExpertDefinitionFieldsSchema.superRefine(
-  (definition, context) => {
-    if (definition.capabilityGuide !== undefined && definition.expertType !== 'platform') {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Capability guides are only supported by platform experts',
-        path: ['capabilityGuide'],
-      });
-    }
-  },
-);
+export const spaceExpertDefinitionSchema = spaceExpertDefinitionFieldsSchema;
 export type SpaceExpertDefinitionT = z.infer<typeof spaceExpertDefinitionSchema>;
 
 /** The host assigns stable identity and revision; an editor submits content only. */
 export const spaceExpertDraftSchema = spaceExpertDefinitionFieldsSchema
-  .omit({ id: true, revision: true, capabilityGuide: true })
-  .extend({ category: spaceExpertCategorySchema.nullable().optional() });
+  .omit({ id: true, revision: true, capabilityGuide: true, retired: true })
+  .extend({
+    category: spaceExpertCategorySchema.nullable().optional(),
+    workflow: spaceExpertWorkflowSchema.nullable().optional(),
+  });
 export type SpaceExpertDraftT = z.infer<typeof spaceExpertDraftSchema>;
 
 export const spaceExpertSaveInputSchema = z

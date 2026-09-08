@@ -21,6 +21,16 @@ test('Tencent Meeting guidance uses only the canonical 6–15 digit meeting code
     '通过 tmeet://meeting-code/<6–15 位会议码> 读取指定会议详情。商业版、企业版可能需要官方灰度批准。本版不自动导出录制、转写或参会者。',
   );
 });
+test('mail connection guidance names only the inbox domains implemented by the host', () => {
+  for (const locale of ['en-US', 'zh-CN'] as const) {
+    const netease = messages[locale]['connectors.neteaseMailHint'];
+    const qq = messages[locale]['connectors.qqMailHint'];
+    assert.match(netease, /163\.com/);
+    assert.match(qq, /qq\.com/);
+    assert.doesNotMatch(netease + qq, /126|yeah|foxmail/i);
+  }
+});
+
 const fixture = `
 import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
@@ -33,7 +43,7 @@ import {ConfirmDialog} from '../../shell/ConfirmDialog.tsx';
 import {useAppStore} from '../../store/appStore.ts';
 import {useSurfaceStore} from '../../store/surface.ts';
 const adapter=window.fixtureOptions?.adapter??'feishu-cli';
-const connectorNames={'feishu-cli':'Feishu documents','tencent-meeting-cli':'Tencent Meeting','notion-mcp':'Notion','slack-mcp':'Slack','zoom-mcp':'Zoom'};
+const connectorNames={'feishu-cli':'Feishu documents','tencent-meeting-cli':'Tencent Meeting','notion-mcp':'Notion','slack-mcp':'Slack','zoom-mcp':'Zoom','github-api':'GitHub','tencent-docs-mcp':'Tencent Docs','netease-mail-imap':'NetEase Mail','qq-mail-imap':'QQ Mail'};
 const connector={id:'feishu-docs',adapter,name:connectorNames[adapter],description:'Read only selected resources.'};
 const extension={id:'library',version:'0.5.0',name:'Library',description:'',enabled:true,installedAt:1,expertCount:0,connectorCount:1};
 const connection={id:'00000000-0000-4000-8000-000000000001',extensionId:'library',connectorId:'feishu-docs',revision:1,profile:'private-profile',accountLabel:'Test account',connected:true,permissions:{read:true,create:true,append:true}};
@@ -50,7 +60,8 @@ window.calls.push({channel,input});
 if(channel==='space.extensions.list')return {ok:true,data:{extensions:[extension]}};
 if(channel==='space.extensions.connectors.catalog')return {ok:true,data:{connectors:[connector]}};
 if(channel==='partner.connectors.accounts')return {ok:true,data:{connections:accounts}};
-if(channel==='partner.connectors.onboarding.start'){const providerInstall=['wecom-cli','dingtalk-cli','tencent-meeting-cli'].includes(connector.adapter)&&!input.installCli;job={...job,phase:providerInstall?'needs_install':(window.fixtureOptions?.installPhase??(window.delayStart?'waiting_app':'waiting_authorization')),canReopen:!providerInstall};if(window.delayStart)return new Promise(resolve=>{window.finishStart=()=>resolve({ok:true,data:{job}});});return {ok:true,data:{job}};}
+if(channel==='partner.connectors.onboarding.start'){const kind={'slack-mcp':'slack_token','github-api':'github_token','zoom-mcp':'zoom_account'}[connector.adapter];if(kind){job={...job,inputKind:kind,phase:'waiting_input',canReopen:false};return {ok:true,data:{job}};}const providerInstall=['wecom-cli','dingtalk-cli','tencent-meeting-cli'].includes(connector.adapter)&&!input.installCli;job={...job,...(['netease-mail-imap','qq-mail-imap'].includes(connector.adapter)?{inputKind:'mail_credentials'}:connector.adapter==='tencent-docs-mcp'?{inputKind:'authorization_complete'}:{}),phase:['netease-mail-imap','qq-mail-imap'].includes(connector.adapter)?'waiting_input':providerInstall?'needs_install':(window.fixtureOptions?.installPhase??(window.delayStart?'waiting_app':'waiting_authorization')),canReopen:!providerInstall};if(window.delayStart)return new Promise(resolve=>{window.finishStart=()=>resolve({ok:true,data:{job}});});return {ok:true,data:{job}};}
+if(channel==='partner.connectors.onboarding.submit'){if(window.failCredentials)return {ok:false,error:{message:'Client authorization code was rejected'}};job={...job,phase:'verifying',inputKind:undefined};return {ok:true,data:{job}};}
 if(channel==='partner.connectors.onboarding.get')return {ok:true,data:{job}};
 if(channel==='partner.connectors.onboarding.reopen')return {ok:true,data:{ok:true}};
 if(channel==='partner.connectors.onboarding.cancel'){if(window.failCancel)return {ok:false,error:{message:'Cancellation could not be confirmed'}};return new Promise(resolve=>{window.finishCancel=()=>{job={...job,phase:window.connectedBeforeCancel?'connected':'cancelled',canReopen:false,...(window.connectedBeforeCancel?{connection}:{})};if(window.connectedBeforeCancel)accounts=[connection];resolve({ok:true,data:{job}});};});}
@@ -72,7 +83,15 @@ async function openFixture(
   options: {
     existingSession?: boolean;
     installPhase?: 'installing';
-    adapter?: 'tencent-meeting-cli' | 'notion-mcp' | 'slack-mcp' | 'zoom-mcp';
+    adapter?:
+      | 'tencent-meeting-cli'
+      | 'notion-mcp'
+      | 'slack-mcp'
+      | 'zoom-mcp'
+      | 'github-api'
+      | 'tencent-docs-mcp'
+      | 'netease-mail-imap'
+      | 'qq-mail-imap';
   } = {},
 ) {
   const output = await build({
@@ -139,36 +158,40 @@ test(
 );
 
 test(
-  'Slack and Zoom explain product app registration without starting onboarding',
+  'Slack, Zoom and GitHub submit credentials only through the trusted input channel and clear rejected secrets',
   { skip: !browserPath },
   async (t) => {
-    for (const adapter of ['slack-mcp', 'zoom-mcp'] as const) {
+    for (const adapter of ['slack-mcp', 'zoom-mcp', 'github-api'] as const)
       await t.test(adapter, async (t) => {
         const { page, errors } = await openFixture(t, { adapter });
         const dialog = page.getByTestId('partner-connector-dialog');
-        await dialog
-          .getByText(
-            'KodaX must first register and review its own product app with this provider. No account authorization or connection is available yet.',
-            { exact: true },
-          )
-          .waitFor();
-        const unavailable = dialog.getByRole('button', {
-          name: 'Product app setup required',
-          exact: true,
-        });
-        await unavailable.waitFor();
-        assert.equal(await unavailable.isDisabled(), true);
-        assert.equal(await dialog.getByText('Connected', { exact: true }).count(), 0);
+        await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+        const secretLabel = adapter === 'zoom-mcp' ? 'Client Secret' : 'Access token';
+        const field = dialog.getByLabel(secretLabel, { exact: true });
+        await field.fill('fixture-secret');
+        assert.equal(await field.getAttribute('type'), 'password');
+        if (adapter === 'zoom-mcp') {
+          await dialog.getByLabel('Account ID', { exact: true }).fill('account');
+          await dialog.getByLabel('Client ID', { exact: true }).fill('client');
+        }
+        await page.evaluate(() => Reflect.set(window, 'failCredentials', true));
+        await dialog.getByRole('button', { name: 'Verify connection', exact: true }).click();
+        await dialog.getByText('Client authorization code was rejected', { exact: true }).waitFor();
+        assert.equal(await field.inputValue(), '');
         const calls = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
           channel: string;
+          input: { value?: unknown };
         }[];
-        assert.equal(
-          calls.some((call) => call.channel.startsWith('partner.connectors.onboarding.')),
-          false,
+        const submitted = calls.filter((c) => c.channel === 'partner.connectors.onboarding.submit');
+        assert.equal(submitted.length, 1);
+        assert.deepEqual(
+          submitted[0]?.input.value,
+          adapter === 'zoom-mcp'
+            ? { accountId: 'account', clientId: 'client', clientSecret: 'fixture-secret' }
+            : { token: 'fixture-secret' },
         );
         assert.deepEqual(errors, []);
       });
-    }
   },
 );
 
@@ -744,6 +767,73 @@ test(
     );
     assert.equal(result.connectors[1].binding.connectionId, '00000000-0000-4000-8000-000000000002');
     assert.equal(await page.getByRole('textbox', { name: 'Draft' }).inputValue(), 'Keep my draft');
+    assert.deepEqual(errors, []);
+  },
+);
+
+test(
+  'mail account setup keeps client authorization code in the trusted dialog and clears it on failure',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t, { adapter: 'netease-mail-imap' });
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+    assert.equal(
+      await dialog.getByLabel('Email address', { exact: true }).getAttribute('placeholder'),
+      'name@163.com',
+    );
+    await dialog.getByLabel('Email address', { exact: true }).fill('reader@163.com');
+    const code = dialog.getByLabel('Client authorization code', { exact: true });
+    assert.equal(await code.getAttribute('type'), 'password');
+    await code.fill('example-private-code');
+    await page.evaluate(() => Reflect.set(window, 'failCredentials', true));
+    await dialog.getByRole('button', { name: 'Verify mailbox', exact: true }).click();
+    await dialog
+      .getByRole('alert')
+      .filter({ hasText: 'Client authorization code was rejected' })
+      .waitFor();
+    assert.equal(await code.inputValue(), '');
+    assert.equal(
+      await page
+        .locator('body')
+        .innerText()
+        .then((text) => text.includes('example-private-code')),
+      false,
+    );
+    const submissions = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
+      channel: string;
+      input: { value?: { email: string; authorizationCode: string } };
+    }[];
+    assert.deepEqual(
+      submissions
+        .filter((call) => call.channel === 'partner.connectors.onboarding.submit')
+        .map((call) => call.input.value),
+      [{ email: 'reader@163.com', authorizationCode: 'example-private-code' }],
+    );
+    assert.deepEqual(errors, []);
+  },
+);
+
+test(
+  'Tencent Docs waits for explicit browser authorization completion before host verification',
+  { skip: !browserPath },
+  async (t) => {
+    const { page, errors } = await openFixture(t, { adapter: 'tencent-docs-mcp' });
+    const dialog = page.getByTestId('partner-connector-dialog');
+    await dialog.getByRole('button', { name: 'Connect', exact: true }).click();
+    await dialog.getByRole('button', { name: 'I have authorized', exact: true }).click();
+    await dialog.getByText('Verifying connection…', { exact: true }).waitFor();
+    const calls = (await page.evaluate(() => Reflect.get(window, 'calls'))) as {
+      channel: string;
+      input: { value?: unknown };
+    }[];
+    assert.deepEqual(
+      calls
+        .filter((call) => call.channel === 'partner.connectors.onboarding.submit')
+        .map((call) => call.input.value),
+      [{ confirmed: true }],
+    );
+    assert.equal(await dialog.getByLabel('Client authorization code', { exact: true }).count(), 0);
     assert.deepEqual(errors, []);
   },
 );

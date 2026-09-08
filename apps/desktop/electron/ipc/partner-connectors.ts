@@ -60,6 +60,10 @@ export function registerPartnerConnectorChannels(
     assertSpaceExtensionSender(event);
     return { job: await getTasks().cancel(input) };
   });
+  register('partner.connectors.onboarding.submit', (input, event) => {
+    assertSpaceExtensionSender(event);
+    return { job: getTasks().submit(input) };
+  });
   register('partner.connectors.onboarding.reopen', async (input, event) => {
     assertSpaceExtensionSender(event);
     await getTasks().reopen(input);
@@ -92,6 +96,10 @@ export function registerPartnerConnectorChannels(
     await projectStore.assertAllowed(input.projectRoot);
     const service = getPartnerConnectorService();
     return service.describeBindings(await service.resolveSelections(input.connectors));
+  });
+  register('partner.connectors.search', async (input, event) => {
+    assertSpaceExtensionSender(event);
+    return getPartnerConnectorService().search(await context(input), input);
   });
   register('partner.connectors.read', async (input, event) => {
     assertSpaceExtensionSender(event);

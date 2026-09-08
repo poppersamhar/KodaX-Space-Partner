@@ -24,7 +24,7 @@ Both the renderer and the independent offline HTML use identical asset bytes.
 | Local file            | Size      | Official source                                                                                                                                                                                             |
 | --------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `wecom.png`           | 48 × 48   | [Enterprise WeChat homepage favicon](https://wwcdn.weixin.qq.com/node/wwnl/wwnl/style/images/independent/favicon/favicon_48h$c976bd14.png), referenced by [work.weixin.qq.com](https://work.weixin.qq.com/) |
-| `dingtalk.png`        | 200 × 200 | Official DingTalk homepage asset; exact URL and SHA-256 in [provider evidence](../../docs/partner/features/f146-dingtalk-evidence.md)                                                                               |
+| `dingtalk.png`        | 200 × 200 | Official DingTalk homepage asset; exact URL and SHA-256 in [provider evidence](../../docs/partner/features/f146-dingtalk-evidence.md)                                                                       |
 | `tencent-meeting.png` | 128 × 128 | [Tencent Meeting homepage logo](https://cdn.meeting.tencent.com/assets/next-website/logo128.png), referenced by [meeting.tencent.com](https://meeting.tencent.com/)                                         |
 
 ## Hosted MCP and app-registration connectors (2026-09-02)
@@ -38,5 +38,18 @@ their owners and no endorsement is implied.
 Slack intentionally uses the generic connector glyph in this release. Slack's
 [official Media Kit](https://slack.com/media-kit) provides marks under its brand
 terms, but no individual distributable logo file was added to this repository.
-This avoids recreating or republishing an unofficial Slack logo while the
-product-level Slack app registration is not yet available.
+The credential-based connector retains that generic glyph; enabling its API
+implementation does not fabricate or replace a brand asset.
+
+## Tencent Docs, NetEase Mail and QQ Mail (2026-09-07)
+
+These unmodified official assets identify the service and do not imply endorsement.
+The renderer imports local files; the independent HTML embeds the identical bytes.
+
+| Local file         | Official source                                                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tencent-docs.svg` | The 48 × 48 `footer-logo` SVG embedded in [Tencent Docs homepage stylesheet](https://docs.gtimg.com/home/css/index-0ab84d.css), referenced by [docs.qq.com](https://docs.qq.com/). The SVG was decoded without altering its contents. |
+| `netease-mail.png` | [NetEase Mail homepage favicon](https://mail.163.com/favicon.ico), referenced by [mail.163.com](https://mail.163.com/). The provider serves PNG bytes at an `.ico` URL; the local extension reflects the actual format.               |
+| `qq-mail.png`      | [QQ Mail 96 × 96 favicon](https://res.wx.qq.com/t/webmail/webmail/res/static/images/qqmail_favicon_96h.8d124a7.png), referenced by [mail.qq.com](https://mail.qq.com/).                                                               |
+
+- `github.svg`: GitHub 官方 Brand Toolkit `GitHub_Logos.zip` 内的 `SVG/GitHub_Invertocat_Black.svg`，2026-09-07 下载；[来源与使用约定](https://brand.github.com/foundations/logo)。仅在 GitHub 连接器旁标识集成，保留原始 SVG。

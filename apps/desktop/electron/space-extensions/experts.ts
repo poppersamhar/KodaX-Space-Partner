@@ -26,7 +26,7 @@ export class SpaceExpertCatalog {
   async list(extensionId: string): Promise<SpaceExpertDefinitionT[]> {
     return this.users.serialize(extensionId, async () => {
       const manifest = await this.store.getManifest(extensionId);
-      return this.definitions(manifest);
+      return (await this.definitions(manifest)).filter((expert) => !expert.retired);
     });
   }
 
@@ -36,6 +36,8 @@ export class SpaceExpertCatalog {
       const manifest = await this.store.getManifest(ref.extensionId);
       const expert = (await this.definitions(manifest)).find((entry) => entry.id === ref.expertId);
       if (!expert) throw new Error('The selected expert is no longer available in this extension');
+      if (expert.retired)
+        throw new Error('This expert is retired; choose a current expert from the library');
       if (expert.revision !== ref.revision) {
         throw new Error('Expert revision changed; refresh the plugin library before selecting it');
       }
@@ -77,17 +79,18 @@ export class SpaceExpertCatalog {
         if (!user)
           basedOn = { extensionId: manifest.id, expertId: base.id, revision: base.revision };
       }
-      const { category, ...values } = input.values;
-      const nextType = values.expertType ?? base?.expertType;
+      const { category, workflow, ...values } = input.values;
       const expert = spaceExpertDefinitionSchema.parse({
         ...(base?.expertType === undefined ? {} : { expertType: base.expertType }),
         ...(category === undefined && base?.category !== undefined
           ? { category: base.category }
           : {}),
         ...(base?.listingType === undefined ? {} : { listingType: base.listingType }),
-        ...(base?.capabilityGuide !== undefined && nextType === 'platform'
-          ? { capabilityGuide: base.capabilityGuide }
+        ...(workflow === undefined && base?.workflow !== undefined
+          ? { workflow: base.workflow }
           : {}),
+        ...(workflow ? { workflow } : {}),
+        ...(base?.capabilityGuide !== undefined ? { capabilityGuide: base.capabilityGuide } : {}),
         ...values,
         ...(typeof category === 'string' ? { category } : {}),
         id: user?.expert.id ?? `user.${randomUUID()}`,

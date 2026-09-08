@@ -19,6 +19,46 @@ const WRITING_MENTOR: SpaceExpertDefinitionT = {
   starterTasks: ['帮我梳理这篇文档的结构。'],
 };
 
+test('user copies preserve workflows for old editors, accept edits and can explicitly clear them', async (t) => {
+  const { directory, store, catalog } = await fixture(t);
+  const workflow = {
+    inputs: ['Question'],
+    deliverables: ['Report'],
+    qualityChecks: ['Evidence'],
+    connectorNeeds: [],
+  };
+  const preset = { ...WRITING_MENTOR, workflow };
+  await store.install(await buildArchive(directory, [preset]));
+  await store.setEnabled('test.library', true);
+  const values = { name: 'My method', description: '', prompt: 'My judgement', starterTasks: [] };
+  const copy = await catalog.save({
+    extensionId: 'test.library',
+    expertId: preset.id,
+    expectedRevision: 1,
+    values,
+  });
+  assert.deepEqual(copy.workflow, workflow);
+  const changed = { ...workflow, deliverables: ['Decision report'] };
+  const updated = await catalog.save({
+    extensionId: 'test.library',
+    expertId: copy.id,
+    expectedRevision: 1,
+    values: { ...values, workflow: changed },
+  });
+  assert.deepEqual(updated.workflow, changed);
+  const cleared = await catalog.save({
+    extensionId: 'test.library',
+    expertId: copy.id,
+    expectedRevision: 2,
+    values: { ...values, workflow: null },
+  });
+  assert.equal(cleared.workflow, undefined);
+  assert.deepEqual(
+    (await catalog.list('test.library')).find((expert) => expert.id === preset.id)?.workflow,
+    workflow,
+  );
+});
+
 async function fixture(t: TestContext) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'space-experts-test-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
@@ -40,19 +80,21 @@ async function buildArchive(
     description: string;
   }> = [],
 ) {
-  const hostApiVersion = experts.some(
-    (expert) => expert.capabilityGuide,
-  )
-    ? 3
-    : experts.some((expert) => expert.expertType || expert.category || expert.listingType)
-    ? 2
-    : 1;
+  const hasWorkflow = experts.some((expert) => expert.workflow || expert.retired !== undefined);
+  const hostApiVersion = hasWorkflow
+    ? 4
+    : experts.some((expert) => expert.capabilityGuide)
+      ? 3
+      : experts.some((expert) => expert.expertType || expert.category || expert.listingType)
+        ? 2
+        : 1;
   const zip = new JSZip();
   zip.file(
     'manifest.json',
     JSON.stringify({
       formatVersion: 1,
       hostApiVersion,
+      ...(hasWorkflow ? { requiredHostCapabilities: ['partnerExpertWorkflowsV1'] } : {}),
       id,
       name: 'Test Library',
       description: 'Expert catalog',
@@ -421,7 +463,7 @@ test('copying or editing a built-in platform expert preserves its package capabi
       expertType: 'role',
     },
   });
-  assert.equal(converted.capabilityGuide, undefined);
+  assert.deepEqual(converted.capabilityGuide, platformExpert.capabilityGuide);
 });
 
 test('editing a user expert increments its revision without mutating an old session snapshot', async (t) => {
@@ -854,3 +896,35 @@ test(
     }
   },
 );
+
+test('retired presets leave the new catalog while old snapshots and user copies remain usable', async (t) => {
+  const { directory, store, catalog } = await fixture(t);
+  await store.install(await buildArchive(directory));
+  await store.setEnabled('test.library', true);
+  const ref = { extensionId: 'test.library', expertId: WRITING_MENTOR.id, revision: 1 };
+  const old = await catalog.resolve(ref);
+  const copy = await catalog.save({
+    extensionId: ref.extensionId,
+    expertId: ref.expertId,
+    expectedRevision: 1,
+    values: {
+      name: 'My expert',
+      description: '',
+      prompt: 'My preserved instructions.',
+      starterTasks: [],
+    },
+  });
+  await store.install(
+    await buildArchive(directory, [{ ...WRITING_MENTOR, retired: true }], '0.3.0'),
+  );
+  await store.setEnabled('test.library', true);
+  assert.deepEqual(
+    (await catalog.list(ref.extensionId)).map((expert) => expert.id),
+    [copy.id],
+  );
+  await catalog.requireAvailable(old);
+  assert.equal(old.expert.prompt, WRITING_MENTOR.prompt);
+  await assert.rejects(catalog.resolve(ref), /retired|no longer available/i);
+  const selectedCopy = await catalog.resolve({ ...ref, expertId: copy.id });
+  assert.equal(selectedCopy.expert.prompt, 'My preserved instructions.');
+});

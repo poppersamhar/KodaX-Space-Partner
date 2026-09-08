@@ -14,6 +14,8 @@ import {
 } from '../kodax/atomic-file.js';
 import { assertOwnedDirectory, readRegularFile } from '../space-extensions/files.js';
 
+export const MAX_PARTNER_CONNECTOR_ACCOUNTS = 64;
+
 const connectionSchema = partnerConnectorConnectionSchema
   .extend({
     appId: z.string().max(160).optional(),
@@ -37,7 +39,7 @@ const connectionSchema = partnerConnectorConnectionSchema
 const legacyDatabaseSchema = z
   .object({
     version: z.literal(1),
-    connections: z.array(connectionSchema).max(64),
+    connections: z.array(connectionSchema).max(MAX_PARTNER_CONNECTOR_ACCOUNTS),
     sources: z.array(partnerRemoteSourceSchema).max(1000),
     proposals: z.array(partnerRemoteProposalSchema).max(1000),
     receipts: z.array(partnerRemoteReceiptSchema).max(1000),
@@ -48,7 +50,7 @@ const legacyDatabaseSchema = z
 const databaseSchema = z
   .object({
     version: z.literal(2),
-    connections: z.array(connectionSchema).max(64),
+    connections: z.array(connectionSchema).max(MAX_PARTNER_CONNECTOR_ACCOUNTS),
     sources: z.array(partnerRemoteSourceSchema).max(1000),
     proposals: z.array(partnerRemoteProposalSchema).max(1000),
     receipts: z.array(partnerRemoteReceiptSchema).max(1000),
@@ -156,14 +158,16 @@ export class PartnerConnectorStore {
         }
       }
       for (const task of db.baseTasks) {
-        if (task.status !== 'submitting') continue;
+        if (task.status !== 'preparing' && task.status !== 'submitting') continue;
         const pid = db.dispatchOwners[task.id];
-        if (!writerAlive(pid)) {
-          task.status = 'unknown';
-          task.error = '上次创建中断，请到飞书核对；不会自动重试';
-          task.updatedAt = new Date().toISOString();
-          delete db.dispatchOwners[task.id];
-        }
+        if (writerAlive(pid)) continue;
+        const wasSubmitted = task.status === 'submitting';
+        task.status = wasSubmitted ? 'unknown' : 'failed';
+        task.error = wasSubmitted
+          ? '上次创建中断，请到飞书核对；不会自动重试'
+          : '上次创建尚未提交，请重新发起任务';
+        task.updatedAt = new Date().toISOString();
+        delete db.dispatchOwners[task.id];
       }
       for (const task of db.documentTasks) {
         if (task.status !== 'preparing' && task.status !== 'submitting') continue;
@@ -189,7 +193,9 @@ export class PartnerConnectorStore {
       (p) => p.status === 'submitting' && !writerAlive(db.dispatchOwners[p.id]),
     ) ||
       db.baseTasks.some(
-        (task) => task.status === 'submitting' && !writerAlive(db.dispatchOwners[task.id]),
+        (task) =>
+          (task.status === 'preparing' || task.status === 'submitting') &&
+          !writerAlive(db.dispatchOwners[task.id]),
       ) ||
       db.documentTasks.some(
         (task) =>

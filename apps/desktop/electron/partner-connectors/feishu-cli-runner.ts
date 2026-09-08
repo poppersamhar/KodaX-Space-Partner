@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export interface FeishuCliRequest {
   args: readonly string[];
@@ -83,8 +86,17 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
   const source = options.env ?? process.env;
   const executable = options.executable ?? source.KODAX_SPACE_FEISHU_CLI ?? 'lark-cli';
   const env = createSafeFeishuEnvironment(source);
-  return (request) =>
-    new Promise((resolve, reject) => {
+  return async (request) => {
+    if (request.signal?.aborted) throw new FeishuCliError('cancelled', false);
+    let directory: string;
+    try {
+      // Keep the host's final permission guard and spawn in the same turn.
+      directory = mkdtempSync(join(tmpdir(), 'kodax-feishu-'));
+    } catch {
+      throw new FeishuCliError('command_failed', false);
+    }
+    let dispatched = false;
+    return new Promise<FeishuCliResponse>((resolve, reject) => {
       if (request.signal?.aborted) {
         reject(new FeishuCliError('cancelled', false));
         return;
@@ -112,7 +124,7 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
       }
       const child = spawn(executable, [...request.args], {
         shell: false,
-        cwd: tmpdir(),
+        cwd: directory,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
@@ -122,8 +134,8 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
       const stderr: Buffer[] = [];
       let outputBytes = 0;
       let settled = false;
-      let dispatched = false;
       let cancelled = false;
+      let failure: FeishuCliError | undefined;
       const finish = (error?: FeishuCliError, exitCode: number | null = null) => {
         if (settled) return;
         settled = true;
@@ -147,10 +159,11 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
         } else child.kill('SIGKILL');
       };
       const timer = setTimeout(() => {
+        failure ??= new FeishuCliError('timeout', dispatched);
         stop();
-        finish(new FeishuCliError('timeout', dispatched));
       }, timeoutMs);
       const cancel = () => {
+        if (settled) return;
         cancelled = true;
         clearTimeout(timer);
         stop();
@@ -161,32 +174,45 @@ export function createFeishuCliRunner(options: FeishuCliRunnerOptions = {}): Fei
         dispatched = true;
       });
       const collect = (target: Buffer[], chunk: Buffer) => {
-        if (settled) return;
+        if (settled || failure || cancelled) return;
         outputBytes += chunk.length;
         if (outputBytes > maxOutputBytes) {
+          failure = new FeishuCliError('output_limit', dispatched);
+          clearTimeout(timer);
           stop();
-          finish(new FeishuCliError('output_limit', dispatched));
         } else target.push(chunk);
       };
       child.stdout.on('data', (chunk: Buffer) => collect(stdout, chunk));
       child.stderr.on('data', (chunk: Buffer) => collect(stderr, chunk));
-      child.on('error', (error: NodeJS.ErrnoException) =>
+      child.on('error', (error: NodeJS.ErrnoException) => {
+        failure ??= new FeishuCliError(
+          cancelled ? 'cancelled' : error.code === 'ENOENT' ? 'cli_missing' : 'command_failed',
+          dispatched,
+        );
+        clearTimeout(timer);
+      });
+      // Wait for process exit and pipe closure before the caller removes its private cwd.
+      child.on('close', (exitCode) =>
         finish(
-          new FeishuCliError(
-            cancelled ? 'cancelled' : error.code === 'ENOENT' ? 'cli_missing' : 'command_failed',
-            dispatched,
-          ),
+          failure ?? (cancelled ? new FeishuCliError('cancelled', dispatched) : undefined),
+          exitCode,
         ),
       );
-      child.on('close', (exitCode) =>
-        finish(cancelled ? new FeishuCliError('cancelled', dispatched) : undefined, exitCode),
-      );
       child.stdin.on('error', () => {
+        if (settled || failure) return;
+        failure = new FeishuCliError(cancelled ? 'cancelled' : 'command_failed', dispatched);
+        clearTimeout(timer);
         stop();
-        finish(new FeishuCliError(cancelled ? 'cancelled' : 'command_failed', dispatched));
       });
       child.stdin.end(request.stdin ?? '');
+    }).finally(async () => {
+      try {
+        await rm(directory, { recursive: true, force: true });
+      } catch {
+        throw new FeishuCliError('command_failed', dispatched);
+      }
     });
+  };
 }
 
 export const runFeishuCli: FeishuCliRunner = (request) => createFeishuCliRunner()(request);

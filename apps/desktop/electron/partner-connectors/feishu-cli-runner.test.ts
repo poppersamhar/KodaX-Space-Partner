@@ -1,6 +1,99 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { test } from 'node:test';
 import { createFeishuCliRunner, FeishuCliError } from './feishu-cli-runner.js';
+
+test('working directory setup preserves immediate dispatch after the host permission guard', async () => {
+  const run = createFeishuCliRunner({ executable: process.execPath });
+  const args = ['-e', 'process.stdout.write("approved request")'];
+  const pending = run({ args });
+  args[1] = 'process.stdout.write("changed after dispatch")';
+  assert.equal((await pending).stdout, 'approved request');
+});
+
+test('each CLI invocation gets an empty private directory that is removed before completion', async () => {
+  const run = createFeishuCliRunner({ executable: process.execPath });
+  const invoke = () =>
+    run({
+      args: [
+        '-e',
+        'const fs=require("node:fs");process.stdout.write(JSON.stringify({cwd:process.cwd(),empty:fs.readdirSync(".").length===0,home:process.env.HOME,profile:process.argv[1],mode:fs.statSync(".").mode&511}));',
+        '--',
+        '--profile=space-fixture',
+      ],
+    });
+  const results = await Promise.all([invoke(), invoke()]);
+  const shared = await realpath(tmpdir());
+  const directories = new Set<string>();
+  for (const result of results) {
+    const value = JSON.parse(result.stdout) as {
+      cwd: string;
+      empty: boolean;
+      home?: string;
+      profile: string;
+      mode: number;
+    };
+    assert.notEqual(value.cwd, shared);
+    assert.equal(value.empty, true);
+    assert.equal(value.home, process.env.HOME);
+    assert.equal(value.profile, '--profile=space-fixture');
+    if (process.platform !== 'win32') assert.equal(value.mode, 0o700);
+    assert.equal(existsSync(value.cwd), false);
+    directories.add(value.cwd);
+  }
+  assert.equal(directories.size, 2);
+});
+
+test('CLI working files are removed after success, failure, timeout, output limit, and live cancellation', async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), 'feishu-runner-fixture-'));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  for (const mode of ['success', 'failure', 'timeout', 'output_limit', 'cancelled']) {
+    const report = join(fixture, `${mode}.json`);
+    const controller = new AbortController();
+    const run = createFeishuCliRunner({
+      executable: process.execPath,
+      timeoutMs: 1500,
+      maxOutputBytes: 64,
+    });
+    const pending = run({
+      args: [
+        '-e',
+        'const fs=require("node:fs");fs.mkdirSync("resources");fs.writeFileSync("resources/canary.html","PRIVATE_CANARY");fs.writeFileSync(process.argv[1],JSON.stringify({cwd:process.cwd(),pid:process.pid}));switch(process.argv[2]){case "success":process.exit(0);break;case "failure":process.exit(1);break;case "output_limit":process.stdout.write("x".repeat(1024));default:setInterval(()=>{},1000);}',
+        '--',
+        report,
+        mode,
+      ],
+      signal: controller.signal,
+    }).then(
+      (value) => value,
+      (error: unknown) => error,
+    );
+    if (mode === 'cancelled') {
+      for (let attempt = 0; attempt < 200 && !existsSync(report); attempt++) await setTimeout(5);
+      assert.ok(existsSync(report), 'the cancellation fixture must start');
+      controller.abort();
+    }
+    const result = await pending;
+    if (mode === 'success' || mode === 'failure') {
+      assert.ok(result && typeof result === 'object' && 'exitCode' in result);
+      assert.equal(result.exitCode, mode === 'success' ? 0 : 1);
+    } else {
+      assert.ok(result instanceof FeishuCliError);
+      assert.equal(result.code, mode);
+      assert.equal(result.dispatched, true);
+    }
+    const { cwd, pid } = JSON.parse(await readFile(report, 'utf8')) as {
+      cwd: string;
+      pid: number;
+    };
+    assert.equal(existsSync(cwd), false, `${mode} must clean up working files before returning`);
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  }
+});
 
 test('a caller aborts a live verification subprocess without leaking output or leaving it active', async () => {
   const controller = new AbortController();

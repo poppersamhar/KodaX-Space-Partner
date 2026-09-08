@@ -77,6 +77,24 @@ async function openLibrary(
                 description: 'Read documents',
               },
               {
+                id: 'tencent-docs',
+                adapter: 'tencent-docs-mcp',
+                name: '腾讯文档',
+                description: 'Read authorized resources',
+              },
+              {
+                id: 'netease-mail',
+                adapter: 'netease-mail-imap',
+                name: '网易邮箱',
+                description: 'Read authorized resources',
+              },
+              {
+                id: 'qq-mail',
+                adapter: 'qq-mail-imap',
+                name: 'QQ邮箱',
+                description: 'Read authorized resources',
+              },
+              {
                 id: 'wecom',
                 adapter: 'wecom-cli',
                 name: '企业微信',
@@ -119,6 +137,12 @@ async function openLibrary(
                 description: 'Requires a product app',
               },
               {
+                id: 'github',
+                adapter: 'github-api',
+                name: 'GitHub',
+                description: 'Read selected repository, Issue or PR.',
+              },
+              {
                 id: 'zoom',
                 adapter: 'zoom-mcp',
                 name: 'Zoom',
@@ -137,9 +161,10 @@ async function openLibrary(
         finishConfiguration = () => resolve({ configured: true });
       });
     if (request.method === 'expert.save') {
-      const { category, ...draftValues } = request.values;
+      const { category, workflow, ...draftValues } = request.values;
       const saved: SpaceExpertDefinitionT = {
         ...draftValues,
+        ...(workflow ? { workflow } : {}),
         ...(category === null || category === undefined ? {} : { category }),
         id: request.expertId?.startsWith('user.') ? request.expertId : 'user.created',
         revision: request.expertId?.startsWith('user.') ? request.expectedRevision! + 1 : 1,
@@ -235,6 +260,9 @@ test(
       ['企业微信', 'wecom', 48],
       ['钉钉', 'dingtalk', 200],
       ['腾讯会议', 'tencent-meeting', 128],
+      ['腾讯文档', 'tencent-docs', 48],
+      ['网易邮箱', 'netease-mail', 48],
+      ['QQ邮箱', 'qq-mail', 96],
     ] as const) {
       const card = frame
         .getByRole('article')
@@ -253,7 +281,7 @@ test(
 );
 
 test(
-  'hosted connectors stay offline-branded while app-registration connectors cannot start configuration',
+  'remote and credential connectors open trusted configuration without remote asset requests',
   { skip: !browserPath },
   async (t) => {
     const { frame, requests } = await openLibrary(t, [preset], 'connectors', {
@@ -275,17 +303,12 @@ test(
         .map((request) => request.connectorId),
       ['notion', 'airtable', 'atlassian'],
     );
-    for (const name of ['Slack', 'Zoom'] as const) {
+    for (const [index, name] of ['Slack', 'Zoom', 'GitHub'].entries()) {
       const card = frame
         .getByRole('article')
         .filter({ has: frame.getByRole('heading', { name, exact: true }) });
-      await card.getByText('需要产品 App', { exact: true }).waitFor();
-      const unavailable = card.getByRole('button', {
-        name: `需要产品 App 配置 ${name}`,
-        exact: true,
-      });
-      assert.equal(await unavailable.isDisabled(), true);
-      assert.equal(await card.getByText('已连接', { exact: true }).count(), 0);
+      await card.getByRole('button', { name: `连接 ${name}`, exact: true }).click();
+      await waitForConfigureRequests(requests, index + 4);
     }
     const slackCard = frame
       .getByRole('article')
@@ -303,7 +326,7 @@ test(
       allProviders: true,
     });
     await setTheme('dark');
-    for (const name of ['Notion', 'Airtable', 'Atlassian', 'Zoom'] as const) {
+    for (const name of ['Notion', 'Airtable', 'Atlassian', 'Zoom', 'GitHub'] as const) {
       const card = frame
         .getByRole('article')
         .filter({ has: frame.getByRole('heading', { name, exact: true }) });
@@ -330,7 +353,7 @@ test(
       allProviders: true,
     });
     await frame.getByRole('button', { name: '连接 Notion', exact: true }).waitFor();
-    await frame.getByRole('button', { name: '需要产品 App 配置 Slack', exact: true }).waitFor();
+    await frame.getByRole('button', { name: '连接 Slack', exact: true }).waitFor();
     await changeConnected();
     await frame.getByRole('button', { name: '管理连接 飞书', exact: true }).waitFor();
   },
@@ -449,7 +472,7 @@ test(
 );
 
 test(
-  'experts are browsed by role, task, or platform and use broad categories with teams as one filter',
+  'experts use two discovery views while legacy platform copies remain discoverable',
   { skip: !browserPath },
   async (t) => {
     type ClassifiedExpert = SpaceExpertDefinitionT & {
@@ -569,12 +592,9 @@ test(
     await frame.getByRole('button', { name: '文档办公', exact: true }).waitFor();
     assert.equal(await frame.getByRole('button', { name: '内容创作', exact: true }).count(), 0);
 
-    await frame.getByRole('button', { name: /平台专家/ }).click();
+    assert.equal(await frame.getByRole('button', { name: /平台专家/ }).count(), 0);
+    await frame.getByRole('button', { name: /岗位专家/ }).click();
     await frame.getByRole('heading', { name: '飞书协同办公', exact: true }).waitFor();
-    assert.deepEqual(await frame.locator('#expert-category-tabs button').allTextContents(), [
-      '全部',
-      '专家团',
-    ]);
     assert.equal(requests.filter((request) => request.method === 'catalog.list').length, 1);
     assert.equal(
       requests.some((request) => request.method.startsWith('expert.')),
@@ -588,8 +608,8 @@ test(
   { skip: !browserPath },
   async (t) => {
     const { frame } = await openLibrary(t);
-    await frame.getByRole('button', { name: /平台专家/ }).click();
-    await frame.getByText('当前还没有平台专家。', { exact: true }).waitFor();
+    await frame.getByRole('button', { name: /任务专家/ }).click();
+    await frame.getByText('当前还没有任务专家。', { exact: true }).waitFor();
     assert.deepEqual(await frame.locator('#expert-category-tabs button').allTextContents(), [
       '全部',
       '专家团',
@@ -608,6 +628,8 @@ test(
       listingType: 'expert' as const,
     };
     const { frame, requests } = await openLibrary(t, [classified]);
+    await frame.getByRole('button', { name: '查看 写作导师 详情', exact: true }).click();
+    await frame.getByText('专家设置与提示词', { exact: true }).click();
     await frame.getByRole('button', { name: '修改副本', exact: true }).click();
     const editor = frame.getByRole('form', { name: '修改预置副本' });
     for (const reservedCategory of ['专家团', 'all', 'team']) {
@@ -617,14 +639,14 @@ test(
       assert.equal(requests.filter((request) => request.method === 'expert.save').length, 0);
     }
 
-    await editor.getByLabel('专家类型', { exact: true }).selectOption('platform');
+    await editor.getByLabel('专家类型', { exact: true }).selectOption('task');
     await editor.getByLabel('分类（可选）', { exact: true }).fill('');
     await editor.getByRole('button', { name: '保存为我的副本', exact: true }).click();
     await frame
       .getByText('已保存。需要重新选择专家，才会在会话中应用新版本。', { exact: true })
       .waitFor();
     const save = requests.find((request) => request.method === 'expert.save');
-    assert.equal(save?.values.expertType, 'platform');
+    assert.equal(save?.values.expertType, 'task');
     assert.equal(save?.values.category, null);
     await frame.getByRole('heading', { name: '写作导师', exact: true }).waitFor();
     assert.deepEqual(await frame.locator('#expert-category-tabs button').allTextContents(), [
@@ -648,6 +670,11 @@ test(
     await editor.getByLabel('专家提示词', { exact: true }).fill('请帮我校对文档。');
     await editor.getByLabel('示例任务 1', { exact: true }).fill('检查这份提纲');
     await editor.getByLabel('Skill 名称（可选）', { exact: true }).fill('document-processing');
+    await editor.getByLabel('需要的资料（可选，每行一项）', { exact: true }).fill('原稿');
+    await editor.getByLabel('交付物（每行一项）', { exact: true }).fill('修订稿');
+    await editor.getByLabel('交付检查（每行一项）', { exact: true }).fill('保留关键事实');
+    await editor.locator('#editor-need-read').selectOption('optional');
+    await editor.getByLabel('读取资料的用途', { exact: true }).fill('读取原文');
     await frame.getByRole('button', { name: '保存专家', exact: true }).click();
     await frame
       .getByText('已保存。需要重新选择专家，才会在会话中应用新版本。', { exact: true })
@@ -667,6 +694,12 @@ test(
       prompt: '请帮我校对文档。',
       starterTasks: ['检查这份提纲'],
       skillRef: 'document-processing',
+      workflow: {
+        inputs: ['原稿'],
+        deliverables: ['修订稿'],
+        qualityChecks: ['保留关键事实'],
+        connectorNeeds: [{ operation: 'read', required: false, reason: '读取原文' }],
+      },
     });
     assert.equal(saves[0]?.expertId, undefined);
     assert.equal(
@@ -681,6 +714,8 @@ test(
   { skip: !browserPath },
   async (t) => {
     const { frame, requests } = await openLibrary(t);
+    await frame.getByRole('button', { name: '查看 写作导师 详情', exact: true }).click();
+    await frame.getByText('专家设置与提示词', { exact: true }).click();
     await frame.getByRole('button', { name: '修改副本', exact: true }).click();
     await frame
       .getByText('预置专家不会被修改；保存后会创建一个属于你的副本。', { exact: true })
@@ -691,7 +726,9 @@ test(
     const userCard = frame
       .getByRole('article')
       .filter({ has: frame.getByRole('heading', { name: '写作导师副本', exact: true }) });
-    await userCard.getByRole('button', { name: '编辑', exact: true }).click();
+    await userCard.getByRole('button').click();
+    await frame.getByText('专家设置与提示词', { exact: true }).click();
+    await frame.getByRole('dialog').getByRole('button', { name: '编辑', exact: true }).click();
     await frame.getByLabel('说明', { exact: true }).fill('<b>这只是文本</b>');
     await frame.getByRole('button', { name: '保存新版本', exact: true }).click();
     await userCard.getByText('<b>这只是文本</b>', { exact: true }).waitFor();
@@ -722,8 +759,9 @@ test(
       skillRef: 'document-processing',
     };
     const { frame, requests } = await openLibrary(t, [preset, configured]);
-    assert.equal(await frame.getByRole('button', { name: '仅用提示词', exact: true }).count(), 1);
-    await frame.getByRole('button', { name: '仅用提示词', exact: true }).click();
+    await frame.getByRole('button', { name: '查看 文档专家 详情', exact: true }).click();
+    await frame.getByRole('dialog').getByLabel('使用默认方法').uncheck();
+    await frame.getByRole('dialog').getByRole('button', { name: '使用专家', exact: true }).click();
     await frame.getByText('专家已选择，请在 Partner 中继续对话。', { exact: true }).waitFor();
     const selection = requests.find((request) => request.method === 'expert.select');
     assert.deepEqual(
@@ -743,6 +781,8 @@ test(
   async (t) => {
     const custom = { ...preset, id: 'user.custom', name: '我的专家', revision: 3 };
     const { frame, requests } = await openLibrary(t, [preset, custom]);
+    await frame.getByRole('button', { name: '查看 我的专家 详情', exact: true }).click();
+    await frame.getByText('专家设置与提示词', { exact: true }).click();
     assert.equal(await frame.getByRole('button', { name: '删除', exact: true }).count(), 1);
     await frame.getByRole('button', { name: '删除', exact: true }).click();
     await frame.getByText('已删除专家。历史会话中的专家快照仍会保留。', { exact: true }).waitFor();
@@ -753,5 +793,59 @@ test(
       id: 'user.custom',
       revision: 3,
     });
+  },
+);
+
+test(
+  'expert briefing closes with Escape and fits a narrow viewport',
+  { skip: !browserPath },
+  async (t) => {
+    const { frame, resize } = await openLibrary(t);
+    await resize(375);
+    const open = frame.getByRole('button', { name: '查看 写作导师 详情' });
+    await open.focus();
+    await open.press('Enter');
+    const dialog = frame.getByRole('dialog');
+    assert.equal(await dialog.getByLabel('使用默认方法').count(), 0);
+    const fits = await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth);
+    assert.equal(fits, true);
+    await dialog.getByRole('button', { name: '关闭专家详情' }).press('Escape');
+    assert.equal(await dialog.count(), 0);
+    assert.equal(await open.evaluate((element) => element === document.activeElement), true);
+  },
+);
+
+test(
+  'expert cards open an accessible briefing before explicit selection',
+  { skip: !browserPath },
+  async (t) => {
+    const expert = {
+      ...preset,
+      skillRef: 'copywriting',
+      workflow: {
+        inputs: ['产品事实与目标读者'],
+        deliverables: ['可编辑文案'],
+        qualityChecks: ['不编造卖点'],
+        connectorNeeds: [],
+      },
+    };
+    const { frame, requests } = await openLibrary(t, [expert]);
+    const card = frame.getByRole('article');
+    assert.equal(await card.getByRole('button').count(), 1);
+    await card.getByRole('button', { name: '查看 写作导师 详情' }).click();
+    const dialog = frame.getByRole('dialog', { name: '写作导师' });
+    await dialog.getByText('可编辑文案', { exact: true }).waitFor();
+    await dialog.getByText('产品事实与目标读者', { exact: true }).waitFor();
+    assert.equal(
+      requests.some((request) => request.method === 'expert.select'),
+      false,
+    );
+    await dialog.getByLabel('使用默认方法').uncheck();
+    await dialog.getByRole('button', { name: '使用专家', exact: true }).click();
+    await frame.getByText('专家已选择，请在 Partner 中继续对话。', { exact: true }).waitFor();
+    const selection = requests.find((request) => request.method === 'expert.select');
+    assert.ok(selection?.method === 'expert.select');
+    assert.equal(selection.useSkill, false);
+    assert.equal(selection.revision, expert.revision);
   },
 );

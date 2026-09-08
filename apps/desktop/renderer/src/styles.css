@@ -1807,8 +1807,7 @@ html:not(.q-minimal) .collapse-track {
     gap: 0.25rem;
   }
 
-  .partner-permission-selector__full,
-  .partner-delivery-selector__label {
+  .partner-permission-selector__full {
     display: none;
   }
 
@@ -1832,7 +1831,6 @@ html:not(.q-minimal) .collapse-track {
   }
 
   .partner-permission-selector,
-  .partner-delivery-selector,
   .partner-model-selector {
     width: 1.75rem;
     min-width: 1.75rem;
@@ -1841,27 +1839,15 @@ html:not(.q-minimal) .collapse-track {
   }
 
   .partner-permission-selector__compact,
-  .partner-delivery-selector__select,
   .partner-model-selector__model,
   .partner-model-selector__chevron {
     display: none;
   }
 
-  .partner-permission-selector__icon,
-  .partner-delivery-selector__icon {
+  .partner-permission-selector__icon {
     display: block;
   }
 
-  .partner-delivery-selector__select {
-    display: block;
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    max-width: none;
-    height: 100%;
-    cursor: pointer;
-    opacity: 0;
-  }
 }
 
 /* reduced-motion 兜底：所有 F068 入场/状态动画在用户偏好减少动效时全禁用（瞬切）。

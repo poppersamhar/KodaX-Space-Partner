@@ -26,6 +26,7 @@ import { FileTree } from '../code/FileTree.js';
 import { KnowledgeBasePanel } from './KnowledgeBasePanel.js';
 import { PartnerRemoteRecords } from '../extensions/PartnerRemoteRecords.js';
 import { activatePartnerProjectFile } from './partnerProjectFileActivation.js';
+import type { PartnerDetailOpenTarget } from './partnerDetailWorkspace.js';
 import {
   PARTNER_SOURCES_CHANGED_EVENT,
   readPartnerPendingSources,
@@ -51,12 +52,14 @@ export function handleSourcePickerOpenRequest(
 }
 
 interface SourcesPanelProps {
+  readonly onOpenDetail?: (target: PartnerDetailOpenTarget) => void;
   readonly openPickerRequest?: number;
   readonly onOpenPickerRequestConsumed?: () => void;
   readonly variant?: 'rail' | 'detail';
 }
 
 export function SourcesPanel({
+  onOpenDetail,
   openPickerRequest = 0,
   onOpenPickerRequestConsumed,
   variant = 'rail',
@@ -444,7 +447,7 @@ export function SourcesPanel({
     >
       <div className={sourcePickerOpen ? 'hidden' : 'contents'} aria-hidden={sourcePickerOpen}>
         <div className="max-h-[60%] shrink-0 overflow-y-auto">
-          <PartnerRemoteRecords kind="sources" />
+          <PartnerRemoteRecords kind="sources" onOpenDetail={onOpenDetail} />
         </div>
         <div className="px-3 h-9 flex items-center gap-2 border-b border-border-default flex-shrink-0">
           <FolderOpen className="w-3.5 h-3.5 text-fg-muted" strokeWidth={1.75} aria-hidden />

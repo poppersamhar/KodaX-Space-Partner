@@ -10,6 +10,60 @@ import {
   PartnerExpertDetailsContent,
 } from './PartnerExpertDetails.js';
 
+test('expert details expose inputs, deliverables, quality checks and optional versus required capabilities', () => {
+  const html = renderToStaticMarkup(
+    createElement(
+      I18nProvider,
+      null,
+      createElement(PartnerExpertDetailsContent, {
+        expert: {
+          extensionId: 'library',
+          extensionVersion: '1.0.0',
+          expert: {
+            id: 'research',
+            revision: 1,
+            name: 'Research',
+            description: '',
+            prompt: 'Research',
+            starterTasks: [],
+            workflow: {
+              inputs: ['Market evidence'],
+              deliverables: ['Decision report'],
+              qualityChecks: ['Citations support claims'],
+              connectorNeeds: [
+                { operation: 'read', required: true, reason: 'Read designated evidence' },
+                {
+                  operation: 'createDocument',
+                  required: false,
+                  reason: 'Optional online delivery',
+                },
+              ],
+            },
+          },
+        },
+        isCurrent: true,
+        available: true,
+        enabled: true,
+        busy: false,
+        onUseSkillChange: () => undefined,
+        onCopyTask: () => undefined,
+      }),
+    ),
+  );
+  for (const value of [
+    'Market evidence',
+    'Decision report',
+    'Citations support claims',
+    'Read designated evidence',
+    'Optional online delivery',
+  ])
+    assert.ok(html.includes(value));
+  assert.match(html, /Read and summarize/);
+  assert.match(html, /Create document/);
+  assert.match(html, /Required/);
+  assert.match(html, /Optional/);
+});
+
 test('expert details retain the actual snapshot in a reusable Partner detail tab', () => {
   const expert: PartnerExpertSnapshotT = {
     extensionId: 'partner-library',
@@ -67,7 +121,7 @@ test('details expose a Skill switch only when configured and preserve example te
       starterTasks: ['  Review <report>\nwith citations.  '],
     },
   };
-  const render = (snapshot: PartnerExpertSnapshotT, isCurrent: boolean) =>
+  const render = (snapshot: PartnerExpertSnapshotT, isCurrent: boolean, available = true) =>
     renderToStaticMarkup(
       createElement(
         I18nProvider,
@@ -75,6 +129,7 @@ test('details expose a Skill switch only when configured and preserve example te
         createElement(PartnerExpertDetailsContent, {
           expert: snapshot,
           isCurrent,
+          available,
           enabled: true,
           busy: false,
           onUseSkillChange: () => undefined,
@@ -83,6 +138,16 @@ test('details expose a Skill switch only when configured and preserve example te
       ),
     );
   const promptOnly = render(expert, true);
+  assert.match(promptOnly, /Keeps this expert for subsequent messages and tasks/);
+  assert.match(promptOnly, /until you switch or remove it/);
+  const unavailable = render(expert, true, false);
+  assert.match(
+    unavailable,
+    /This expert is saved in this conversation but is currently unavailable/,
+  );
+  assert.doesNotMatch(unavailable, /Keeps this expert for subsequent messages and tasks/);
+  assert.match(render(expert, false), /Choose this expert to use it throughout a conversation/);
+  assert.doesNotMatch(render(expert, false), /Keeps this expert for subsequent messages and tasks/);
   assert.doesNotMatch(promptOnly, /data-testid="expert-skill-toggle"/);
   assert.match(promptOnly, / {2}Review &lt;report&gt;\nwith citations\. {2}/);
   assert.match(promptOnly, /data-testid="expert-copy-starter-task"/);
@@ -92,6 +157,7 @@ test('details expose a Skill switch only when configured and preserve example te
     expert: { ...expert.expert, skillRef: 'document-processing' },
   };
   assert.match(render(configured, true), /data-testid="expert-skill-toggle"/);
+  assert.match(render(configured, true), /another Skill applies to that turn only/);
   assert.doesNotMatch(render(configured, true), /checked=""/);
   assert.doesNotMatch(render(configured, false), /data-testid="expert-skill-toggle"/);
 });

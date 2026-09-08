@@ -1,0 +1,16 @@
+# Partner distribution overlay; retain the compatible Space host version.
+extends: ./electron-builder.yml
+directories:
+  output: out/partner-release
+publish:
+  provider: github
+  owner: poppersamhar
+  repo: KodaX-Space-Partner
+  releaseType: prerelease
+mac:
+  artifactName: KodaX-Space-Partner-0.1.0-${arch}.${ext}
+  publish:
+    provider: github
+    owner: poppersamhar
+    repo: KodaX-Space-Partner
+    releaseType: prerelease

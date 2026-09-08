@@ -12,11 +12,34 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const sourceDirectory = path.join(repositoryRoot, 'extensions', 'partner-library');
 const archiveDate = new Date('2000-01-01T00:00:00.000Z');
 
+/** Embed local portraits so the isolated extension needs no network or asset permissions. */
+export async function readPartnerLibraryHtml() {
+  const presentation = JSON.parse(
+    await fs.readFile(path.join(sourceDirectory, 'expert-presentation.json'), 'utf8'),
+  );
+  const avatars = {};
+  for (const id of presentation.avatarIds) {
+    if (!/^[a-z][a-z-]*$/.test(id)) throw new Error('Invalid expert avatar id');
+    const bytes = await fs.readFile(
+      path.join(repositoryRoot, 'apps/desktop/public/expert-avatars', `${id}.jpg`),
+    );
+    avatars[id] = `data:image/jpeg;base64,${bytes.toString('base64')}`;
+  }
+  const payload = JSON.stringify({ avatars, experts: presentation.experts }).replaceAll(
+    '<',
+    '\\u003c',
+  );
+  const template = await fs.readFile(path.join(sourceDirectory, 'ui', 'index.html'), 'utf8');
+  const marker = '/*__EXPERT_PRESENTATION__*/ { avatars: {}, experts: {} }';
+  if (!template.includes(marker)) throw new Error('Expert presentation marker missing');
+  return Buffer.from(template.replace(marker, () => payload));
+}
+
 /** Build an independent UI-only archive, never bundle its page into the application renderer. */
 export async function buildPartnerExtension({
   outDir = path.join(repositoryRoot, 'out', 'extensions'),
 } = {}) {
-  const html = await fs.readFile(path.join(sourceDirectory, 'ui', 'index.html'));
+  const html = await readPartnerLibraryHtml();
   if (html.length > SPACE_EXTENSION_MAX_HTML_BYTES)
     throw new Error('Partner library UI exceeds archive size limit');
   const source = JSON.parse(await fs.readFile(path.join(sourceDirectory, 'manifest.json'), 'utf8'));

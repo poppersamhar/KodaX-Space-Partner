@@ -2,7 +2,7 @@
 // Composer footer: chips, textarea, attachments, mode controls, and send/stop.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUp, FileOutput, FileText, Folder, Plus, X } from 'lucide-react';
+import { ArrowUp, FileText, Folder, Plus, X } from 'lucide-react';
 import {
   MAX_SOURCE_IMAGE_BYTES,
   type ChannelInput,
@@ -92,7 +92,7 @@ import {
 } from '../features/partner/partnerWorkbench.js';
 import { usePartnerExpert } from '../features/extensions/PartnerExpertProvider.js';
 import { PartnerExpertChip } from '../features/extensions/PartnerExpertChip.js';
-import { PartnerExpertCapabilityBar } from '../features/extensions/PartnerExpertCapabilityBar.js';
+import { PartnerCapabilityBar } from '../features/extensions/PartnerCapabilityBar.js';
 import { PartnerExpertMenuContent } from '../features/extensions/PartnerExpertMenuContent.js';
 import type { PartnerExpertDraftCapture } from '../features/extensions/partnerExpertBinding.js';
 import { usePartnerConnectors } from '../features/extensions/PartnerConnectorProvider.js';
@@ -108,28 +108,13 @@ import {
   type InsertPartnerSkillDraftDetail,
 } from '../features/partner/partnerSkillDraft.js';
 import { startNewConversation } from '../store/newConversation.js';
-import { applyPartnerDeliveryInstruction } from '../features/partner/partnerSceneTemplates.js';
 
 const SLASH_ARGS_MAX = 20;
 
 const EMPTY_INPUT_HISTORY: readonly string[] = [];
 
 type QueueMode = 'interrupt' | 'after-turn';
-type PartnerDeliveryFormat = 'auto' | 'docx' | 'pdf' | 'pptx' | 'xlsx' | 'file-md' | 'file-txt';
 type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
-
-const PARTNER_DELIVERY_FORMATS: readonly {
-  readonly id: PartnerDeliveryFormat;
-  readonly labelKey: MessageKey;
-}[] = [
-  { id: 'auto', labelKey: 'partner.workbench.output.auto' },
-  { id: 'docx', labelKey: 'partner.workbench.output.docx' },
-  { id: 'pdf', labelKey: 'partner.workbench.output.pdf' },
-  { id: 'pptx', labelKey: 'partner.workbench.output.pptx' },
-  { id: 'xlsx', labelKey: 'partner.workbench.output.xlsx' },
-  { id: 'file-md', labelKey: 'partner.workbench.output.fileMd' },
-  { id: 'file-txt', labelKey: 'partner.workbench.output.fileTxt' },
-];
 
 function queuedToastText(queueMode: QueueMode | undefined, t: Translate): string {
   return queueMode === 'after-turn' ? t('bottom.queuedAfterTurn') : t('bottom.queuedNextSafePoint');
@@ -589,13 +574,6 @@ export function BottomBar(): JSX.Element {
   if (attachmentGateRef.current === null) {
     attachmentGateRef.current = createPendingAttachmentGate(setIsAttaching);
   }
-  const [partnerDeliveryFormat, setPartnerDeliveryFormat] = useState<PartnerDeliveryFormat>('auto');
-  const [partnerDeliveryInstruction, setPartnerDeliveryInstruction] = useState<string | null>(null);
-  const partnerDraftScopeRef = useRef({
-    projectPath: currentProjectPath,
-    sessionId: currentSessionId,
-    surface: currentSurface,
-  });
   const handleSendRef = useRef<
     ((queueMode?: QueueMode, promptOverride?: string) => Promise<void>) | null
   >(null);
@@ -708,24 +686,6 @@ export function BottomBar(): JSX.Element {
     return () => window.removeEventListener(INSERT_PARTNER_SKILL_DRAFT_EVENT, onInsertSkillDraft);
   }, [currentSurface, insertAtCaret]);
 
-  useEffect(() => {
-    const previous = partnerDraftScopeRef.current;
-    const isLazyPartnerSessionCreation =
-      previous.surface === 'partner' &&
-      currentSurface === 'partner' &&
-      previous.projectPath === currentProjectPath &&
-      previous.sessionId === null &&
-      currentSessionId !== null;
-    partnerDraftScopeRef.current = {
-      projectPath: currentProjectPath,
-      sessionId: currentSessionId,
-      surface: currentSurface,
-    };
-    if (!isLazyPartnerSessionCreation) {
-      setPartnerDeliveryFormat('auto');
-      setPartnerDeliveryInstruction(null);
-    }
-  }, [currentProjectPath, currentSessionId, currentSurface]);
 
   // and focus it (caret at end). Callers may also request an immediate submit
   // when they are launching a structured task through the normal composer path.
@@ -2340,10 +2300,6 @@ export function BottomBar(): JSX.Element {
         }
         settleSendOperationMessage(sid, sendOperation.operationId);
         settleRetainedSendOperation('accepted');
-        if (currentSurface === 'partner') {
-          setPartnerDeliveryFormat('auto');
-          setPartnerDeliveryInstruction(null);
-        }
       };
 
       const result = await invokeComposerIpc('session.send', sendPayload, {
@@ -2548,29 +2504,6 @@ export function BottomBar(): JSX.Element {
         ? t('bottom.placeholder.withSession')
         : t('bottom.placeholder.newSession');
 
-  function choosePartnerDeliveryFormat(nextFormat: PartnerDeliveryFormat): void {
-    const option = PARTNER_DELIVERY_FORMATS.find((item) => item.id === nextFormat);
-    const nextInstruction =
-      nextFormat === 'auto' || option === undefined
-        ? null
-        : t('partner.deliveryFormat.instruction', { format: t(option.labelKey) });
-    const result = applyPartnerDeliveryInstruction({
-      currentDraft: promptRef.current,
-      previousInstruction: partnerDeliveryInstruction,
-      nextInstruction,
-    });
-    setPartnerDeliveryFormat(nextFormat);
-    setPartnerDeliveryInstruction(result.instruction);
-    setPrompt(result.draft);
-    requestAnimationFrame(() => {
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      textarea.focus();
-      textarea.setSelectionRange(result.draft.length, result.draft.length);
-      setCaret(result.draft.length);
-    });
-  }
-
   return (
     <div
       className="ix-zone px-3 pt-1 pb-3 flex-shrink-0 space-y-1"
@@ -2586,6 +2519,8 @@ export function BottomBar(): JSX.Element {
       <RetryBanner />
 
       <AskUserDockBar />
+
+      {currentSurface === 'partner' && <PartnerCapabilityBar onInsertDraft={insertAtCaret} />}
 
       <div className="relative">
         {mascotMode === 'legacy' && (
@@ -2619,9 +2554,6 @@ export function BottomBar(): JSX.Element {
             {currentSurface === 'partner' && <PartnerConnectorChips />}
             {currentSurface === 'partner' && <PartnerExpertChip running={isStreaming} />}
           </div>
-          {currentSurface === 'partner' && (
-            <PartnerExpertCapabilityBar onInsertDraft={insertAtCaret} />
-          )}
           {(pendingImages.length > 0 || pendingFileRefs.length > 0 || imageErr) && (
             <div className="space-y-1">
               {pendingImages.length > 0 && (
@@ -2871,34 +2803,6 @@ export function BottomBar(): JSX.Element {
               </div>
               {currentSurface !== 'partner' && <AgentPicker insertAtCaret={insertAtCaret} />}
               <ModeSelector />
-              {currentSurface === 'partner' && (
-                <label className="partner-delivery-selector relative inline-flex h-7 items-center gap-1 rounded-md border border-border-default bg-surface px-1.5 text-[11px] text-fg-muted transition-[width,padding]">
-                  <FileOutput
-                    className="partner-delivery-selector__icon hidden h-3.5 w-3.5 shrink-0"
-                    strokeWidth={1.8}
-                    aria-hidden
-                  />
-                  <span className="partner-delivery-selector__label">
-                    {t('partner.deliveryFormat.label')}
-                  </span>
-                  <select
-                    value={partnerDeliveryFormat}
-                    onChange={(event) =>
-                      choosePartnerDeliveryFormat(
-                        event.currentTarget.value as PartnerDeliveryFormat,
-                      )
-                    }
-                    className="partner-delivery-selector__select max-w-24 bg-transparent text-fg-secondary outline-none"
-                    aria-label={t('partner.deliveryFormat.label')}
-                  >
-                    {PARTNER_DELIVERY_FORMATS.map((option) => (
-                      <option key={option.id} value={option.id}>
-                        {t(option.labelKey)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
               {currentSurface !== 'partner' && <AgentModeSelector />}
             </div>
             <div

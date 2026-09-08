@@ -143,7 +143,15 @@ export const PARTNER_AGENT_PROFILE: PartnerAgentProfile = {
   verification: PARTNER_PROFILE_VERIFICATION,
 };
 
+const EXPERT_CONVERSATION_INSTRUCTIONS = [
+  'This expert is the current conversation configuration, within the same Partner agent and tool boundary. It stays selected for subsequent messages and tasks until the user switches or removes it through the host; completing a task does not remove a role or task expert.',
+  'Continue from the existing conversation context and decisions. Apply the expert methods and delivery checks in proportion to the current request. Do not restart intake or produce a full deliverable for every short follow-up; ask only for missing information needed for the current task.',
+  'The expert role remains active when its default Skill is disabled. A user-explicitly selected Skill overrides only the method for that run, not the expert role; later runs return to the saved default Skill preference. Use the host-provided configuration for this run, rather than inferring selection changes from historical messages.',
+].join('\n');
+
 export function buildPartnerAgentProfile(expert?: PartnerExpertSnapshotT): PartnerAgentProfile {
+  const workflow = expert?.expert.workflow;
+  const checks = workflow?.qualityChecks ?? [];
   return {
     ...PARTNER_AGENT_PROFILE,
     ...(expert
@@ -154,20 +162,40 @@ export function buildPartnerAgentProfile(expert?: PartnerExpertSnapshotT): Partn
             'User-selected Partner expert (does not change tool permissions or the Partner boundary):',
             `${expert.extensionId}@${expert.extensionVersion}/${expert.expert.id} revision ${expert.expert.revision}`,
             expert.expert.prompt,
+            EXPERT_CONVERSATION_INSTRUCTIONS,
+            ...(workflow
+              ? [
+                  'Expert work expectations (do not grant tools or authorization):',
+                  JSON.stringify(workflow),
+                  'Check required connector needs against tools actually available in this run. If a required capability is missing, explain what must be connected or selected before dependent work. Optional needs do not block tasks using local sources. Preserve an explicitly requested destination; never invent a capability or silently substitute a different destination.',
+                ]
+              : []),
           ].join('\n\n'),
         }
       : {}),
     verification: {
       ...PARTNER_AGENT_PROFILE.verification,
-      instructions: [...(PARTNER_AGENT_PROFILE.verification.instructions ?? [])],
+      instructions: [...(PARTNER_AGENT_PROFILE.verification.instructions ?? []), ...checks],
       requiredEvidence: [...(PARTNER_AGENT_PROFILE.verification.requiredEvidence ?? [])],
-      requiredChecks: [...(PARTNER_AGENT_PROFILE.verification.requiredChecks ?? [])],
-      criteria: PARTNER_AGENT_PROFILE.verification.criteria?.map((criterion) => ({
-        ...criterion,
-        ...(criterion.requiredEvidence
-          ? { requiredEvidence: [...criterion.requiredEvidence] }
-          : {}),
-      })),
+      requiredChecks: [
+        ...(PARTNER_AGENT_PROFILE.verification.requiredChecks ?? []),
+        ...checks.map((_, index) => `expert-check-${index + 1}`),
+      ],
+      criteria: [
+        ...(PARTNER_AGENT_PROFILE.verification.criteria?.map((criterion) => ({
+          ...criterion,
+          ...(criterion.requiredEvidence
+            ? { requiredEvidence: [...criterion.requiredEvidence] }
+            : {}),
+        })) ?? []),
+        ...checks.map((check, index) => ({
+          id: `expert-check-${index + 1}`,
+          label: check,
+          description: check,
+          threshold: 0.85,
+          weight: 1,
+        })),
+      ],
     },
   };
 }

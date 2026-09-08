@@ -30,6 +30,10 @@ export const partnerConnectorAdapterSchema = z.enum([
   'atlassian-mcp',
   'slack-mcp',
   'zoom-mcp',
+  'github-api',
+  'tencent-docs-mcp',
+  'netease-mail-imap',
+  'qq-mail-imap',
 ]);
 export type PartnerConnectorAdapterT = z.infer<typeof partnerConnectorAdapterSchema>;
 export const wecomResourceSchema = z
@@ -91,11 +95,50 @@ export const atlassianResourceSchema: z.ZodType<string> = z.union([
 export const slackResourceSchema = z
   .string()
   .max(512)
-  .regex(/^slack:\/\/channel\/[A-Z][A-Z0-9]{8,15}\/message\/[0-9]{10}\.[0-9]{6}$/);
+  .regex(
+    /^(?:slack:\/\/channel\/[A-Z][A-Z0-9]{8,15}\/message\/[0-9]{10}\.[0-9]{6}|https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.slack\.com\/archives\/[A-Z][A-Z0-9]{8,15}\/p[0-9]{16})$/,
+  );
 export const zoomResourceSchema = z
   .string()
   .max(512)
-  .regex(/^zoom:\/\/meeting\/[0-9]{9,11}$/);
+  .regex(
+    /^(?:zoom:\/\/meeting\/|https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)?zoom\.us\/j\/)[0-9]{9,11}$/,
+  );
+export const githubResourceSchema = z
+  .string()
+  .max(256)
+  .regex(
+    /^https:\/\/github\.com\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/[A-Za-z0-9_.-]{1,100}(?:\/(?:issues|pull)\/[1-9][0-9]{0,9})?$/,
+  )
+  .refine((value) => {
+    const name = value.split('/')[4];
+    return name !== '.' && name !== '..';
+  });
+const imapIdentifier = '[1-9][0-9]{0,9}';
+const mailReference = (provider: string) =>
+  z
+    .string()
+    .max(128)
+    .regex(new RegExp(`^mail://${provider}/inbox/${imapIdentifier}/${imapIdentifier}$`))
+    .refine((value) =>
+      value
+        .split('/')
+        .slice(-2)
+        .every((part) => Number(part) <= 4_294_967_295),
+    );
+export const neteaseMailResourceSchema = mailReference('netease');
+export const qqMailResourceSchema = mailReference('qq');
+export const isPartnerMailAdapter = (adapter: PartnerConnectorAdapterT): boolean =>
+  adapter === 'netease-mail-imap' || adapter === 'qq-mail-imap';
+export function partnerMailboxAllowsResource(
+  adapter: PartnerConnectorAdapterT,
+  mailbox: 'inbox' | undefined,
+  ref: string,
+): boolean {
+  return (
+    mailbox === 'inbox' && isPartnerMailAdapter(adapter) && isPartnerConnectorResource(adapter, ref)
+  );
+}
 export const partnerReadResourceSchema: z.ZodType<string> = z.union([
   feishuDocumentUrlSchema,
   wecomResourceSchema,
@@ -106,6 +149,10 @@ export const partnerReadResourceSchema: z.ZodType<string> = z.union([
   atlassianResourceSchema,
   slackResourceSchema,
   zoomResourceSchema,
+  githubResourceSchema,
+  tencentDocumentUrlSchema,
+  neteaseMailResourceSchema,
+  qqMailResourceSchema,
 ]);
 const resourceSchemas: Record<PartnerConnectorAdapterT, z.ZodType<string>> = {
   'feishu-cli': feishuDocumentUrlSchema,
@@ -117,6 +164,10 @@ const resourceSchemas: Record<PartnerConnectorAdapterT, z.ZodType<string>> = {
   'atlassian-mcp': atlassianResourceSchema,
   'slack-mcp': slackResourceSchema,
   'zoom-mcp': zoomResourceSchema,
+  'github-api': githubResourceSchema,
+  'tencent-docs-mcp': tencentDocumentUrlSchema,
+  'netease-mail-imap': neteaseMailResourceSchema,
+  'qq-mail-imap': qqMailResourceSchema,
 };
 export function isPartnerConnectorResource(
   adapter: PartnerConnectorAdapterT,
@@ -131,6 +182,7 @@ export function partnerConnectorResourceKey(
   value: string,
 ): string | undefined {
   if (!isPartnerConnectorResource(adapter, value)) return undefined;
+  if (isPartnerMailAdapter(adapter)) return value.split('/').slice(3).join('/');
   if (adapter === 'notion-mcp') return /^notion:\/\/page\/([0-9a-f]{32})$/u.exec(value)?.[1];
   if (adapter === 'airtable-mcp') {
     const match =
@@ -155,9 +207,13 @@ export function partnerConnectorResourceKey(
   }
   if (adapter === 'slack-mcp') {
     const match = /^slack:\/\/channel\/([^/]+)\/message\/([^/]+)$/u.exec(value);
-    return match ? `${match[1]}/${match[2]}` : undefined;
+    if (match) return `${match[1]}/${match[2]}`;
+    const parts = new URL(value).pathname.split('/');
+    const timestamp = parts[3]!.slice(1);
+    return `${parts[2]}/${timestamp.slice(0, 10)}.${timestamp.slice(10)}`;
   }
-  if (adapter === 'zoom-mcp') return /^zoom:\/\/meeting\/([0-9]{9,11})$/u.exec(value)?.[1];
+  if (adapter === 'zoom-mcp') return value.split('/').at(-1);
+  if (adapter === 'github-api') return new URL(value).pathname.slice(1);
   return value.split('/').at(-1);
 }
 
@@ -185,6 +241,8 @@ const selectionObject = z
         z.object({ url: partnerReadResourceSchema, access: z.enum(['read', 'append']) }).strict(),
       )
       .max(32),
+    mailbox: z.literal('inbox').optional(),
+    allowCreateDocument: z.boolean().optional(),
     createFolderUrl: feishuFolderUrlSchema.optional(),
     createBaseFolderUrl: feishuFolderUrlSchema.optional(),
   })
@@ -199,6 +257,8 @@ const uniqueDocuments = (value: z.infer<typeof selectionObject>): boolean => {
 const validProviderScope = (value: z.infer<typeof selectionObject>): boolean => {
   const adapter = value.adapter ?? 'feishu-cli';
   return (
+    (value.mailbox === undefined || isPartnerMailAdapter(adapter)) &&
+    (value.allowCreateDocument === undefined || adapter === 'tencent-docs-mcp') &&
     value.documents.every((item) => isPartnerConnectorResource(adapter, item.url)) &&
     (adapter === 'feishu-cli' ||
       (!value.createFolderUrl &&
@@ -293,6 +353,65 @@ const remoteText = z
       new TextEncoder().encode(text).length <= MAX_PARTNER_REMOTE_TEXT_BYTES,
     'Remote text exceeds the UTF-8 limit or contains NUL',
   );
+export const partnerMailSearchQuerySchema = z
+  .object({
+    subject: z.string().trim().min(1).max(200).optional(),
+    from: z.string().trim().min(1).max(200).optional(),
+    since: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    before: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    unreadOnly: z.boolean().optional(),
+  })
+  .strict();
+export const partnerConnectorSearchInputSchema = z
+  .object({
+    connectionId: z.string().uuid(),
+    query: partnerMailSearchQuerySchema,
+    cursor: z.string().min(1).max(256).optional(),
+    limit: z.number().int().min(1).max(25).optional(),
+  })
+  .strict();
+export const partnerConnectorSearchResultSchema = z
+  .object({
+    messages: z
+      .array(
+        z
+          .object({
+            reference: z.union([neteaseMailResourceSchema, qqMailResourceSchema]),
+            subject: z.string().max(280),
+            from: z.string().max(1000),
+            to: z.string().max(2000),
+            date: z.string().datetime().optional(),
+            size: z.number().int().nonnegative(),
+          })
+          .strict(),
+      )
+      .max(25),
+    nextCursor: z.string().max(256).optional(),
+    uidValidity: z.string().regex(/^[1-9][0-9]{0,9}$/),
+    scannedUidRange: z
+      .object({ from: z.number().int().nonnegative(), to: z.number().int().nonnegative() })
+      .strict(),
+    hasMore: z.boolean(),
+  })
+  .strict();
+export type PartnerConnectorSearchInputT = z.infer<typeof partnerConnectorSearchInputSchema>;
+export type PartnerConnectorSearchResultT = z.infer<typeof partnerConnectorSearchResultSchema>;
+export const partnerConnectorDocumentCreateInputSchema = z
+  .object({
+    connectionId: z.string().uuid(),
+    title: z.string().trim().min(1).max(280),
+    content: remoteText.refine((value) => value.trim().length > 0, '文档内容不能为空'),
+  })
+  .strict();
+export type PartnerConnectorDocumentCreateInputT = z.infer<
+  typeof partnerConnectorDocumentCreateInputSchema
+>;
 export const partnerFeishuDocumentCreateInputSchema = z
   .object({
     folderUrl: feishuFolderUrlSchema.optional(),
@@ -724,7 +843,7 @@ export type PartnerNativeDocumentTaskSummaryT = z.infer<
 export const partnerRemoteSourceSchema = z
   .object({
     ...owner,
-    documentId: z.string().min(1).max(128),
+    documentId: z.string().min(1).max(256),
     url: partnerReadResourceSchema,
     title: z.string().max(280),
     revision: z.number().int().nonnegative(),
@@ -820,6 +939,12 @@ export const connectorInvokeChannels = {
     direction: 'invoke',
     input: z.object({ extensionId: identity }).strict(),
     output: z.object({ connectors: z.array(spaceConnectorDefinitionSchema).max(64) }).strict(),
+  },
+  'partner.connectors.search': {
+    name: 'partner.connectors.search',
+    direction: 'invoke',
+    input: partnerConnectorSearchInputSchema.extend({ sessionId, projectRoot }),
+    output: partnerConnectorSearchResultSchema,
   },
   'partner.connectors.inspect': {
     name: 'partner.connectors.inspect',

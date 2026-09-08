@@ -125,19 +125,16 @@ test('Airtable identity comes from the fixed official whoami endpoint without ex
   );
 });
 
-test('bundle registers live remote adapters and truthful configuration-required adapters', async () => {
+test('bundle registers live remote adapters and credential-backed API adapters', async () => {
   const credentials = new MemoryCredentials();
   const bundle = createOfficialRemoteConnectorBundle({
     root: '/private/kodax-space/partner-connectors',
     credentials,
   });
-  assert.deepEqual(Object.keys(bundle), [
-    'notion-mcp',
-    'airtable-mcp',
-    'atlassian-mcp',
-    'slack-mcp',
-    'zoom-mcp',
-  ]);
+  assert.deepEqual(
+    Object.keys(bundle).sort(),
+    ['notion-mcp', 'airtable-mcp', 'atlassian-mcp', 'slack-mcp', 'zoom-mcp', 'github-api'].sort(),
+  );
   assert.equal(
     bundle['notion-mcp'].acceptsResource('notion://page/0123456789abcdef0123456789abcdef'),
     true,
@@ -146,8 +143,8 @@ test('bundle registers live remote adapters and truthful configuration-required 
     bundle['airtable-mcp'].acceptsResource('airtable://base/appAbCdEfGhIjKl/table/tblAbCdEfGhIjKl'),
     true,
   );
-  assert.match((await bundle['slack-mcp'].inspect('profile')).reason ?? '', /Slack App/u);
-  assert.match((await bundle['zoom-mcp'].inspect('profile')).reason ?? '', /Zoom General App/u);
+  assert.equal((await bundle['slack-mcp'].inspect('profile')).identity, undefined);
+  assert.equal((await bundle['zoom-mcp'].inspect('profile')).identity, undefined);
   await credentials.set('partner-connector-oauth:slack:profile', 'legacy-slack-secret');
   await credentials.set('partner-connector-oauth:zoom:profile', 'legacy-zoom-secret');
   await bundle['slack-mcp'].disconnect?.('profile');
@@ -175,8 +172,8 @@ test('configuration-required cleanup fails closed when a legacy credential remai
       persisted.set(key, value);
     },
     delete: async (key) => {
-      attempts++;
-      if (attempts > 1) persisted.delete(key);
+      if (key === credentialKey) attempts++;
+      if (key !== credentialKey || attempts > 1) persisted.delete(key);
     },
   });
   const connector = createOfficialRemoteConnectorBundle({

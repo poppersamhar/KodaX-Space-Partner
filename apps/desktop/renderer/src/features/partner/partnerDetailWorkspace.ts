@@ -7,6 +7,7 @@ import type {
   SpaceConnectorDefinitionT,
 } from '@kodax-space/space-ipc-schema';
 import { partnerDeliveryPreviewVersion } from '../../lib/generatedResourceRef.js';
+import { normalizePartnerBrowserUrl } from './partnerBrowserNavigation.js';
 
 export type PartnerDetailTabKind =
   | 'materials'
@@ -16,6 +17,8 @@ export type PartnerDetailTabKind =
   | 'file'
   | 'artifact'
   | 'baseTask'
+  | 'remoteProposal'
+  | 'remoteSource'
   | 'browser'
   | 'expert'
   | 'skill'
@@ -28,7 +31,10 @@ export interface PartnerDetailTab {
   readonly snapshot?: TransientArtifactSnapshot;
   readonly artifactId?: string;
   readonly baseTask?: PartnerFeishuBaseCreateTaskT;
+  readonly proposalId?: string;
+  readonly sourceId?: string;
   readonly browserUrl?: string;
+  readonly browserNavigationRevision?: number;
   readonly resourceKey?: string;
   readonly expert?: PartnerExpertSnapshotT;
   readonly skill?: SkillMeta;
@@ -55,6 +61,8 @@ export type PartnerDetailOpenTarget =
       readonly snapshot?: TransientArtifactSnapshot;
     }
   | { readonly kind: 'baseTask'; readonly task: PartnerFeishuBaseCreateTaskT }
+  | { readonly kind: 'remoteProposal'; readonly proposalId: string; readonly title: string }
+  | { readonly kind: 'remoteSource'; readonly sourceId: string; readonly title: string }
   | {
       readonly kind: 'browser';
       readonly initialUrl?: string;
@@ -146,11 +154,15 @@ export function createPartnerDetailTab(
             ? `partner-detail-skill-${target.skill.name}`
             : target.kind === 'artifact'
               ? `partner-detail-artifact-${target.artifactId}`
-              : target.kind === 'baseTask'
-                ? `partner-detail-base-task-${target.task.id}`
-                : target.kind === 'browser' && target.resourceKey
-                  ? `partner-detail-${target.resourceKey}`
-                  : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
+              : target.kind === 'remoteSource'
+                ? `partner-detail-remote-source-${target.sourceId}`
+                : target.kind === 'remoteProposal'
+                  ? `partner-detail-remote-proposal-${target.proposalId}`
+                  : target.kind === 'baseTask'
+                    ? `partner-detail-base-task-${target.task.id}`
+                    : target.kind === 'browser' && target.resourceKey
+                      ? `partner-detail-${target.resourceKey}`
+                      : (staticId ?? `partner-detail-${target.kind}-${uniqueId}`),
     kind: target.kind,
     title:
       target.kind === 'connector'
@@ -161,18 +173,22 @@ export function createPartnerDetailTab(
             ? target.skill.name
             : target.kind === 'artifact'
               ? (target.title ?? target.snapshot?.title ?? title)
-              : target.kind === 'baseTask'
-                ? target.task.baseName
-                : target.kind === 'browser' && target.title
-                  ? target.title
-                  : target.kind === 'file'
-                    ? target.snapshot.title
-                    : title,
+              : target.kind === 'remoteProposal' || target.kind === 'remoteSource'
+                ? target.title
+                : target.kind === 'baseTask'
+                  ? target.task.baseName
+                  : target.kind === 'browser' && target.title
+                    ? target.title
+                    : target.kind === 'file'
+                      ? target.snapshot.title
+                      : title,
     ...(target.kind === 'file' ? { snapshot: target.snapshot } : {}),
     ...(target.kind === 'artifact'
       ? { artifactId: target.artifactId, snapshot: target.snapshot }
       : {}),
     ...(target.kind === 'baseTask' ? { baseTask: target.task } : {}),
+    ...(target.kind === 'remoteProposal' ? { proposalId: target.proposalId } : {}),
+    ...(target.kind === 'remoteSource' ? { sourceId: target.sourceId } : {}),
     ...(target.kind === 'browser'
       ? { browserUrl: target.initialUrl, resourceKey: target.resourceKey }
       : {}),
@@ -214,12 +230,34 @@ export function partnerDetailWorkspaceContextKey(context: PartnerDetailWorkspace
   return JSON.stringify([context.projectRoot, context.sessionId]);
 }
 
+export function samePartnerBrowserDestination(
+  left: PartnerDetailTab,
+  right: PartnerDetailTab,
+): boolean {
+  if (left.kind !== 'browser' || right.kind !== 'browser' || !left.browserUrl || !right.browserUrl)
+    return false;
+  const leftUrl = normalizePartnerBrowserUrl(left.browserUrl);
+  const rightUrl = normalizePartnerBrowserUrl(right.browserUrl);
+  return leftUrl.ok && rightUrl.ok && leftUrl.url === rightUrl.url;
+}
+
 export function reducePartnerDetailWorkspace(
   state: PartnerDetailWorkspaceState,
   action: PartnerDetailWorkspaceAction,
 ): PartnerDetailWorkspaceState {
   switch (action.type) {
     case 'open': {
+      const browser = state.tabs.find((tab) => samePartnerBrowserDestination(tab, action.tab));
+      if (browser) {
+        return {
+          tabs: state.tabs.map((tab) =>
+            tab.id === browser.id
+              ? { ...tab, browserNavigationRevision: (tab.browserNavigationRevision ?? 0) + 1 }
+              : tab,
+          ),
+          activeId: browser.id,
+        };
+      }
       const existingIndex = state.tabs.findIndex((tab) => tab.id === action.tab.id);
       const tabs =
         existingIndex === -1

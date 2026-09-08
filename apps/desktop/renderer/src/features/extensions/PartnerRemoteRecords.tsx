@@ -26,9 +26,11 @@ const remoteTargetLabel = (target: string, personalSpaceLabel: string): string =
 export function PartnerRemoteRecords({
   kind,
   onOpenDetail,
+  proposalId,
 }: {
   readonly kind: Kind;
   readonly onOpenDetail?: (target: PartnerDetailOpenTarget) => void;
+  readonly proposalId?: string;
 }): JSX.Element | null {
   const { t } = useI18n();
   const projectRoot = useAppStore((state) => state.currentProjectPath);
@@ -46,7 +48,39 @@ export function PartnerRemoteRecords({
     return () => {
       epoch.current += 1;
     };
-  }, [projectRoot, sessionId, kind]);
+  }, [projectRoot, sessionId, kind, proposalId]);
+  useEffect(() => {
+    if (kind !== 'pendingReview' || !proposalId || !projectRoot || !sessionId) return;
+    let active = true;
+    const isCurrent = () =>
+      active &&
+      useSurfaceStore.getState().currentSurface === 'partner' &&
+      useAppStore.getState().currentProjectPath === projectRoot &&
+      useAppStore.getState().currentSessionId === sessionId;
+    setBusy(true);
+    void invokeExtensionHost('partner.connectors.proposals.get', {
+      projectRoot,
+      sessionId,
+      id: proposalId,
+    })
+      .then(({ proposal }) => {
+        if (!isCurrent()) return;
+        if (!proposal || proposal.operation !== 'append') {
+          setError(t('connectors.unavailable'));
+          return;
+        }
+        setDetail(proposal);
+      })
+      .catch((reason: unknown) => {
+        if (isCurrent()) setError(reason instanceof Error ? reason.message : String(reason));
+      })
+      .finally(() => {
+        if (isCurrent()) setBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [projectRoot, sessionId, kind, proposalId, t]);
   const remoteEntries =
     kind === 'sources'
       ? records.sources
@@ -54,7 +88,7 @@ export function PartnerRemoteRecords({
         ? records.proposals.filter((proposal) => proposal.operation === 'append')
         : [];
   const resultEntries = kind === 'results' ? collectPartnerRemoteResultEntries(records) : [];
-  if (!remoteEntries.length && !resultEntries.length && !loadError) return null;
+  if (!remoteEntries.length && !resultEntries.length && !loadError && !proposalId) return null;
   const run = async (action: (isActive: () => boolean) => Promise<void>): Promise<void> => {
     if (busy || !projectRoot || !sessionId) return;
     const captured = epoch.current;
@@ -112,8 +146,7 @@ export function PartnerRemoteRecords({
       }
     });
   };
-  const proposal =
-    detail && 'operation' in detail && detail.operation === 'append' ? detail : null;
+  const proposal = detail && 'operation' in detail && detail.operation === 'append' ? detail : null;
   return (
     <section
       className="shrink-0 space-y-3 border-b border-border-default p-3 text-xs"
@@ -128,15 +161,29 @@ export function PartnerRemoteRecords({
               : 'partner.taskCards.artifacts',
         )}
       </h3>
+      {proposalId && (
+        <button
+          type="button"
+          className={buttonClass}
+          disabled={busy}
+          onClick={() => getDetail(proposalId)}
+        >
+          {t('connectors.refresh')}
+        </button>
+      )}
       {(error || loadError) && (
         <p role="alert" className="break-words text-danger">
           {error ?? loadError}
         </p>
       )}
+      {proposalId && busy && !detail && <p role="status">{t('common.loading')}</p>}
       {kind === 'results' ? (
         <div className="max-h-72 space-y-2 overflow-y-auto">
           {resultEntries.map((entry) => (
-            <div key={`${entry.kind}:${entry.id}`} className="rounded-md border border-border-default p-2">
+            <div
+              key={`${entry.kind}:${entry.id}`}
+              className="rounded-md border border-border-default p-2"
+            >
               <p className="break-words font-medium">{entry.title}</p>
               <p className="my-1 break-all text-fg-muted">{entry.url}</p>
               <p className="text-fg-muted">
@@ -153,7 +200,7 @@ export function PartnerRemoteRecords({
             </div>
           ))}
         </div>
-      ) : (
+      ) : !proposalId ? (
         <div className="max-h-44 space-y-2 overflow-y-auto">
           {remoteEntries.map((entry) => (
             <div key={entry.id} className="rounded-md border border-border-default p-2">
@@ -165,14 +212,18 @@ export function PartnerRemoteRecords({
                 type="button"
                 className={`${buttonClass} mt-2`}
                 disabled={busy}
-                onClick={() => getDetail(entry.id)}
+                onClick={() =>
+                  kind === 'sources' && onOpenDetail
+                    ? onOpenDetail({ kind: 'remoteSource', sourceId: entry.id, title: entry.title })
+                    : getDetail(entry.id)
+                }
               >
                 {t('connectors.view')}
               </button>
             </div>
           ))}
         </div>
-      )}
+      ) : null}
       {detail && (
         <div className="space-y-2 rounded-md border border-border-default bg-surface-2 p-3">
           <h4 className="font-medium">{detail.title}</h4>

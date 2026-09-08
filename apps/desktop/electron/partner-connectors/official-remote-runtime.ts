@@ -1,11 +1,12 @@
+import { createSlackConnector } from './slack-api.js';
+import { createZoomConnector } from './zoom-api.js';
+import { createGithubConnector } from './github-api.js';
 import path from 'node:path';
 import { deleteKey, getKey, setKey } from '../providers/keychain.js';
 import {
   createAirtableConnector,
   createAtlassianConnector,
   createNotionConnector,
-  createSlackConnector,
-  createZoomConnector,
   type RemoteMcpAuthPort,
 } from './official-remote-connectors.js';
 import {
@@ -294,7 +295,7 @@ export async function resolveAirtableSubject(
 export function createOfficialRemoteConnectorBundle(
   options: OfficialRemoteConnectorBundleOptions,
 ): Record<
-  'notion-mcp' | 'airtable-mcp' | 'atlassian-mcp' | 'slack-mcp' | 'zoom-mcp',
+  'notion-mcp' | 'airtable-mcp' | 'atlassian-mcp' | 'slack-mcp' | 'zoom-mcp' | 'github-api',
   ReadConnector
 > {
   if (!path.isAbsolute(options.root)) throw new Error('connector root must be absolute');
@@ -344,7 +345,16 @@ export function createOfficialRemoteConnectorBundle(
           ...(options.managerFactory ? { managerFactory: options.managerFactory } : {}),
         }),
     }),
-    'slack-mcp': createSlackConnector(legacyCredentialCleanup('slack', credentials)),
-    'zoom-mcp': createZoomConnector(legacyCredentialCleanup('zoom', credentials)),
+    'slack-mcp': createSlackConnector({
+      credentials,
+      fetchFn,
+      cleanupLegacy: legacyCredentialCleanup('slack', credentials),
+    }),
+    'github-api': createGithubConnector({ credentials, fetchFn }),
+    'zoom-mcp': createZoomConnector({
+      credentials,
+      fetchFn,
+      cleanupLegacy: legacyCredentialCleanup('zoom', credentials),
+    }),
   };
 }

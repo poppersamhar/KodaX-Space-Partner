@@ -4,8 +4,6 @@ import {
   createAirtableConnector,
   createAtlassianConnector,
   createNotionConnector,
-  createSlackConnector,
-  createZoomConnector,
   type RemoteMcpAuthPort,
   type RemoteMcpClientPort,
 } from './official-remote-connectors.js';
@@ -260,43 +258,4 @@ test('remote provider results stay bounded and identity changes fail before busi
     { code: 'identity_changed' },
   );
   assert.deepEqual(calls, ['notion-fetch', 'notion-fetch']);
-});
-
-test('Slack and Zoom fail closed with the exact product app-registration prerequisite', async () => {
-  const cleaned: string[] = [];
-  for (const [connector, resource, prerequisite] of [
-    [
-      createSlackConnector(async (selectedProfile) => {
-        cleaned.push(`slack:${selectedProfile}`);
-      }),
-      'slack://channel/C0123456789/message/1725190200.123456',
-      /Slack App/u,
-    ],
-    [
-      createZoomConnector(async (selectedProfile) => {
-        cleaned.push(`zoom:${selectedProfile}`);
-      }),
-      'zoom://meeting/12345678901',
-      /Zoom General App/u,
-    ],
-  ] as const) {
-    assert.equal(connector.acceptsResource(resource), true);
-    assert.match((await connector.inspect(profile)).reason ?? '', prerequisite);
-    await assert.rejects(
-      connector.run({
-        profile,
-        installCli: false,
-        signal: new AbortController().signal,
-        onProgress: () => undefined,
-      }),
-      (error: unknown) => {
-        assert.ok(error instanceof ReadConnectorError);
-        assert.equal(error.code, 'configuration_required');
-        assert.match(error.message, prerequisite);
-        return true;
-      },
-    );
-    await connector.disconnect(profile);
-  }
-  assert.deepEqual(cleaned, [`slack:${profile}`, `zoom:${profile}`]);
 });

@@ -76,8 +76,6 @@ const ATLASSIAN_JIRA_URL =
   /^https:\/\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.atlassian\.net)\/browse\/([A-Z][A-Z0-9]{0,31}-[1-9][0-9]{0,15})$/u;
 const ATLASSIAN_CONFLUENCE_URL =
   /^https:\/\/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.atlassian\.net)\/wiki\/spaces\/[A-Za-z0-9_-]{1,128}\/pages\/([1-9][0-9]{0,31})(?:\/[A-Za-z0-9%._~-]{1,200})?$/u;
-const SLACK_MESSAGE = /^slack:\/\/channel\/([A-Z][A-Z0-9]{8,15})\/message\/([0-9]{10}\.[0-9]{6})$/u;
-const ZOOM_MEETING = /^zoom:\/\/meeting\/([0-9]{9,11})$/u;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -435,46 +433,4 @@ export function createAtlassianConnector(
   >,
 ): DisconnectingReadConnector {
   return createRemoteConnector(ATLASSIAN, options);
-}
-
-function configurationRequired(
-  id: 'slack-mcp' | 'zoom-mcp',
-  reason: string,
-  acceptsResource: (value: string) => boolean,
-  cleanupCredential: (profile: string, signal?: AbortSignal) => Promise<void>,
-): DisconnectingReadConnector {
-  const fail = (): never => {
-    throw new ReadConnectorError('configuration_required');
-  };
-  return {
-    id,
-    inspect: async () => ({ installed: true, version: 'configuration-required', reason }),
-    run: async () => fail(),
-    isAuthorizationUrl: (_candidate): _candidate is string => false,
-    acceptsResource,
-    read: async () => fail(),
-    disconnect: cleanupCredential,
-  };
-}
-
-export function createSlackConnector(
-  cleanupCredential: (profile: string, signal?: AbortSignal) => Promise<void>,
-): DisconnectingReadConnector {
-  return configurationRequired(
-    'slack-mcp',
-    '需要 KodaX 自有且已经 Slack Marketplace 发布或工作区内部批准的 Slack App；官方 MCP 不支持动态客户端注册。',
-    (value) => SLACK_MESSAGE.test(value),
-    cleanupCredential,
-  );
-}
-
-export function createZoomConnector(
-  cleanupCredential: (profile: string, signal?: AbortSignal) => Promise<void>,
-): DisconnectingReadConnector {
-  return configurationRequired(
-    'zoom-mcp',
-    '需要 KodaX 自有或用户预先创建并配置回调地址的 Zoom General App；Zoom 官方 MCP 不支持动态客户端注册。',
-    (value) => ZOOM_MEETING.test(value),
-    cleanupCredential,
-  );
 }

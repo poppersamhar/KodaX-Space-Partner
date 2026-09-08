@@ -85,6 +85,61 @@ test('Partner detail launcher keeps existing tabs and clears only the active sel
   assert.equal(state.activeId, null);
 });
 
+test('chat and connector results reuse one normalized browser destination without replacing the existing identity', () => {
+  const result = createPartnerDetailTab(
+    {
+      kind: 'browser',
+      initialUrl: 'https://example.feishu.cn/docx/NewDocument',
+      resourceKey: 'native-document-6:feishu:NewDocument',
+      title: 'Created document',
+    },
+    'Browser',
+    1,
+  );
+  const chat = createPartnerDetailTab(
+    {
+      kind: 'browser',
+      initialUrl: 'https://EXAMPLE.feishu.cn:443/docx/NewDocument',
+      resourceKey: 'web-https://example.feishu.cn/docx/NewDocument',
+    },
+    'Browser',
+    2,
+  );
+  for (const [first, second] of [
+    [result, chat],
+    [chat, result],
+  ] as const) {
+    let state = reducePartnerDetailWorkspace(createPartnerDetailWorkspaceState(), {
+      type: 'open',
+      tab: first,
+    });
+    state = reducePartnerDetailWorkspace(state, { type: 'open', tab: materialsTab });
+    state = reducePartnerDetailWorkspace(state, { type: 'open', tab: second });
+    assert.deepEqual(state.tabs, [{ ...first, browserNavigationRevision: 1 }, materialsTab]);
+    assert.equal(state.activeId, first.id);
+  }
+});
+
+test('browser reuse leaves distinct historical source snapshots independently addressable', () => {
+  const first = createPartnerDetailTab(
+    { kind: 'remoteSource', sourceId: 'snapshot-a', title: 'Saved document' },
+    'Sources',
+    1,
+  );
+  const second = createPartnerDetailTab(
+    { kind: 'remoteSource', sourceId: 'snapshot-b', title: 'Saved document' },
+    'Sources',
+    2,
+  );
+  let state = reducePartnerDetailWorkspace(createPartnerDetailWorkspaceState(), {
+    type: 'open',
+    tab: first,
+  });
+  state = reducePartnerDetailWorkspace(state, { type: 'open', tab: second });
+  assert.deepEqual(state.tabs, [first, second]);
+  assert.equal(state.activeId, second.id);
+});
+
 test('closing the active tab selects the next tab, then falls back to the previous tab', () => {
   let state = createPartnerDetailWorkspaceState();
   state = reducePartnerDetailWorkspace(state, { type: 'open', tab: materialsTab });

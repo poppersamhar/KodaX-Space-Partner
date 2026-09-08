@@ -4,12 +4,14 @@ import { useI18n } from '../../i18n/I18nProvider.js';
 import { FilesPanel } from '../../shell/popouts/FilesPanel.js';
 import { ArtifactPanel } from './ArtifactPanel.js';
 import { PartnerBrowserPanel } from './PartnerBrowserPanel.js';
+import { PartnerRemoteSourcePanel } from './PartnerRemoteSourcePanel.js';
 import { FileViewer } from '../preview/FileViewer.js';
 import { SourcesPanel } from './SourcesPanel.js';
 import {
   createPartnerDetailTab,
   createPartnerDetailWorkspaceState,
   reducePartnerDetailWorkspace,
+  samePartnerBrowserDestination,
   type PartnerDetailOpenRequest,
   type PartnerDetailOpenTarget,
   type PartnerDetailTabKind,
@@ -18,6 +20,7 @@ import { handleTablistKeyDown } from './tablistKeyboard.js';
 import { PartnerExpertDetails } from '../extensions/PartnerExpertDetails.js';
 import { PartnerConnectorDetails } from '../extensions/PartnerConnectorDetails.js';
 import { usePartnerRemoteRecords } from '../extensions/usePartnerRemoteRecords.js';
+import { PartnerRemoteRecords } from '../extensions/PartnerRemoteRecords.js';
 import { PartnerFeishuBaseTaskPanel } from './PartnerFeishuBaseTaskPanel.js';
 import { PartnerCollaborationPanel } from './PartnerCollaborationPanel.js';
 import { PartnerSkillDetails } from './PartnerSkillDetails.js';
@@ -104,9 +107,15 @@ export function PartnerRightSidebar({
   }, [openRequest, t]);
 
   useEffect(() => {
-    if (!openRequest || !initialTab || state.activeId !== initialTab.id) return;
+    if (!openRequest || !initialTab) return;
+    const currentTab = state.tabs.find((tab) => tab.id === state.activeId);
+    if (
+      !currentTab ||
+      (currentTab.id !== initialTab.id && !samePartnerBrowserDestination(currentTab, initialTab))
+    )
+      return;
     onConsumeOpenRequest?.(openRequest.revision);
-  }, [initialTab, onConsumeOpenRequest, openRequest, state.activeId]);
+  }, [initialTab, onConsumeOpenRequest, openRequest, state.activeId, state.tabs]);
 
   useEffect(() => {
     if (!focusAfterStateChangeRef.current) return;
@@ -165,6 +174,8 @@ export function PartnerRightSidebar({
               tab.kind === 'skill' ||
               tab.kind === 'connector' ||
               tab.kind === 'baseTask' ||
+              tab.kind === 'remoteProposal' ||
+              tab.kind === 'remoteSource' ||
               tab.kind === 'browser'
                 ? tab.title
                 : detailTitle(tab.kind, t);
@@ -233,6 +244,7 @@ export function PartnerRightSidebar({
                   extensionId={tab.extensionId!}
                   connector={tab.connector!}
                   connectionId={tab.connectionId}
+                  onOpenDetail={openLocalDetail}
                 />
               )}
             </DetailTabPanel>
@@ -262,7 +274,30 @@ export function PartnerRightSidebar({
                 <PartnerCollaborationPanel
                   onOpenExpert={(expert) => openLocalDetail({ kind: 'expert', expert })}
                   onOpenSkill={(skill) => openLocalDetail({ kind: 'skill', skill })}
+                  onOpenProposal={(proposalId, title) =>
+                    openLocalDetail({ kind: 'remoteProposal', proposalId, title })
+                  }
                 />
+              )}
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'remoteSource' && tab.sourceId)
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {activeTab?.id === tab.id && (
+                <PartnerRemoteSourcePanel sourceId={tab.sourceId!} onOpenDetail={openLocalDetail} />
+              )}
+            </DetailTabPanel>
+          ))}
+
+        {state.tabs
+          .filter((tab) => tab.kind === 'remoteProposal' && tab.proposalId)
+          .map((tab) => (
+            <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
+              {activeTab?.id === tab.id && (
+                <PartnerRemoteRecords kind="pendingReview" proposalId={tab.proposalId} />
               )}
             </DetailTabPanel>
           ))}
@@ -290,6 +325,7 @@ export function PartnerRightSidebar({
             <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
               <SourcesPanel
                 variant="detail"
+                onOpenDetail={openLocalDetail}
                 openPickerRequest={sourcePickerRequest}
                 onOpenPickerRequestConsumed={consumeSourcePickerRequest}
               />
@@ -350,7 +386,10 @@ export function PartnerRightSidebar({
           .filter((tab) => tab.kind === 'browser')
           .map((tab) => (
             <DetailTabPanel key={tab.id} tab={tab} active={activeTab?.id === tab.id}>
-              <PartnerBrowserPanel initialUrl={tab.browserUrl} />
+              <PartnerBrowserPanel
+                initialUrl={tab.browserUrl}
+                navigationRevision={tab.browserNavigationRevision}
+              />
             </DetailTabPanel>
           ))}
       </div>
@@ -397,6 +436,8 @@ function detailTitle(kind: PartnerDetailTabKind, t: ReturnType<typeof useI18n>['
   if (kind === 'collaboration') return t('partner.taskCards.collaboration');
   if (kind === 'files' || kind === 'file') return t('files.title');
   if (kind === 'baseTask') return t('partner.baseTask.title');
+  if (kind === 'remoteProposal') return t('connectors.remoteReviews');
+  if (kind === 'remoteSource') return t('connectors.remoteSources');
   if (kind === 'browser') return t('partner.detail.browser');
   return t('partner.detail.browser');
 }

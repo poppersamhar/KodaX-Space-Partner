@@ -324,7 +324,7 @@ const extensionInvokeChannels = {
   [sessionPartnerExpertSetChannel.name]: sessionPartnerExpertSetChannel,
 } as const;
 
-const coreInvokeChannels = {
+const sessionInvokeChannels = {
   [versionChannel.name]: versionChannel,
   [sandboxStatusChannel.name]: sandboxStatusChannel,
   [sandboxRefreshChannel.name]: sandboxRefreshChannel,
@@ -467,6 +467,9 @@ const coreInvokeChannels = {
   [settingsSetTerminalShellChannel.name]: settingsSetTerminalShellChannel,
   [settingsSetWindowCloseBehaviorChannel.name]: settingsSetWindowCloseBehaviorChannel,
   [settingsSetRuntimeDefaultsChannel.name]: settingsSetRuntimeDefaultsChannel,
+} as const;
+
+const coreInvokeChannels = {
   [settingsKodaxConfigGetChannel.name]: settingsKodaxConfigGetChannel,
   [settingsKodaxConfigSetCompactionChannel.name]: settingsKodaxConfigSetCompactionChannel,
   [settingsKodaxConfigPlanIntegrationMigrationChannel.name]:
@@ -539,10 +542,12 @@ const coreInvokeChannels = {
 
 // Keep the declaration type in named parts: flattening the growing registry exceeds
 // TypeScript's declaration serialization limit while losing none of the channel types.
-export const invokeChannels: typeof coreInvokeChannels &
+export const invokeChannels: typeof sessionInvokeChannels &
+  typeof coreInvokeChannels &
   typeof extensionInvokeChannels &
   typeof connectorInvokeChannels &
   typeof connectorOnboardingInvokeChannels = {
+  ...sessionInvokeChannels,
   ...coreInvokeChannels,
   ...extensionInvokeChannels,
   ...connectorInvokeChannels,

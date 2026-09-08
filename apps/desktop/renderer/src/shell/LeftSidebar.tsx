@@ -24,7 +24,7 @@ import {
   FolderTree,
   Monitor,
   Pin,
-  Puzzle,
+  Blocks,
   SquarePen,
 } from 'lucide-react';
 import { SurfaceTabs } from './SurfaceTabs.js';
@@ -217,7 +217,7 @@ export function LeftSidebar({
             aria-pressed={pluginsActive}
             className={`w-full text-left text-xs px-2 py-1.5 rounded hover:bg-hover-bg flex items-center gap-2 text-fg-primary ${pluginsActive ? 'bg-surface-3' : ''}`}
           >
-            <Puzzle className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden />
+            <Blocks className="w-4 h-4 flex-shrink-0" strokeWidth={1.75} aria-hidden />
             {t('extensions.plugins')}
           </button>
         )}

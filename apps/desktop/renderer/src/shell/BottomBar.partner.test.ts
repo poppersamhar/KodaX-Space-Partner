@@ -10,6 +10,14 @@ test('Partner composer uses the shared plus menu instead of separate Skill and c
   // Node has no Vite asset loader; image imports keep their public URL in this render test.
   register(
     `data:text/javascript,${encodeURIComponent(`
+    import { readFileSync } from 'node:fs';
+    export async function resolve(specifier, context, nextResolve) {
+      if (specifier.endsWith('/expert-presentation.json')) {
+        const contents = readFileSync(new URL(specifier, context.parentURL), 'utf8');
+        return { url: 'data:text/javascript,' + encodeURIComponent('export default ' + contents), shortCircuit: true };
+      }
+      return nextResolve(specifier, context);
+    }
     export async function load(url, context, nextLoad) {
       if (/\\.(png|svg|webp)$/.test(new URL(url).pathname)) return {
         format: 'module', shortCircuit: true, source: 'export default ' + JSON.stringify(url)
@@ -47,9 +55,7 @@ test('Partner composer uses the shared plus menu instead of separate Skill and c
     assert.match(html, /data-testid="composer-attach-menu-trigger"/);
     assert.doesNotMatch(html, /data-testid="partner-skill-picker"/);
     assert.doesNotMatch(html, /data-testid="partner-connector-chips"/);
-    assert.match(html, /value="docx"/);
-    assert.match(html, /value="pdf"/);
-    assert.match(html, /value="pptx"/);
+    assert.doesNotMatch(html, /value="(?:docx|pdf|pptx)"/);
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
     else Reflect.deleteProperty(globalThis, 'window');

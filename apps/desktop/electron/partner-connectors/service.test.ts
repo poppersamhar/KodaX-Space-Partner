@@ -1237,6 +1237,77 @@ test('an old asynchronous verification cannot reconnect after a newer disconnect
   );
 });
 
+test('disconnect finishes when cancelled onboarding completes verification concurrently', async (t) => {
+  const f = await fixture(t);
+  let connecting: Promise<unknown> = Promise.resolve();
+  let cancelled = false;
+  const service = new PartnerConnectorService(f.root, {
+    cli: f.cli,
+    catalog: async () => [{ id: 'feishu', adapter: 'feishu-cli', name: '飞书', description: '' }],
+    checkPolicy: async () => undefined,
+    revokeConnections: () => {
+      cancelled = true;
+      return connecting.then(
+        () => undefined,
+        () => undefined,
+      );
+    },
+  });
+  const inspect = f.cli.inspect;
+  let markVerifying!: () => void;
+  let releaseVerification!: () => void;
+  const verifying = new Promise<void>((resolve) => {
+    markVerifying = resolve;
+  });
+  const verification = new Promise<void>((resolve) => {
+    releaseVerification = resolve;
+  });
+  f.cli.inspect = async (profile) => {
+    const status = await inspect(profile);
+    markVerifying();
+    await verification;
+    return status;
+  };
+  connecting = service.connect(
+    { extensionId: 'partner.library', connectorId: 'feishu', profile: 'new-onboarding' },
+    {
+      assertActive: () => {
+        if (cancelled) throw new Error('cancelled');
+      },
+      complete: () => assert.fail('Cancelled onboarding must not connect'),
+    },
+  );
+  const connectionRejected = assert.rejects(connecting, /cancelled/);
+  await verifying;
+  const disconnecting = service.disconnect({ ...f.connection, connectionId: f.connection.id });
+  assert.equal(cancelled, true);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  releaseVerification();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.all([disconnecting, connectionRejected]),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('Disconnect deadlocked with cancelled onboarding')),
+          1000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  assert.deepEqual(await service.accounts('partner.library', 'feishu'), [
+    { ...f.connection, connected: false, revision: f.connection.revision + 1 },
+  ]);
+  const next = await service.connect({
+    extensionId: 'partner.library',
+    connectorId: 'feishu',
+    profile: 'next-onboarding',
+  });
+  assert.equal(next.connected, true);
+});
+
 test('a cancelled onboarding lease during account persistence cannot leave a connected account', async (t) => {
   const f = await fixture(t);
   let release!: () => void;
@@ -1302,6 +1373,251 @@ test('onboarding cannot overwrite an existing profile or connect without every r
   assert.equal(inspections, 1);
   assert.deepEqual(await f.service.accounts('partner.library', 'feishu'), [f.connection]);
   assert.equal(inspections, 1);
+});
+
+test('a full Feishu account history permits a fresh identity without reviving old authorization', async (t) => {
+  const f = await fixture(t);
+  const source = await f.service.read(f.context, {
+    connectionId: f.connection.id,
+    documentUrl: doc,
+  });
+  const proposal = await f.service.propose(f.context, {
+    connectionId: f.connection.id,
+    operation: 'append',
+    targetUrl: doc,
+    title: '历史提案',
+    content: '已审核内容',
+    rationale: '',
+  });
+  await f.service.apply(f.context, proposal.id, proposal.contentHash);
+  await f.service.createBase(f.context, {
+    connectionId: f.connection.id,
+    baseName: '历史台账',
+    tableName: '任务',
+    fields: baseFields,
+  });
+  const document = await f.service.createDocument(
+    f.context,
+    '53a9811c-d822-4f2d-bab5-2c99b4b111fa',
+    {
+      title: '历史文档',
+      content: '文档内容',
+    },
+  );
+  await waitForDocumentTask(f.service, f.context, document.id, (task) =>
+    /未完全确认/u.test(task.verificationWarning ?? ''),
+  );
+  const pending = await f.service.propose(f.context, {
+    connectionId: f.connection.id,
+    operation: 'append',
+    targetUrl: doc,
+    title: '待审核提案',
+    content: '不能继承的授权',
+    rationale: '',
+  });
+  await f.service.disconnect({ ...f.connection, connectionId: f.connection.id });
+  const inspect = f.cli.inspect;
+  f.cli.inspect = async (profile) => {
+    const status = await inspect(profile);
+    return {
+      ...status,
+      identity: { ...status.identity!, appId: `cli_${profile}`, openId: `ou_${profile}` },
+    };
+  };
+  for (let index = 1; index < 64; index++) {
+    const account = await f.service.connect({
+      extensionId: 'partner.library',
+      connectorId: 'feishu',
+      profile: `account-${index}`,
+    });
+    await f.service.disconnect({ ...account, connectionId: account.id });
+  }
+  assert.equal((await f.service.accounts('partner.library', 'feishu')).length, 64);
+  const history = await f.service.records(f.context);
+  const fresh = await f.service.connect({
+    extensionId: 'partner.library',
+    connectorId: 'feishu',
+    profile: 'fresh-identity',
+  });
+  const accounts = await f.service.accounts('partner.library', 'feishu');
+  assert.equal(accounts.length, 64);
+  assert.equal(accounts.filter((account) => account.connected).length, 1);
+  assert.equal(
+    accounts.some((account) => account.id === f.connection.id),
+    false,
+  );
+  assert.notEqual(fresh.id, f.connection.id);
+  assert.equal(fresh.revision, 1);
+  const after = await f.service.records(f.context);
+  for (const key of ['sources', 'proposals', 'receipts', 'baseTasks', 'documentTasks'] as const)
+    assert.deepEqual(after[key], history[key]);
+  assert.deepEqual(await f.service.getSource(f.context, source.id), source);
+  assert.deepEqual(await f.service.getProposal(f.context, pending.id), pending);
+  assert.equal(
+    (await f.service.describeBindings(f.context.bindings)).connectors[0]!.available,
+    false,
+  );
+  const bindings = await f.service.resolveSelections([
+    {
+      extensionId: 'partner.library',
+      connectorId: 'feishu',
+      connectionId: fresh.id,
+      connectionRevision: fresh.revision,
+      documents: [{ url: doc, access: 'append' }],
+    },
+  ]);
+  const writes = f.writes();
+  assert.equal(
+    (
+      await f.service.apply(
+        { ...f.context, bindings, getCurrentBindings: () => bindings },
+        pending.id,
+        pending.contentHash,
+      )
+    ).status,
+    'failed',
+  );
+  assert.equal(f.writes(), writes);
+});
+
+test('cancelling a full-capacity Feishu connection restores the reclaimed disconnected account', async (t) => {
+  const f = await fixture(t);
+  await f.service.disconnect({ ...f.connection, connectionId: f.connection.id });
+  for (let index = 1; index < 64; index++) {
+    const account = await f.service.connect({
+      extensionId: 'partner.library',
+      connectorId: 'feishu',
+      profile: `account-${index}`,
+    });
+    await f.service.disconnect({ ...account, connectionId: account.id });
+  }
+  const before = await f.service.accounts('partner.library', 'feishu');
+  const rename = fs.rename.bind(fs);
+  const controller = new AbortController();
+  let intercepted = false;
+  t.mock.method(fs, 'rename', async (...args: Parameters<typeof fs.rename>) => {
+    await rename(...args);
+    if (!intercepted && String(args[1]) === path.join(f.root, 'records.json')) {
+      intercepted = true;
+      controller.abort();
+    }
+  });
+  await assert.rejects(
+    f.service.connect(
+      { extensionId: 'partner.library', connectorId: 'feishu', profile: 'cancelled-onboarding' },
+      {
+        signal: controller.signal,
+        assertActive: () => {
+          if (controller.signal.aborted) throw new Error('cancelled');
+        },
+        complete: () => assert.fail('Cancelled connection must not be delivered'),
+      },
+    ),
+    /cancelled/,
+  );
+  assert.equal(intercepted, true);
+  assert.deepEqual(await f.service.accounts('partner.library', 'feishu'), before);
+  const fresh = await f.service.connect({
+    extensionId: 'partner.library',
+    connectorId: 'feishu',
+    profile: 'retry-onboarding',
+  });
+  assert.equal(fresh.connected, true);
+  assert.notEqual(fresh.id, f.connection.id);
+});
+
+test('full-capacity Feishu connections never reclaim an active account', async (t) => {
+  const f = await fixture(t);
+  for (let index = 1; index < 64; index++) {
+    await f.service.connect({
+      extensionId: 'partner.library',
+      connectorId: 'feishu',
+      profile: `active-${index}`,
+    });
+  }
+  const before = await f.service.accounts('partner.library', 'feishu');
+  await assert.rejects(
+    f.service.connect({
+      extensionId: 'partner.library',
+      connectorId: 'feishu',
+      profile: 'over-capacity',
+    }),
+  );
+  assert.deepEqual(await f.service.accounts('partner.library', 'feishu'), before);
+  assert.equal(
+    (await f.service.describeBindings(f.context.bindings)).connectors[0]!.available,
+    true,
+  );
+});
+
+test('account reclamation waits for an already dispatched write to finish disconnecting', async (t) => {
+  const f = await fixture(t);
+  for (let index = 1; index < 64; index++) {
+    const account = await f.service.connect({
+      extensionId: 'partner.library',
+      connectorId: 'feishu',
+      profile: `account-${index}`,
+    });
+    await f.service.disconnect({ ...account, connectionId: account.id });
+  }
+  const proposal = await f.service.propose(f.context, {
+    connectionId: f.connection.id,
+    operation: 'append',
+    targetUrl: doc,
+    title: '提交中的提案',
+    content: '已审核内容',
+    rationale: '',
+  });
+  const append = f.cli.append;
+  let markDispatched!: () => void;
+  let releaseWrite!: () => void;
+  const dispatched = new Promise<void>((resolve) => {
+    markDispatched = resolve;
+  });
+  const writeBarrier = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  f.cli.append = async (input) => {
+    const result = await append(input);
+    markDispatched();
+    await writeBarrier;
+    return result;
+  };
+  const writing = f.service.apply(f.context, proposal.id, proposal.contentHash);
+  await dispatched;
+  const disconnecting = f.service.disconnect({ ...f.connection, connectionId: f.connection.id });
+  let markInspected!: () => void;
+  const inspected = new Promise<void>((resolve) => {
+    markInspected = resolve;
+  });
+  const inspect = f.cli.inspect;
+  f.cli.inspect = async (profile) => {
+    const result = await inspect(profile);
+    markInspected();
+    return result;
+  };
+  const nextInput = { extensionId: 'partner.library', connectorId: 'feishu', profile: 'fresh' };
+  const connecting = f.service.connect(nextInput);
+  const rejected = assert.rejects(connecting, /授权状态已改变/);
+  try {
+    await inspected;
+    const duringCleanup = await f.service.accounts('partner.library', 'feishu');
+    assert.equal(
+      duringCleanup.some((account) => account.id === f.connection.id),
+      true,
+    );
+    assert.equal(
+      duringCleanup.some((account) => account.profile === 'fresh'),
+      false,
+    );
+  } finally {
+    releaseWrite();
+  }
+  await Promise.all([writing, disconnecting, rejected]);
+  const fresh = await f.service.connect(nextInput);
+  assert.notEqual(fresh.id, f.connection.id);
+  assert.equal((await f.service.getProposal(f.context, proposal.id))!.status, 'succeeded');
+  assert.equal((await f.service.records(f.context)).receipts[0]!.connectionId, f.connection.id);
 });
 
 test('late revocation discards a read before returning or publishing its persisted body', async (t) => {

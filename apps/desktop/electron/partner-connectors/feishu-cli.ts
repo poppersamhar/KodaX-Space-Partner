@@ -116,8 +116,8 @@ function markdownDocumentText(text: string): string {
     text.length > MAX_PARTNER_REMOTE_TEXT_BYTES ||
     Buffer.byteLength(text, 'utf8') > MAX_PARTNER_REMOTE_TEXT_BYTES ||
     /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text) ||
-    /!\[[^\n\]]*\]\([^\n)]*\)/u.test(text) ||
-    /<\s*(?:img|source)\b/iu.test(text)
+    /!\[/u.test(text) ||
+    /<\s*(?:img|source|html5-block|whiteboard)\b/iu.test(text)
   ) {
     throw new FeishuCliError('invalid_input', false);
   }
@@ -146,7 +146,10 @@ function decodeMarkdownExportTitle(text: string): string {
 }
 
 function markdownExportTitle(content: string, fallback: string): string {
-  const firstLine = content.split('\n').find((line) => line.trim())?.trim();
+  const firstLine = content
+    .split('\n')
+    .find((line) => line.trim())
+    ?.trim();
   if (!firstLine) return fallback;
   const tagged = /^<title>(.*?)<\/title>$/u.exec(firstLine);
   const heading = /^#+\s+(.+?)\s*$/u.exec(firstLine);

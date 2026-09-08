@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import presentation from '../../../../../../extensions/partner-library/expert-presentation.json';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { requestPartnerExpertDetail, usePartnerExpert } from './PartnerExpertProvider.js';
 
@@ -8,7 +9,12 @@ export function PartnerExpertChip({ running }: { readonly running: boolean }): J
   if (!context || context.snapshot.context.surface !== 'partner') return null;
   const { snapshot, binding } = context;
   const expert = snapshot.state.expert;
-  if (!expert && !snapshot.error && !snapshot.changing) return null;
+  const visuals: Readonly<Record<string, { avatar: string }>> = presentation.experts;
+  const visual =
+    expert?.extensionId === 'kodax.partner-library' && Object.hasOwn(visuals, expert.expert.id)
+      ? visuals[expert.expert.id]
+      : undefined;
+  if (!expert && !snapshot.error && !snapshot.changing && !snapshot.loading) return null;
   return (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1.5"
@@ -37,9 +43,25 @@ export function PartnerExpertChip({ running }: { readonly running: boolean }): J
             type="button"
             data-testid="partner-expert-chip"
             onClick={() => requestPartnerExpertDetail(expert, snapshot.context)}
-            className="inline-flex min-w-0 items-center px-1.5 pr-2 py-1 text-fg-secondary"
+            className="inline-flex min-w-0 items-center gap-1.5 px-1.5 pr-2 py-1 text-fg-secondary"
             title={t('extensions.expertDetails')}
           >
+            {visual ? (
+              <img
+                src={`./expert-avatars/${visual.avatar}.jpg`}
+                alt=""
+                width={20}
+                height={20}
+                className="h-5 w-5 shrink-0 rounded-full object-cover"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface text-[10px]"
+              >
+                {Array.from(expert.expert.name)[0]}
+              </span>
+            )}
             <span className="truncate">{expert.expert.name}</span>
             {!snapshot.state.available && (
               <span className="shrink-0 text-[10px] text-danger">
@@ -49,9 +71,18 @@ export function PartnerExpertChip({ running }: { readonly running: boolean }): J
           </button>
         </div>
       )}
-      {(running || snapshot.changing) && (
+      {expert && snapshot.state.available && !snapshot.loading && !snapshot.changing && (
+        <span className="text-[10px] text-fg-muted" title={t('extensions.expertConversationScope')}>
+          {t('extensions.expertConversationLabel')}
+        </span>
+      )}
+      {(running || snapshot.changing || snapshot.loading) && (
         <span className="text-[10px] text-fg-muted" role="status">
-          {t(snapshot.changing ? 'extensions.expertSaving' : 'extensions.expertNextTurn')}
+          {t(
+            snapshot.changing || snapshot.loading
+              ? 'extensions.expertSaving'
+              : 'extensions.expertNextTurn',
+          )}
         </span>
       )}
       {(snapshot.error || !snapshot.state.available) && (

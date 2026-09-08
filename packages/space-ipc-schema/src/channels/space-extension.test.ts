@@ -191,3 +191,38 @@ test('host API v4 admits only the explicit Partner native-document delivery capa
     false,
   );
 });
+
+test('expert workflows and retired presets require an explicit compatible host capability', () => {
+  const manifest = {
+    formatVersion: 1,
+    hostApiVersion: 4,
+    id: 'library',
+    name: 'Library',
+    description: '',
+    version: '1.0.0',
+    ui: { entry: 'ui/index.html', sha256: 'a'.repeat(64) },
+  };
+  const expert = {
+    id: 'research',
+    revision: 1,
+    name: 'Research',
+    description: '',
+    prompt: 'Research',
+  };
+  const workflow = {
+    inputs: ['Question'],
+    deliverables: ['Report'],
+    qualityChecks: ['Evidence'],
+    connectorNeeds: [],
+  };
+  for (const fields of [{ retired: true }, { workflow }]) {
+    const input = { ...manifest, experts: [{ ...expert, ...fields }] };
+    assert.equal(spaceExtensionManifestSchema.safeParse(input).success, false);
+    const compatible = { ...input, requiredHostCapabilities: ['partnerExpertWorkflowsV1'] };
+    assert.equal(spaceExtensionManifestSchema.safeParse(compatible).success, true);
+    assert.equal(
+      spaceExtensionManifestSchema.safeParse({ ...compatible, hostApiVersion: 3 }).success,
+      false,
+    );
+  }
+});

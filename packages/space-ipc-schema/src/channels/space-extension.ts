@@ -15,7 +15,10 @@ export const spaceExtensionIdSchema = z
   .max(96)
   .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/);
 
-export const spaceExtensionHostCapabilitySchema = z.enum(['partnerNativeDocumentDeliveryV1']);
+export const spaceExtensionHostCapabilitySchema = z.enum([
+  'partnerNativeDocumentDeliveryV1',
+  'partnerExpertWorkflowsV1',
+]);
 export type SpaceExtensionHostCapabilityT = z.infer<typeof spaceExtensionHostCapabilitySchema>;
 
 export const spaceExtensionManifestSchema = z
@@ -42,6 +45,16 @@ export const spaceExtensionManifestSchema = z
     connectors: z.array(spaceConnectorDefinitionSchema).max(64).default([]),
   })
   .strict()
+  .refine(
+    (manifest) =>
+      manifest.experts.every(
+        (expert) => expert.workflow === undefined && expert.retired === undefined,
+      ) || manifest.requiredHostCapabilities.includes('partnerExpertWorkflowsV1'),
+    {
+      message: 'Expert workflows and retirement require partnerExpertWorkflowsV1',
+      path: ['requiredHostCapabilities'],
+    },
+  )
   .refine(
     (manifest) =>
       manifest.hostApiVersion >= 2 ||

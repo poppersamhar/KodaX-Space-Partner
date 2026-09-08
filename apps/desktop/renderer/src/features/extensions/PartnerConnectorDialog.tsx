@@ -17,6 +17,7 @@ import { floatingSurfaceForBlockingModal } from '../../shell/floatingSurfacePoli
 import { invokeExtensionHost, useSpaceExtensions } from './SpaceExtensionsProvider.js';
 import { usePartnerConnectors } from './PartnerConnectorProvider.js';
 import { expertContextMatches } from './partnerExpertBinding.js';
+import { PartnerConnectorCredentialForm } from './PartnerConnectorCredentialForm.js';
 import { PartnerConnectorIcon } from './PartnerConnectorIcon.js';
 import { connectorPresentation } from './partnerConnectorPresentation.js';
 
@@ -34,6 +35,7 @@ const onboardingHints = {
   needs_install: 'connectors.privateInstall',
   installing: 'connectors.localPreparationHint',
   waiting_app: 'connectors.appSetupHint',
+  waiting_input: 'connectors.mailCredentialsHint',
   waiting_authorization: 'connectors.browserHint',
   verifying: 'connectors.verificationHint',
   connected: 'connectors.connectedHint',
@@ -59,15 +61,25 @@ export function PartnerConnectorDialog({
   readonly onScope: (connectionId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const readOnly = connector.adapter !== 'feishu-cli';
+  const feishu = connector.adapter === 'feishu-cli';
+  const tencentDocs = connector.adapter === 'tencent-docs-mcp';
+  const readOnly = !feishu && !tencentDocs;
   const presentation = connectorPresentation[connector.adapter];
   const privateCli = presentation.setupKind === 'private-cli';
+  const mailbox = presentation.setupKind === 'mail-credentials';
+  const apiCredentials = presentation.setupKind === 'api-credentials';
   const configurationRequired = presentation.setupKind === 'configuration-required';
   const hint = (phase: PartnerConnectorOnboardingT['phase']): string => {
-    if (!readOnly)
+    if (feishu)
       return t(
         phase === 'needs_install' ? 'connectors.componentUnavailable' : onboardingHints[phase],
       );
+    if (
+      apiCredentials &&
+      (phase === 'preparing' || phase === 'waiting_input' || phase === 'installing')
+    )
+      return t('connectors.apiCredentialsHint');
+    if (apiCredentials && phase === 'cancelled') return t('connectors.apiCancelled');
     if (phase === 'needs_install' && privateCli)
       return t('connectors.providerInstall', {
         package: presentation.packageName,
@@ -80,8 +92,16 @@ export function PartnerConnectorDialog({
           ? 'connectors.remotePreparation'
           : 'connectors.providerPreparation',
       );
-    if (phase === 'cancelled') return t('connectors.providerCancelled');
-    if (phase === 'connected') return t('connectors.readOnlyConnected');
+    if (phase === 'cancelled')
+      return t(mailbox ? 'connectors.mailCancelled' : 'connectors.providerCancelled');
+    if (phase === 'connected')
+      return t(
+        mailbox
+          ? 'connectors.mailConnected'
+          : tencentDocs
+            ? 'connectors.tencentDocsConnected'
+            : 'connectors.readOnlyConnected',
+      );
     return t(onboardingHints[phase]);
   };
   const context = usePartnerConnectors();
@@ -89,6 +109,8 @@ export function PartnerConnectorDialog({
   const [storedJob, setJob] = useState<PartnerConnectorOnboardingT | null>(null);
   const jobRef = useRef<PartnerConnectorOnboardingT | null>(null);
   const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState('');
+  const authorizationInput = useRef<HTMLInputElement>(null);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -203,6 +225,7 @@ export function PartnerConnectorDialog({
   };
   const close = async (): Promise<void> => {
     if (busy) return;
+    if (authorizationInput.current) authorizationInput.current.value = '';
     if (!job || finished(job)) {
       onClose();
       return;
@@ -241,7 +264,7 @@ export function PartnerConnectorDialog({
         connectorId: connector.id,
         connectionId: account.id,
         connectionRevision: account.revision,
-        ...(readOnly ? { adapter: connector.adapter } : {}),
+        ...(!feishu ? { adapter: connector.adapter } : {}),
         documents: [],
       });
     if (isActive()) onTry();
@@ -250,7 +273,13 @@ export function PartnerConnectorDialog({
     if (
       !(await requestConfirm({
         title: t('connectors.disconnect'),
-        message: t(readOnly ? 'connectors.providerDisconnect' : 'connectors.disconnectConfirm'),
+        message: t(
+          mailbox
+            ? 'connectors.mailDisconnect'
+            : !feishu
+              ? 'connectors.providerDisconnect'
+              : 'connectors.disconnectConfirm',
+        ),
         danger: true,
       })) ||
       !isActive()
@@ -294,9 +323,9 @@ export function PartnerConnectorDialog({
           {connector.name}
         </h2>
         <p className="mt-2 text-sm leading-6 text-fg-muted">
-          {readOnly ? connector.description : t('connectors.dialogDescription')}
+          {feishu ? t('connectors.dialogDescription') : connector.description}
         </p>
-        {readOnly && (
+        {!feishu && (
           <p className="mt-2 text-xs leading-5 text-fg-muted">{t(presentation.requirementsKey)}</p>
         )}
         {configurationRequired && (
@@ -362,7 +391,7 @@ export function PartnerConnectorDialog({
                 disabled={busy}
                 onClick={() => onScope(connection.id)}
               >
-                {t(readOnly ? 'connectors.resourceScope' : 'connectors.documentScope')}
+                {t(feishu ? 'connectors.documentScope' : 'connectors.resourceScope')}
               </button>
               <button
                 ref={firstButton}
@@ -391,7 +420,7 @@ export function PartnerConnectorDialog({
             {!configurationRequired && job && (
               <div role="status" className="rounded-xl bg-surface-2 p-4 text-sm">
                 <p className="flex items-center gap-2 font-medium">
-                  {activeJob && job.phase !== 'needs_install' ? (
+                  {activeJob && job.phase !== 'needs_install' && job.phase !== 'waiting_input' ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
                   ) : job.phase === 'cancelled' ? (
                     <Check className="h-4 w-4" aria-hidden />
@@ -440,6 +469,107 @@ export function PartnerConnectorDialog({
                 onClick={() => void perform(() => start(true))}
               >
                 {t('connectors.installContinue')}
+              </button>
+            )}
+            {job?.inputKind === 'mail_credentials' && (
+              <form
+                className="space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (busy) return;
+                  const authorizationCode = authorizationInput.current?.value ?? '';
+                  if (authorizationInput.current) authorizationInput.current.value = '';
+                  void perform(async () => {
+                    const result = await invokeExtensionHost(
+                      'partner.connectors.onboarding.submit',
+                      {
+                        extensionId: extension.id,
+                        connectorId: connector.id,
+                        id: job.id,
+                        value: { email: email.trim(), authorizationCode },
+                      },
+                    );
+                    receiveJob(result.job);
+                  });
+                }}
+              >
+                <label className="block text-sm">
+                  {t('connectors.emailAddress')}
+                  <input
+                    type="email"
+                    placeholder={presentation.placeholder}
+                    maxLength={254}
+                    required
+                    autoComplete="username"
+                    value={email}
+                    disabled={busy}
+                    onChange={(event) => setEmail(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-border-default bg-surface px-3 py-2"
+                  />
+                </label>
+                <label className="block text-sm">
+                  {t('connectors.authorizationCode')}
+                  <input
+                    ref={authorizationInput}
+                    type="password"
+                    maxLength={256}
+                    required
+                    autoComplete="off"
+                    disabled={busy}
+                    className="mt-1 w-full rounded-lg border border-border-default bg-surface px-3 py-2"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="btn-accent w-full rounded-lg px-4 py-2.5 text-sm disabled:opacity-40"
+                >
+                  {busy ? t('connectors.busy') : t('connectors.verifyMailbox')}
+                </button>
+              </form>
+            )}
+            {apiCredentials && job?.phase === 'waiting_input' && (
+              <PartnerConnectorCredentialForm
+                key={job.id}
+                kind={job.inputKind}
+                busy={busy}
+                onSubmit={(value) => {
+                  void perform(async () => {
+                    const result = await invokeExtensionHost(
+                      'partner.connectors.onboarding.submit',
+                      {
+                        extensionId: extension.id,
+                        connectorId: connector.id,
+                        id: job.id,
+                        value,
+                      },
+                    );
+                    receiveJob(result.job);
+                  });
+                }}
+              />
+            )}
+            {job?.inputKind === 'authorization_complete' && (
+              <button
+                type="button"
+                disabled={busy}
+                className="btn-accent w-full rounded-lg px-4 py-2.5 text-sm disabled:opacity-40"
+                onClick={() =>
+                  void perform(async () => {
+                    const result = await invokeExtensionHost(
+                      'partner.connectors.onboarding.submit',
+                      {
+                        extensionId: extension.id,
+                        connectorId: connector.id,
+                        id: job.id,
+                        value: { confirmed: true },
+                      },
+                    );
+                    receiveJob(result.job);
+                  })
+                }
+              >
+                {t('connectors.authorized')}
               </button>
             )}
             {job?.canReopen && (

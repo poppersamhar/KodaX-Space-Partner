@@ -195,3 +195,45 @@ test('two unavailable draft connectors can be removed individually without resol
   await assert.rejects(binding.select(selection), /disconnected/);
   assert.equal(resolves, 2);
 });
+
+test('session selections cannot replace unresolved or failed scope and preserve other accounts after retry', async () => {
+  const { api, binding, calls } = fixture();
+  const second = { ...selection, connectionId: '00000000-0000-4000-8000-000000000002' };
+  let rejectLoad!: (reason: Error) => void;
+  api.get = () =>
+    new Promise((_resolve, reject) => {
+      rejectLoad = reject;
+    });
+  const loading = binding.setContext({ ...draft, sessionId: 's1' });
+  await assert.rejects(binding.select({ ...selection, documents: [] }), /loading/);
+  await assert.rejects(binding.remove(selection.connectionId), /loading/);
+  assert.deepEqual(calls, []);
+  rejectLoad(new Error('Cannot load saved scope'));
+  await loading;
+  await assert.rejects(binding.select(selection), /Cannot load saved scope/);
+  assert.deepEqual(calls, []);
+  api.get = async () => stateFor([selection, second]);
+  await binding.refresh();
+  await binding.select({ ...selection, documents: [] });
+  assert.deepEqual(
+    binding.getSnapshot().state,
+    stateFor([second, { ...selection, documents: [] }]),
+  );
+  assert.deepEqual(calls, ['set:s1']);
+});
+
+test('refresh synchronously prevents saving stale selections before a subscriber renders', async () => {
+  const { api, binding, calls } = fixture();
+  await binding.setContext({ ...draft, sessionId: 's1' });
+  let finish!: (state: PartnerConnectorStateT) => void;
+  api.get = () =>
+    new Promise((resolve) => {
+      finish = resolve;
+    });
+  const refreshing = binding.refresh();
+  await assert.rejects(binding.select({ ...selection, documents: [] }), /loading/);
+  assert.deepEqual(calls, ['get:s1']);
+  finish(stateFor([selection]));
+  await refreshing;
+  assert.deepEqual(binding.getSnapshot().state, stateFor([selection]));
+});

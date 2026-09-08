@@ -4,6 +4,15 @@ import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
 import {
   partnerConnectorConnectionSchema,
+  partnerConnectorSearchInputSchema,
+  partnerConnectorSearchResultSchema,
+  partnerConnectorDocumentCreateInputSchema,
+  partnerMailboxAllowsResource,
+  isPartnerMailAdapter,
+  tencentDocumentUrlSchema,
+  type PartnerConnectorSearchInputT,
+  type PartnerConnectorSearchResultT,
+  type PartnerConnectorDocumentCreateInputT,
   partnerConnectorSelectionsSchema,
   partnerRemoteProposalInputSchema,
   partnerRemoteProposalSchema,
@@ -46,7 +55,11 @@ import {
 } from './feishu-cli.js';
 import { FEISHU_BASE_CREATE_SCOPES } from './feishu-scopes.js';
 import { FEISHU_CLI_VERSION } from './feishu-cli-release.js';
-import { PartnerConnectorStore, type ConnectorAccount } from './store.js';
+import {
+  MAX_PARTNER_CONNECTOR_ACCOUNTS,
+  PartnerConnectorStore,
+  type ConnectorAccount,
+} from './store.js';
 import {
   checkReadConnectorDocument,
   type ReadConnector,
@@ -120,6 +133,8 @@ const scopeHash = (binding: PartnerConnectorSnapshotT): string =>
       documents: [...binding.documents].sort((a, b) => a.url.localeCompare(b.url)),
       createFolderUrl: binding.createFolderUrl,
       createBaseFolderUrl: binding.createBaseFolderUrl,
+      mailbox: binding.mailbox,
+      allowCreateDocument: binding.allowCreateDocument,
     }),
   );
 const contentHash = (input: {
@@ -320,7 +335,12 @@ export class PartnerConnectorService {
       return {
         account: { adapter: definition.adapter, providerIdentity: identity },
         label: identity.label,
-        permissions: { read: true, create: false, append: false, createBase: false },
+        permissions: {
+          read: true,
+          create: !!adapter.createDocument,
+          append: false,
+          createBase: false,
+        },
       };
     }
     const status = await this.deps.cli.inspect(profile, lease?.signal);
@@ -452,9 +472,13 @@ export class PartnerConnectorService {
       feishuProfileSchema.parse(input.profile),
       lease,
     );
+    // Cancellation may wait for this connection while holding the mutation lock.
+    // Check synchronously before joining that queue, with no intervening await.
+    assertActive();
     return this.withConnectorMutation(input.extensionId, input.connectorId, async () => {
       const latestDefinition = await this.definition(input.extensionId, input.connectorId);
       if (latestDefinition.adapter !== definition.adapter) throw new Error('连接器类型已变化');
+      let reclaimed: ConnectorAccount | undefined;
       const connection = await this.store.mutate((db) => {
         assertActive();
         const old = db.connections.find(
@@ -482,7 +506,26 @@ export class PartnerConnectorService {
           ...verified.account,
         };
         if (old) db.connections[db.connections.indexOf(old)] = record;
-        else db.connections.push(record);
+        else {
+          const reusableIndex =
+            definition.adapter === 'feishu-cli' &&
+            db.connections.length >= MAX_PARTNER_CONNECTOR_ACCOUNTS
+              ? db.connections.findIndex(
+                  (account) =>
+                    !account.connected &&
+                    (account.adapter ?? 'feishu-cli') === 'feishu-cli' &&
+                    account.extensionId === input.extensionId &&
+                    account.connectorId === input.connectorId,
+                )
+              : -1;
+          if (reusableIndex < 0) db.connections.push(record);
+          else {
+            // Keep historical records and their revoked IDs. The new account gets
+            // a fresh ID; it cannot inherit any previous session authorization.
+            reclaimed = db.connections[reusableIndex];
+            db.connections[reusableIndex] = record;
+          }
+        }
         return publicAccount(record);
       });
       try {
@@ -497,6 +540,7 @@ export class PartnerConnectorService {
               if (index < 0) return;
               if (started)
                 db.connections[index] = { ...started, revision: connection.revision + 1 };
+              else if (reclaimed) db.connections[index] = reclaimed;
               else db.connections.splice(index, 1);
             });
           } catch {
@@ -526,7 +570,8 @@ export class PartnerConnectorService {
     return this.withConnectorMutation(input.extensionId, input.connectorId, async () => {
       try {
         let credentialProfile:
-          { adapter: ReadConnectorId; profile: string; connector: ReadConnector } | undefined;
+          | { adapter: ReadConnectorId; profile: string; connector: ReadConnector }
+          | undefined;
         await this.store.mutate((db) => {
           const account = db.connections.find(
             (item) =>
@@ -789,7 +834,11 @@ export class PartnerConnectorService {
     const extensionIds = [
       ...new Set(
         context.bindings
-          .filter((binding) => (binding.adapter ?? 'feishu-cli') === 'feishu-cli')
+          .filter(
+            (binding) =>
+              (binding.adapter ?? 'feishu-cli') === 'feishu-cli' ||
+              (binding.adapter === 'tencent-docs-mcp' && binding.allowCreateDocument),
+          )
           .map((binding) => binding.extensionId),
       ),
     ];
@@ -845,7 +894,7 @@ export class PartnerConnectorService {
     context: PartnerConnectorContext,
     connectionId: string,
     targetUrl: string | undefined,
-    operation: 'read' | 'create' | 'append' | 'createBase',
+    operation: 'read' | 'search' | 'create' | 'append' | 'createBase',
   ): Promise<ConnectorAuthorization> {
     this.assertContext(context);
     const binding = context.bindings.find((item) => item.connectionId === connectionId);
@@ -854,7 +903,21 @@ export class PartnerConnectorService {
     );
     if (!binding || !current || scopeHash(binding) !== scopeHash(current))
       throw new Error('会话连接器范围已撤销或改变');
-    if (operation === 'create' || operation === 'createBase') {
+    const mailboxRead =
+      operation === 'read' &&
+      typeof targetUrl === 'string' &&
+      partnerMailboxAllowsResource(binding.adapter ?? 'feishu-cli', binding.mailbox, targetUrl);
+    const nativeCreate =
+      operation === 'create' &&
+      binding.adapter === 'tencent-docs-mcp' &&
+      binding.allowCreateDocument === true &&
+      targetUrl === 'tencent-docs://personal-space';
+    if (operation === 'search') {
+      if (!isPartnerMailAdapter(binding.adapter ?? 'feishu-cli') || binding.mailbox !== 'inbox')
+        throw new Error('本会话尚未允许搜索该收件箱');
+    } else if (nativeCreate) {
+      // Explicit per-session creation grant; no implicit Feishu folder semantics.
+    } else if (operation === 'create' || operation === 'createBase') {
       const personalSpace =
         (operation === 'create' && targetUrl === FEISHU_MY_LIBRARY_TARGET) ||
         (operation === 'createBase' && targetUrl === undefined);
@@ -871,11 +934,12 @@ export class PartnerConnectorService {
     } else {
       partnerReadResourceSchema.parse(targetUrl);
       const scope = binding.documents.find((item) => item.url === targetUrl);
-      if (!scope || (operation === 'append' && scope.access !== 'append'))
+      if ((!scope && !mailboxRead) || (operation === 'append' && scope?.access !== 'append'))
         throw new Error('文档不在本会话授权范围内');
     }
     if (
       operation !== 'read' &&
+      operation !== 'search' &&
       (context.permissionMode === 'plan' || context.getCurrentPermissionMode?.() === 'plan')
     )
       throw new Error('计划模式不允许远端写入提案或提交');
@@ -885,14 +949,19 @@ export class PartnerConnectorService {
     if (definition.adapter !== (binding.adapter ?? 'feishu-cli'))
       throw new Error('连接器类型已变化');
     if (definition.adapter !== 'feishu-cli') {
-      if (
-        operation !== 'read' ||
-        typeof targetUrl !== 'string' ||
-        !this.deps.readConnectors?.[definition.adapter]?.acceptsResource(targetUrl)
-      )
-        throw new Error('此连接器仅允许读取已选择的资源');
+      const adapter = this.deps.readConnectors?.[definition.adapter];
+      const allowed =
+        (operation === 'search' && !!adapter?.search) ||
+        (nativeCreate && !!adapter?.createDocument) ||
+        (operation === 'read' &&
+          typeof targetUrl === 'string' &&
+          !!adapter?.acceptsResource(targetUrl));
+      if (!allowed) throw new Error('此连接器不支持该操作或资源');
     }
-    await this.deps.checkPolicy(binding.connectorId, operation !== 'read');
+    await this.deps.checkPolicy(
+      binding.connectorId,
+      operation !== 'read' && operation !== 'search',
+    );
     const account = await this.account(binding);
     if (operation === 'createBase' && !account.permissions.createBase)
       throw new Error('该连接尚未确认多维表格创建权限，请重新连接');
@@ -916,6 +985,7 @@ export class PartnerConnectorService {
         throw new Error('会话、账号或策略授权已改变');
       if (
         operation !== 'read' &&
+        operation !== 'search' &&
         (context.permissionMode === 'plan' || context.getCurrentPermissionMode?.() === 'plan')
       )
         throw new Error('计划模式不允许远端写入');
@@ -926,6 +996,44 @@ export class PartnerConnectorService {
       account,
       assertLive,
     };
+  }
+  async search(
+    context: PartnerConnectorContext,
+    value: PartnerConnectorSearchInputT,
+  ): Promise<PartnerConnectorSearchResultT> {
+    const input = partnerConnectorSearchInputSchema.parse(value);
+    const auth = await this.authorize(context, input.connectionId, undefined, 'search');
+    const adapter = this.deps.readConnectors?.[auth.account.adapter as ReadConnectorId];
+    const expected = auth.account.providerIdentity;
+    if (!adapter?.search || !expected) throw new Error('连接器不支持收件箱搜索');
+    let checked = false;
+    let dispatched = false;
+    const result = partnerConnectorSearchResultSchema.parse(
+      await adapter.search({
+        ...input,
+        profile: auth.account.profile,
+        expected,
+        beforeRead: async () => {
+          await this.authorize(context, input.connectionId, undefined, 'search');
+          checked = true;
+        },
+        assertRead: () => {
+          auth.assertLive();
+          if (!checked) throw new Error('搜索未通过权限检查');
+          dispatched = true;
+        },
+      }),
+    );
+    auth.assertLive();
+    if (
+      !dispatched ||
+      result.messages.some(
+        (message) =>
+          !partnerMailboxAllowsResource(adapter.id, auth.binding.mailbox, message.reference),
+      )
+    )
+      throw new Error('搜索结果与授权收件箱不一致');
+    return result;
   }
   async read(
     context: PartnerConnectorContext,
@@ -1088,6 +1196,7 @@ export class PartnerConnectorService {
     });
     await this.store.mutate((db) => {
       db.baseTasks.push(task);
+      db.dispatchOwners[task.id] = process.pid;
     });
     this.publishChanged(context, task.extensionId, task.id);
     const promise = this.submitBase(context, task);
@@ -1161,6 +1270,122 @@ export class PartnerConnectorService {
       this.active.delete(promise);
     }
   }
+  async createConnectorDocument(
+    context: PartnerConnectorContext,
+    turnExecutionId: string,
+    value: PartnerConnectorDocumentCreateInputT,
+  ): Promise<PartnerNativeDocumentTaskT> {
+    const input = partnerConnectorDocumentCreateInputSchema.parse(value);
+    const auth = await this.authorize(
+      context,
+      input.connectionId,
+      'tencent-docs://personal-space',
+      'create',
+    );
+    if (auth.binding.adapter !== 'tencent-docs-mcp') throw new Error('连接器不支持此文档创建入口');
+    const inputHash = documentInputHash({ title: input.title, content: input.content });
+    const bindingScopeHash = scopeHash(auth.binding);
+    const now = new Date().toISOString();
+    const task = partnerNativeDocumentTaskSchema.parse({
+      id: randomUUID(),
+      sessionId: context.sessionId,
+      projectRoot: context.projectRoot,
+      extensionId: auth.binding.extensionId,
+      connectorId: auth.binding.connectorId,
+      connectionId: input.connectionId,
+      connectionRevision: auth.binding.connectionRevision,
+      provider: 'tencent-docs',
+      turnExecutionId,
+      invocationKey: digest(
+        JSON.stringify([
+          context.sessionId,
+          turnExecutionId,
+          input.connectionId,
+          auth.binding.connectionRevision,
+          bindingScopeHash,
+          inputHash,
+        ]),
+      ),
+      target: { kind: 'personal-space' },
+      requestedTitle: input.title,
+      content: input.content,
+      inputHash,
+      scopeHash: bindingScopeHash,
+      status: 'preparing',
+      createdAt: now,
+      updatedAt: now,
+    });
+    const active = this.activeDocumentInvocations.get(task.invocationKey);
+    if (active) return active;
+    const promise = this.createOrReuseDocument(context, task);
+    this.activeDocumentInvocations.set(task.invocationKey, promise);
+    this.active.set(promise, task.extensionId);
+    try {
+      return await promise;
+    } finally {
+      this.activeDocumentInvocations.delete(task.invocationKey);
+      this.active.delete(promise);
+    }
+  }
+  private async submitConnectorDocument(
+    context: PartnerConnectorContext,
+    task: PartnerNativeDocumentTaskT,
+  ): Promise<PartnerNativeDocumentTaskT> {
+    let gate: BaseDispatchGate | undefined;
+    try {
+      const auth = await this.authorize(
+        context,
+        task.connectionId,
+        'tencent-docs://personal-space',
+        'create',
+      );
+      this.assertDocumentTaskAuthorization(task, auth.binding);
+      const adapter = this.deps.readConnectors?.[auth.account.adapter as ReadConnectorId];
+      const expected = auth.account.providerIdentity;
+      if (!adapter?.createDocument || !expected) throw new Error('连接组件不支持文档创建');
+      gate = this.createDocumentDispatchGate(context, task, auth);
+      const result = await adapter.createDocument({
+        profile: auth.account.profile,
+        expected,
+        title: task.requestedTitle,
+        content: task.content,
+        beforeDispatch: gate.beforeDispatch,
+        assertDispatch: gate.assertDispatch,
+      });
+      if (!gate.wasAdmitted()) throw new Error('创建未通过提交门');
+      if (
+        result.status !== 'success' ||
+        !result.url ||
+        !tencentDocumentUrlSchema.safeParse(result.url).success ||
+        result.documentId !== partnerConnectorResourceKey(adapter.id, result.url) ||
+        result.revision === undefined
+      )
+        return this.finishDocument(
+          task,
+          'unknown',
+          '创建结果未确认，请到腾讯文档核对；不会自动重试',
+          true,
+        );
+      return this.finishDocument(task, 'succeeded', undefined, true, {
+        resourceId: result.documentId!,
+        title: task.requestedTitle,
+        canonicalUrl: result.url,
+        revision: result.revision,
+        contentVerification: 'unverified',
+        verificationWarning: '腾讯文档已返回创建回执；内容尚未完成回读校验，请在右侧查看实际文档',
+      });
+    } catch {
+      const uncertain = gate?.wasAdmitted();
+      return this.finishDocument(
+        task,
+        uncertain ? 'unknown' : 'failed',
+        uncertain
+          ? '创建未确认，请到腾讯文档核对；不会自动重试'
+          : '创建前检查失败，请确认账号、范围和策略后重新发起',
+        gate?.wasClaimed(),
+      );
+    }
+  }
   private async createOrReuseDocument(
     context: PartnerConnectorContext,
     task: PartnerNativeDocumentTaskT,
@@ -1178,7 +1403,9 @@ export class PartnerConnectorService {
     if (!admitted.created) return admitted.task;
     await this.publishDocumentChanged(context, task.extensionId, task.id);
     try {
-      return await this.submitDocument(context, task);
+      return task.provider === 'feishu'
+        ? await this.submitDocument(context, task)
+        : await this.submitConnectorDocument(context, task);
     } finally {
       await this.publishDocumentChanged(context, task.extensionId, task.id);
     }
@@ -1418,7 +1645,9 @@ export class PartnerConnectorService {
           task.connectionId,
           task.target.kind === 'scoped-resource'
             ? task.target.canonicalRef
-            : FEISHU_MY_LIBRARY_TARGET,
+            : task.provider === 'tencent-docs'
+              ? 'tencent-docs://personal-space'
+              : FEISHU_MY_LIBRARY_TARGET,
           'create',
         );
         await this.claimDocumentTask(task);

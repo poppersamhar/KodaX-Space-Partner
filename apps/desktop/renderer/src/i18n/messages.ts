@@ -2,6 +2,17 @@ import type { SupportedLocaleT } from '@kodax-space/space-ipc-schema';
 
 export const messages = {
   'en-US': {
+    'connectors.githubHint':
+      'Use a GitHub personal access token. Prefer a fine-grained token limited to selected repositories, with Contents, Issues and Pull requests read permissions as needed; organizations may require approval. Read repository metadata and default-branch README, or a selected Issue/PR body. No comments, diffs, repository-wide indexing or writes. GitHub.com only.',
+    'connectors.apiCredentialsHint':
+      'Enter your app credentials below. Space verifies them with the provider and stores them in the host credential store; they are never sent to the plugin page or model.',
+    'connectors.apiCancelled':
+      'Connection stopped. Provider credentials remain under your control.',
+    'connectors.apiToken': 'Access token',
+    'connectors.accountId': 'Account ID',
+    'connectors.clientId': 'Client ID',
+    'connectors.clientSecret': 'Client Secret',
+    'connectors.verifyCredentials': 'Verify connection',
     'connectors.resourceScope': 'Resource scope',
     'connectors.addResource': 'Add resource',
     'connectors.readResourceNow': 'Read selected resource',
@@ -27,6 +38,43 @@ export const messages = {
       'Your organization must enable CLI Access and required document permissions. Use an alidocs.dingtalk.com/i/nodes/… link or dingtalk://document/<node-id>.',
     'connectors.meetingHint':
       'Read details of a specified meeting using tmeet://meeting-code/<6–15 digit meeting code>. Business and Enterprise accounts may require provider approval. No automatic recording, transcript or participant export.',
+    'connectors.tencentDocsHint':
+      'Authorize on the Tencent Docs website, then confirm here to verify the connection. Read only selected documents; enable document creation separately for this conversation.',
+    'connectors.neteaseMailHint':
+      'Supports 163.com mailboxes. Enable IMAP in your mailbox settings and enter a client authorization code here. Your mailbox password is not required.',
+    'connectors.qqMailHint':
+      'Supports qq.com mailboxes. Enable IMAP in your mailbox settings and generate a client authorization code. Reading mail does not send replies.',
+    'connectors.mailCredentialsHint':
+      'Enter the mailbox address and client authorization code. Space verifies the mailbox before saving the connection securely.',
+    'connectors.mailConnected':
+      'Mailbox connected. Enable inbox access in Resource scope for this conversation, then search or read mail. Replies are saved as local drafts.',
+    'connectors.mailDisconnect':
+      'Remove this mailbox connection and its saved credential from Space? Conversation access becomes unavailable. This does not revoke the client authorization code in your mailbox settings.',
+    'connectors.mailCancelled': 'Mailbox connection stopped. No messages were sent.',
+    'connectors.emailAddress': 'Email address',
+    'connectors.authorizationCode': 'Client authorization code',
+    'connectors.verifyMailbox': 'Verify mailbox',
+    'connectors.authorized': 'I have authorized',
+    'connectors.phase.waiting_input': 'Enter connection details',
+    'connectors.tencentDocsConnected':
+      'The account is connected. Select documents and enable creation in Resource scope for this conversation.',
+    'connectors.allowCreateDocument': 'Allow this conversation to create documents',
+    'connectors.mailboxScope':
+      'Allow searching and reading this account’s inbox in this conversation',
+    'connectors.mailboxScopeHint':
+      'Search is limited to the most recent 500 inbox UIDs and returns up to 25 matches per page. Only selected mail is saved as a source.',
+    'connectors.mailboxSearch': 'Search inbox',
+    'connectors.mailSubject': 'Subject contains',
+    'connectors.mailFrom': 'Sender contains',
+    'connectors.mailSince': 'From date',
+    'connectors.mailBefore': 'Before date',
+    'connectors.mailUnreadOnly': 'Unread only',
+    'connectors.mailSearch': 'Search mail',
+    'connectors.mailNextPage': 'Next page',
+    'connectors.mailNoResults': 'No matching mail in the scanned inbox range.',
+    'connectors.mailRead': 'Read mail',
+    'connectors.mailUntitled': '(No subject)',
+    'connectors.mailSaveScope': 'Save inbox access for this conversation before searching.',
     'connectors.notionHint':
       'Browser authorization grants read-only access. This conversation may read only the exact Notion pages selected in Resource scope.',
     'connectors.airtableHint':
@@ -34,9 +82,9 @@ export const messages = {
     'connectors.atlassianHint':
       'Browser authorization grants read-only access to permitted Jira and Confluence sites. This conversation may read only the exact issues or pages selected in Resource scope.',
     'connectors.slackSetupHint':
-      'Slack MCP requires KodaX to provide its own registered and reviewed Slack product app before account OAuth can be enabled.',
+      'Use a Bot or User OAuth token from your own installed Slack App (xoxb-/xoxp-) with the relevant channels:history, groups:history, im:history or mpim:history scope. Bots must join the channel. Read one selected message; no thread replies, search or sending.',
     'connectors.zoomSetupHint':
-      'Zoom requires KodaX to provide its own reviewed General App, approved scopes and registered redirect URI before account OAuth can be enabled.',
+      'An account administrator must create and activate a Zoom Server-to-Server OAuth app with meeting:read:meeting:admin (or meeting:read:admin). Enter its Account ID, Client ID and Client Secret. Read meeting details only. Use a /j/ link without query parameters or zoom://meeting/<ID>.',
     'connectors.productAppRequiredHint':
       'KodaX must first register and review its own product app with this provider. No account authorization or connection is available yet.',
     'connectors.productAppRequiredAction': 'Product app setup required',
@@ -179,6 +227,11 @@ export const messages = {
     'connectors.partial': 'Partially written',
     'connectors.failed': 'Failed',
     'connectors.historical': 'This is a captured snapshot, not a live document.',
+    'connectors.openWebpage': 'Open webpage',
+    'connectors.ambiguousSource':
+      'This reference matches multiple accounts. Open the intended message from the materials list.',
+    'connectors.sourceNotInSession':
+      'This resource has no saved snapshot in this conversation. Add it through its connector first.',
     'connectors.view': 'View details',
     'connectors.receiptHint': 'Only verified remote success appears here.',
     'connectors.invalidScope':
@@ -187,6 +240,39 @@ export const messages = {
       'The conversation, account or extension changed. Reopen the panel and try again.',
     'extensions.title': 'Extensions',
     'extensions.expertDetails': 'Expert details',
+    'extensions.expertConversationLabel': 'Conversation expert',
+    'extensions.expertConversationScope':
+      'Keeps this expert for subsequent messages and tasks in this conversation until you switch or remove it. Continuing this conversation restores its saved expert and Skill preference.',
+    'extensions.expertConversationScopePreview':
+      'Choose this expert to use it throughout a conversation until you switch or remove it. Each conversation keeps its own expert.',
+    'extensions.expertConversationUnavailable':
+      'This expert is saved in this conversation but is currently unavailable. Restore availability to continue using it, or switch or remove the expert.',
+    'extensions.expertSkillOverride':
+      'Explicitly choosing another Skill applies to that turn only; the expert role stays selected.',
+    'extensions.connectorActions': 'Connected service actions',
+    'extensions.connectorActionRead': 'Read and summarize',
+    'extensions.connectorActionAppend': 'Prepare an addition',
+    'extensions.connectorActionCreateDocument': 'Create document',
+    'extensions.connectorActionCreateBase': 'Create multidimensional table',
+    'extensions.connectorActionSearch': 'Search email',
+    'extensions.connectorPromptRead':
+      'Read the selected resource 【resource】 in {name}, account {account}, within this conversation’s authorized scope. Summarize for 【purpose】 and retain source references.',
+    'extensions.connectorPromptAppend':
+      'Prepare 【content】 to append to the selected {name} document 【document】 using account {account}. Show the complete addition through the existing review flow before submitting.',
+    'extensions.connectorPromptCreateDocument':
+      'Create a document directly in {name}, account {account}, titled 【title】 for 【audience】 containing 【content】. Use the available native creation tool once the required content is known; return its actual canonical URL.',
+    'extensions.connectorPromptCreateBase':
+      'Create a new multidimensional table in {name}, account {account}, named 【name】 for 【goal】, with a first table 【table】 and fields 【names and types】. Use the current authorized destination, defaulting to personal space when none is specified.',
+    'extensions.connectorPromptSearch':
+      'Search the authorized inbox of {name}, account {account}, for 【keywords, sender or dates】. Read selected relevant messages and summarize them with source references.',
+    'extensions.expertInputs': 'Input materials',
+    'extensions.expertDeliverables': 'Deliverables',
+    'extensions.expertQualityChecks': 'Delivery checks',
+    'extensions.expertConnectorNeeds': 'Connected service needs',
+    'extensions.expertNeedRequired': 'Required',
+    'extensions.expertNeedOptional': 'Optional',
+    'extensions.expertConnectorNeedsHint':
+      'These needs do not connect an account or grant access. Select the relevant service and resources for this conversation.',
     'extensions.expertCapabilities': 'Expert task shortcuts',
     'extensions.expertCapabilityBack': 'Back to capability groups',
     'extensions.noExperts': 'No experts are available yet.',
@@ -845,7 +931,8 @@ export const messages = {
     'help.compactContext': 'Compact context now',
     'help.clearConversation': 'Clear conversation',
     'slash.commandsAndSkills': 'Slash commands and skills',
-    'slash.command.mode.desc': 'Show or switch permission profile (plan / accept-edits / auto / full-access)',
+    'slash.command.mode.desc':
+      'Show or switch permission profile (plan / accept-edits / auto / full-access)',
     'slash.command.provider.desc': 'Show or switch provider (must exist in catalog or custom)',
     'slash.command.reasoning.desc': 'Show or switch reasoning mode',
     'slash.command.model.desc':
@@ -1588,9 +1675,32 @@ export const messages = {
     'partner.deliveries.before': 'Before',
     'partner.deliveries.after': 'After',
     'partner.deliveries.binaryDiff': 'Binary or large file - inline diff not available.',
-    'partner.welcome.title': 'Partner · knowledge work',
-    'partner.welcome.description':
-      'Hand documents, codebases, or research questions to Partner for summarizing, extracting, generating, and investigating into previewable, iterable, exportable results.',
+    "partner.welcome.title": "What shall we work on today?",
+    "partner.welcome.description": "Start with an idea, a document, or a task you want to finish.",
+    "partner.welcome.starters": "Need a starting point?",
+    "partner.welcome.experts": "Find an expert",
+    "partner.welcome.connectors": "Connectors",
+    "partner.welcome.materials": "Add work materials",
+    "partner.welcome.editHint": "Choose a task to select its expert and default method. Edit the template, then send when ready.",
+    "partner.welcome.expertUnavailable": "Expert unavailable — check the expert library",
+    "partner.welcome.research.title": "Research a topic",
+    "partner.welcome.research.description": "Find evidence and clear conclusions",
+    "partner.welcome.research.prompt": "Research [topic] to answer [questions]. Include sources, findings, and what remains uncertain.",
+    "partner.welcome.data.title": "Analyze data",
+    "partner.welcome.data.description": "Understand trends and their drivers",
+    "partner.welcome.data.prompt": "Analyze [data file], focusing on [metrics or questions]. Explain data quality, trends, and next steps.",
+    "partner.welcome.writing.title": "Polish your writing",
+    "partner.welcome.writing.description": "Turn ideas into clear, useful copy",
+    "partner.welcome.writing.prompt": "Write [content type] about [product or topic] for [audience], aiming for [action], based on [evidence].",
+    "partner.welcome.meeting.title": "Summarize a meeting",
+    "partner.welcome.meeting.description": "Capture decisions and follow-ups",
+    "partner.welcome.meeting.prompt": "Summarize [meeting notes] into confirmed decisions, actions, and open questions. Mark missing owners or dates as unconfirmed.",
+    "partner.welcome.email.title": "Draft an email",
+    "partner.welcome.email.description": "Find the right message and tone",
+    "partner.welcome.email.prompt": "Draft an email to [recipient] about [objective], based on [facts], in a [tone] style.",
+    "partner.welcome.report.title": "Prepare a work report",
+    "partner.welcome.report.description": "Explain progress, risks, and next steps",
+    "partner.welcome.report.prompt": "Turn [work records] into a [period] report covering completed work, work in progress, risks, support needed, and next steps.",
     'partner.welcome.startWithProject':
       'Describe a task below to begin. A new Partner session will be created.',
     'partner.welcome.openFolderFirst': 'Open a folder first, then describe a task.',
@@ -1718,8 +1828,6 @@ export const messages = {
       'Create or review a design for [experience and audience]. Use the supplied references, explain hierarchy and interaction decisions, identify usability and accessibility risks, and deliver a truthful design brief, prototype, or review with handoff notes.',
     'partner.sceneTemplate.email':
       'Draft or revise an email for [audience] about [topic]. Use a [tone] tone, make the requested action and deadline clear, preserve important facts, and provide a concise subject line and final send-ready copy.',
-    'partner.deliveryFormat.label': 'Delivery',
-    'partner.deliveryFormat.instruction': 'Delivery format: {format}.',
     'partner.material.add': 'Add material',
     'partner.workbench.profile.document.capabilities': 'extract, rewrite, summarize, cite, package',
     'partner.workbench.profile.document.deliverables':
@@ -2903,6 +3011,16 @@ export const messages = {
       'Auto is sandbox-first. Full access runs directly on the host; connector scopes and reviewed writes still apply.',
   },
   'zh-CN': {
+    'connectors.githubHint':
+      '使用 GitHub 个人访问令牌，建议创建仅限选定仓库的 Fine-grained Token，按需授予 Contents、Issues、Pull requests 读取权限；组织可能需要批准。读取仓库基本信息和默认分支 README，或指定 Issue/PR 正文，不含评论、diff、全库索引或写入。当前仅支持 GitHub.com。',
+    'connectors.apiCredentialsHint':
+      '在下方填写应用凭据。Space 向官方服务验证后保存在宿主凭据存储中，不会交给插件页面或模型。',
+    'connectors.apiCancelled': '已停止连接；第三方凭据仍由你在官方平台管理。',
+    'connectors.apiToken': '访问令牌',
+    'connectors.accountId': 'Account ID',
+    'connectors.clientId': 'Client ID',
+    'connectors.clientSecret': 'Client Secret',
+    'connectors.verifyCredentials': '验证连接',
     'connectors.resourceScope': '资源范围',
     'connectors.addResource': '添加资源',
     'connectors.readResourceNow': '读取已选资源',
@@ -2926,6 +3044,41 @@ export const messages = {
       '企业需开启 CLI Access，并授予相应文档权限。支持 alidocs.dingtalk.com/i/nodes/… 链接或 dingtalk://document/<节点ID>。',
     'connectors.meetingHint':
       '通过 tmeet://meeting-code/<6–15 位会议码> 读取指定会议详情。商业版、企业版可能需要官方灰度批准。本版不自动导出录制、转写或参会者。',
+    'connectors.tencentDocsHint':
+      '在腾讯文档官方网页完成授权后，返回此处确认并验证连接。仅可读取本会话指定文档；新建文档需单独启用。',
+    'connectors.neteaseMailHint':
+      '支持 163.com 邮箱。请在邮箱设置中开启 IMAP，并在此输入客户端授权码，无需提供邮箱登录密码。',
+    'connectors.qqMailHint':
+      '支持 qq.com 邮箱。请在邮箱设置中开启 IMAP 并生成客户端授权码。读取邮件不会发送回复。',
+    'connectors.mailCredentialsHint': '输入邮箱地址和客户端授权码。Space 验证邮箱后安全保存连接。',
+    'connectors.mailConnected':
+      '邮箱已连接。请在资源范围中开启本会话的收件箱访问，再搜索或读取邮件。回复内容保存为本地草稿。',
+    'connectors.mailDisconnect':
+      '从 Space 移除此邮箱连接及保存的凭据？已有会话将无法访问邮箱。此操作不会撤销邮箱设置中的客户端授权码。',
+    'connectors.mailCancelled': '邮箱连接已停止，没有发送任何邮件。',
+    'connectors.emailAddress': '邮箱地址',
+    'connectors.authorizationCode': '客户端授权码',
+    'connectors.verifyMailbox': '验证邮箱',
+    'connectors.authorized': '我已完成授权',
+    'connectors.phase.waiting_input': '请输入连接信息',
+    'connectors.tencentDocsConnected':
+      '账号已连接。请在资源范围中选择文档，并按需开启本会话的新建权限。',
+    'connectors.allowCreateDocument': '允许本会话新建文档',
+    'connectors.mailboxScope': '允许本会话搜索和读取此账号的收件箱',
+    'connectors.mailboxScopeHint':
+      '搜索范围为收件箱最近 500 个 UID，每页最多返回 25 封匹配邮件。仅选中读取的邮件保存为资料。',
+    'connectors.mailboxSearch': '搜索收件箱',
+    'connectors.mailSubject': '主题包含',
+    'connectors.mailFrom': '发件人包含',
+    'connectors.mailSince': '起始日期',
+    'connectors.mailBefore': '截止日期（不含）',
+    'connectors.mailUnreadOnly': '仅未读',
+    'connectors.mailSearch': '搜索邮件',
+    'connectors.mailNextPage': '下一页',
+    'connectors.mailNoResults': '本次收件箱扫描范围内没有匹配邮件。',
+    'connectors.mailRead': '读取邮件',
+    'connectors.mailUntitled': '（无主题）',
+    'connectors.mailSaveScope': '请先保存本会话的收件箱访问范围，再搜索邮件。',
     'connectors.notionHint':
       '通过浏览器授权只读访问；本会话只能读取在“资源范围”中明确选择的 Notion 页面。',
     'connectors.airtableHint':
@@ -2933,9 +3086,9 @@ export const messages = {
     'connectors.atlassianHint':
       '通过浏览器授权只读访问允许的 Jira 与 Confluence 站点；本会话只能读取在“资源范围”中明确选择的问题或页面。',
     'connectors.slackSetupHint':
-      'Slack MCP 要求 KodaX 先提供已注册并通过审核的产品 App，之后才能开放账号 OAuth。',
+      '使用自有且已安装的 Slack App 的 Bot 或 User OAuth Token（xoxb-/xoxp-），需对应的 channels:history、groups:history、im:history 或 mpim:history 权限；Bot 必须加入频道。读取选定的单条消息，不含线程、搜索或发送。',
     'connectors.zoomSetupHint':
-      'Zoom 要求 KodaX 先提供已审核的 General App、获批权限与已登记回调地址，之后才能开放账号 OAuth。',
+      '管理员需创建并启用 Zoom Server-to-Server OAuth 应用，授予 meeting:read:meeting:admin（或 meeting:read:admin）。填写 Account ID、Client ID 与 Client Secret，只读取会议基本信息。资源可用不带参数的 /j/ 链接或 zoom://meeting/<ID>。',
     'connectors.productAppRequiredHint':
       'KodaX 需要先在此平台完成产品 App 注册与审核；当前不会发起账号授权，也不会显示为已连接。',
     'connectors.productAppRequiredAction': '需要先完成产品 App 配置',
@@ -3064,6 +3217,9 @@ export const messages = {
     'connectors.partial': '部分写入',
     'connectors.failed': '失败',
     'connectors.historical': '这是读取时保存的快照，不是实时文档。',
+    'connectors.openWebpage': '打开网页',
+    'connectors.ambiguousSource': '该引用对应多个账号，请在资料列表中选择需要的邮件。',
+    'connectors.sourceNotInSession': '当前会话还没有这份资料的快照，请先通过对应连接器添加。',
     'connectors.view': '查看详情',
     'connectors.receiptHint': '这里只展示已验证成功的远端回执。',
     'connectors.invalidScope':
@@ -3071,6 +3227,39 @@ export const messages = {
     'connectors.scopeChanged': '会话、账号或扩展已变化，请重新打开面板后重试。',
     'extensions.title': '扩展',
     'extensions.expertDetails': '专家详情',
+    'extensions.expertConversationLabel': '本会话持续使用',
+    'extensions.expertConversationScope':
+      '后续对话和任务会持续使用此专家，直到你切换或移除。重新打开本会话时，会恢复已保存的专家和 Skill 设置。',
+    'extensions.expertConversationScopePreview':
+      '选择后，后续对话和任务会持续使用此专家，直到你切换或移除。每个会话单独保存自己的专家。',
+    'extensions.expertConversationUnavailable':
+      '此专家仍保存在本会话中，暂时无法使用。恢复可用后可继续使用，或切换、移除专家。',
+    'extensions.expertSkillOverride':
+      '本轮明确选择其他 Skill 时，只替换本轮工作方法，专家角色仍然保留。',
+    'extensions.connectorActions': '连接器操作',
+    'extensions.connectorActionRead': '读取并总结资料',
+    'extensions.connectorActionAppend': '追加文档内容',
+    'extensions.connectorActionCreateDocument': '新建文档',
+    'extensions.connectorActionCreateBase': '新建多维表格',
+    'extensions.connectorActionSearch': '搜索邮件',
+    'extensions.connectorPromptRead':
+      '请使用当前会话中的 {name} 账号「{account}」，读取已授权资料【资料】，面向【使用场景】整理摘要，保留关键事实和来源。',
+    'extensions.connectorPromptAppend':
+      '请使用 {name} 账号「{account}」，为当前会话授权的文档【文档】准备追加内容【内容】。展示完整文本，按既有审核流程提交。',
+    'extensions.connectorPromptCreateDocument':
+      '请使用 {name} 账号「{account}」，直接新建文档，标题【标题】，读者【目标读者】，内容【关键内容】。信息充分时使用可用的原生创建工具，成功后返回真实文档链接。',
+    'extensions.connectorPromptCreateBase':
+      '请使用 {name} 账号「{account}」，新建多维表格【名称】，用于【业务目标】，首表【表名】，字段【名称及类型】。使用本会话已授权目录；未指定目录时使用个人空间。',
+    'extensions.connectorPromptSearch':
+      '请使用 {name} 账号「{account}」，在本会话授权的收件箱内搜索【关键词、发件人或时间范围】，读取相关邮件并整理摘要，保留来源。',
+    'extensions.expertInputs': '需要的资料',
+    'extensions.expertDeliverables': '交付物',
+    'extensions.expertQualityChecks': '交付检查',
+    'extensions.expertConnectorNeeds': '连接器能力需求',
+    'extensions.expertNeedRequired': '必须具备',
+    'extensions.expertNeedOptional': '按任务需要',
+    'extensions.expertConnectorNeedsHint':
+      '能力需求不会自动连接账号或授予权限，请在当前会话选择相关服务与资料。',
     'extensions.expertCapabilities': '专家任务入口',
     'extensions.expertCapabilityBack': '返回能力分类',
     'extensions.noExperts': '当前还没有可用专家。',
@@ -4228,9 +4417,32 @@ export const messages = {
     'partner.deliveries.before': '之前',
     'partner.deliveries.after': '之后',
     'partner.deliveries.binaryDiff': '二进制或大文件无法内联显示 diff。',
-    'partner.welcome.title': 'Partner · 知识工作',
-    'partner.welcome.description':
-      '把文档、代码库或研究问题交给 Partner，用于总结、抽取、生成、调研，并产出可预览、可迭代、可导出的成果。',
+    "partner.welcome.title": "今天，想一起完成什么？",
+    "partner.welcome.description": "从一个想法、一份资料或一个具体任务开始。",
+    "partner.welcome.starters": "没有头绪？从这些任务开始",
+    "partner.welcome.experts": "找一位专家",
+    "partner.welcome.connectors": "连接器",
+    "partner.welcome.materials": "添加工作资料",
+    "partner.welcome.editHint": "点击任务选择对应专家与默认方法，补充任务模板后再发送。",
+    "partner.welcome.expertUnavailable": "专家不可用，请检查专家库",
+    "partner.welcome.research.title": "调研一个主题",
+    "partner.welcome.research.description": "梳理信息，形成有来源的结论",
+    "partner.welcome.research.prompt": "请围绕【主题】开展调研，重点回答【问题】，说明信息来源、关键发现和仍需核实的内容。",
+    "partner.welcome.data.title": "分析一份数据",
+    "partner.welcome.data.description": "看清趋势，找出变化的原因",
+    "partner.welcome.data.prompt": "请分析我提供的【数据文件】，重点关注【指标或问题】，说明数据质量、主要趋势和下一步建议。",
+    "partner.welcome.writing.title": "打磨一段文案",
+    "partner.welcome.writing.description": "把想法写成清晰有力的表达",
+    "partner.welcome.writing.prompt": "请为【产品或主题】撰写【页面或内容类型】文案，面向【受众】，目标是【行动】，事实依据是【资料】。",
+    "partner.welcome.meeting.title": "整理会议纪要",
+    "partner.welcome.meeting.description": "提炼决策、待办和未决问题",
+    "partner.welcome.meeting.prompt": "请根据【会议记录】整理纪要，区分已确认决策、待办事项和未决问题。负责人和截止时间缺失时标注待确认。",
+    "partner.welcome.email.title": "起草一封邮件",
+    "partner.welcome.email.description": "兼顾沟通目的、语气与边界",
+    "partner.welcome.email.prompt": "请帮我起草一封发给【收件人】的邮件，沟通目的为【目的】，已知事实为【背景】，语气希望【风格】。",
+    "partner.welcome.report.title": "准备工作汇报",
+    "partner.welcome.report.description": "讲清进展、风险和下一步",
+    "partner.welcome.report.prompt": "请根据【工作记录】整理【周期】工作汇报，包含已完成事项、进行中工作、风险与所需支持、下一步计划。",
     'partner.welcome.startWithProject': '在下方描述任务即可开始。系统会新建一个 Partner 会话。',
     'partner.welcome.openFolderFirst': '先打开一个目录，再描述任务。',
     'partner.sources.title': '资料',
@@ -4346,8 +4558,6 @@ export const messages = {
       '请为【使用场景与目标受众】创建或评审设计。使用提供的参考资料，说明层级与交互决策，识别可用性和无障碍风险，并交付真实可实现的设计方案、原型或评审及交接说明。',
     'partner.sceneTemplate.email':
       '请为【目标受众】起草或修改一封关于【主题】的邮件。使用【语气】，明确行动要求与截止时间，保留关键事实，并提供简洁主题和可直接发送的正文。',
-    'partner.deliveryFormat.label': '交付格式',
-    'partner.deliveryFormat.instruction': '交付格式：{format}。',
     'partner.material.add': '添加资料',
     'partner.workbench.profile.document.capabilities': '抽取、改写、总结、引用、打包',
     'partner.workbench.profile.document.deliverables': '报告、文书、DOCX/PDF/MD、资料包',

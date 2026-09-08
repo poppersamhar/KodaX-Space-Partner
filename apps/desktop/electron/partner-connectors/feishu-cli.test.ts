@@ -468,6 +468,12 @@ test('create rejects Markdown resources before the CLI can read local files or f
     '![remote](https://example.com/image.png)',
     '<img path="@./secret.txt"/>',
     '<source path="@./secret.txt"/>',
+    '<html5-block path="@contract-canary.html"/>',
+    '<whiteboard type="mermaid" path="@contract-canary.mmd"/>',
+    '<WHITEBOARD\n type="svg" path="@contract-canary.svg"/>',
+    '![local][image]\n\n[image]: @contract-canary.png',
+    '![local]\n\n[local]: @contract-canary.png',
+    '![multiline\ncaption](@contract-canary.png)',
   ]) {
     await assert.rejects(
       cli.create({ profile: 'partner', expected, title: '安全检查', text }),

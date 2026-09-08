@@ -17,6 +17,7 @@ export const partnerConnectorOnboardingSchema = jobIdentity.extend({
     'installing',
     'waiting_app',
     'waiting_authorization',
+    'waiting_input',
     'verifying',
     'connected',
     'cancelled',
@@ -24,6 +25,15 @@ export const partnerConnectorOnboardingSchema = jobIdentity.extend({
     'failed',
   ]),
   canReopen: z.boolean(),
+  inputKind: z
+    .enum([
+      'mail_credentials',
+      'authorization_complete',
+      'slack_token',
+      'github_token',
+      'zoom_account',
+    ])
+    .optional(),
   expiresAt: z.string().datetime().optional(),
   error: z.string().max(280).optional(),
   connection: partnerConnectorConnectionSchema.optional(),
@@ -31,6 +41,37 @@ export const partnerConnectorOnboardingSchema = jobIdentity.extend({
 export type PartnerConnectorOnboardingT = z.infer<typeof partnerConnectorOnboardingSchema>;
 const jobResult = z.object({ job: partnerConnectorOnboardingSchema }).strict();
 
+const secret = z
+  .string()
+  .min(1)
+  .max(8192)
+  .regex(/^[^\s\u0000-\u001f\u007f]+$/);
+export const partnerConnectorTokenSchema = z.object({ token: secret }).strict();
+export const partnerConnectorZoomAccountSchema = z
+  .object({
+    accountId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    clientId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    clientSecret: secret,
+  })
+  .strict();
+export const partnerConnectorOnboardingValueSchema = z.union([
+  z
+    .object({
+      email: z.string().trim().email().max(254),
+      authorizationCode: z
+        .string()
+        .min(1)
+        .max(256)
+        .regex(/^[^\s\u0000-\u001f\u007f]+$/),
+    })
+    .strict(),
+  z.object({ confirmed: z.literal(true) }).strict(),
+  partnerConnectorTokenSchema,
+  partnerConnectorZoomAccountSchema,
+]);
+export type PartnerConnectorOnboardingValueT = z.infer<
+  typeof partnerConnectorOnboardingValueSchema
+>;
 export const connectorOnboardingInvokeChannels = {
   'partner.connectors.accounts': {
     name: 'partner.connectors.accounts',
@@ -54,6 +95,12 @@ export const connectorOnboardingInvokeChannels = {
     name: 'partner.connectors.onboarding.cancel',
     direction: 'invoke',
     input: jobIdentity,
+    output: jobResult,
+  },
+  'partner.connectors.onboarding.submit': {
+    name: 'partner.connectors.onboarding.submit',
+    direction: 'invoke',
+    input: jobIdentity.extend({ value: partnerConnectorOnboardingValueSchema }),
     output: jobResult,
   },
   'partner.connectors.onboarding.reopen': {

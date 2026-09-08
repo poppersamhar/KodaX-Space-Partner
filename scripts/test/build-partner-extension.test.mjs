@@ -73,12 +73,15 @@ test('builds an independently installable, self-contained Partner library archiv
   assert.equal(manifest.id, 'kodax.partner-library');
   assert.equal(manifest.hostApiVersion, 4);
   assert.equal(manifest.version, '0.1.0');
-  assert.deepEqual(manifest.requiredHostCapabilities, ['partnerNativeDocumentDeliveryV1']);
-  assert.equal(manifest.experts.length, 10);
+  assert.deepEqual(manifest.requiredHostCapabilities, [
+    'partnerNativeDocumentDeliveryV1',
+    'partnerExpertWorkflowsV1',
+  ]);
+  assert.equal(manifest.experts.length, 21);
   assert.equal(manifest.experts[0].id, 'writing-mentor');
-  assert.equal(manifest.experts[0].revision, 2);
+  assert.equal(manifest.experts[0].revision, 3);
   assert.ok(manifest.experts[0].prompt.length > 0);
-  assert.equal(manifest.experts[0].skillRef, undefined);
+  assert.equal(manifest.experts[0].skillRef, 'copywriting');
   assert.deepEqual(manifest.connectors.slice(0, 1), [
     {
       id: 'feishu-docs',
@@ -92,6 +95,9 @@ test('builds an independently installable, self-contained Partner library archiv
     manifest.connectors.map(({ id, adapter, name }) => [id, adapter, name]),
     [
       ['feishu-docs', 'feishu-cli', '飞书'],
+      ['tencent-docs', 'tencent-docs-mcp', '腾讯文档'],
+      ['netease-mail', 'netease-mail-imap', '网易邮箱'],
+      ['qq-mail', 'qq-mail-imap', 'QQ邮箱'],
       ['wecom', 'wecom-cli', '企业微信'],
       ['dingtalk', 'dingtalk-cli', '钉钉'],
       ['tencent-meeting', 'tencent-meeting-cli', '腾讯会议'],
@@ -100,19 +106,59 @@ test('builds an independently installable, self-contained Partner library archiv
       ['atlassian', 'atlassian-mcp', 'Atlassian'],
       ['slack', 'slack-mcp', 'Slack'],
       ['zoom', 'zoom-mcp', 'Zoom'],
+      ['github', 'github-api', 'GitHub'],
     ],
   );
+  const netease = manifest.connectors.find((connector) => connector.id === 'netease-mail');
+  const qq = manifest.connectors.find((connector) => connector.id === 'qq-mail');
+  assert.match(netease.description, /163\.com/);
+  assert.match(qq.description, /qq\.com/);
+  assert.doesNotMatch(netease.description + qq.description, /126|yeah|foxmail/i);
   assert.equal(manifest.ui.sha256, createHash('sha256').update(html).digest('hex'));
   assert.match(html, /专家/);
+  assert.equal([...html.matchAll(/data:image\/jpeg;base64,/g)].length, 16);
+  assert.doesNotMatch(html, /__EXPERT_PRESENTATION__/);
+  assert.match(html, /专家设置与提示词/);
   assert.match(html, /连接器/);
   assert.match(html, /role="tablist"/);
   assert.match(html, /岗位专家/);
   assert.match(html, /任务专家/);
-  assert.match(html, /平台专家/);
+  assert.doesNotMatch(html, /data-expert-type="platform"|<option value="platform"/);
+  assert.deepEqual(
+    manifest.experts
+      .filter((expert) => !expert.retired)
+      .map((expert) => expert.id)
+      .sort(),
+    [
+      'call-preparation',
+      'customer-support',
+      'data-analysis',
+      'deep-research',
+      'email-editing',
+      'interview-design',
+      'knowledge-synthesis',
+      'meeting-minutes',
+      'new-hire-onboarding',
+      'presentation-html',
+      'process-documentation',
+      'product-management',
+      'project-management',
+      'status-report',
+      'user-research',
+      'writing-mentor',
+    ],
+  );
   assert.match(html, /专家团/);
   const embeddedLogos = [...html.matchAll(/data:image\/png;base64,([A-Za-z0-9+/=]+)/g)];
-  assert.equal(embeddedLogos.length, 4, 'Every local CLI provider has its own offline brand');
-  for (const [index, brand] of ['feishu', 'wecom', 'dingtalk', 'tencent-meeting'].entries()) {
+  assert.equal(embeddedLogos.length, 6, 'Each PNG provider has its own offline brand');
+  for (const [index, brand] of [
+    'feishu',
+    'wecom',
+    'dingtalk',
+    'tencent-meeting',
+    'netease-mail',
+    'qq-mail',
+  ].entries()) {
     assert.deepEqual(
       Buffer.from(embeddedLogos[index][1], 'base64'),
       await fs.readFile(new URL(`../../resources/brands/${brand}.png`, import.meta.url)),
@@ -121,10 +167,17 @@ test('builds an independently installable, self-contained Partner library archiv
   const embeddedSvgLogos = [...html.matchAll(/data:image\/svg\+xml;base64,([A-Za-z0-9+/=]+)/g)];
   assert.equal(
     embeddedSvgLogos.length,
-    4,
+    6,
     'Redistributable remote-provider brands are embedded for offline use',
   );
-  for (const [index, brand] of ['notion', 'airtable', 'atlassian', 'zoom'].entries()) {
+  for (const [index, brand] of [
+    'notion',
+    'airtable',
+    'atlassian',
+    'github',
+    'zoom',
+    'tencent-docs',
+  ].entries()) {
     assert.deepEqual(
       Buffer.from(embeddedSvgLogos[index][1], 'base64'),
       await fs.readFile(new URL(`../../resources/brands/${brand}.svg`, import.meta.url)),
@@ -140,29 +193,42 @@ test('the library contains eight stable scene experts with original tasks and re
   const { manifest } = await buildPartnerExtension({ outDir });
   assert.equal(manifest.version, '0.1.0');
   assert.deepEqual(
-    manifest.experts.map((expert) => expert.id),
+    manifest.experts.slice(0, 10).map((expert) => expert.id),
     ['writing-mentor', ...migratedScenes.map(([id]) => id), 'feishu-office-suite'],
   );
   for (const [id, name, description, starterTask] of migratedScenes) {
     const expert = manifest.experts.find((candidate) => candidate.id === id);
     assert.equal(expert.name, name);
     assert.equal(expert.description, description);
-    assert.equal(expert.revision, 2);
+    assert.equal(
+      expert.revision,
+      ['product-management', 'deep-research', 'data-analysis', 'email-editing'].includes(id)
+        ? 3
+        : 2,
+    );
     assert.deepEqual(expert.starterTasks, [starterTask]);
     assert.match(expert.prompt, /你是/);
     assert.doesNotMatch(expert.prompt, /【|】/);
     assert.notEqual(expert.prompt, starterTask);
-    assert.equal(expert.skillRef, undefined);
+    assert.equal(
+      expert.skillRef,
+      id === 'product-management'
+        ? 'partner-product-management'
+        : id === 'deep-research'
+          ? 'partner-deep-research'
+          : id === 'data-analysis'
+            ? 'partner-data-analysis'
+            : id === 'email-editing'
+              ? 'partner-business-communication'
+              : undefined,
+    );
   }
-  assert.equal(manifest.experts[0].revision, 2);
-  assert.equal(manifest.experts[0].skillRef, undefined);
+  assert.equal(manifest.experts[0].revision, 3);
+  assert.equal(manifest.experts[0].skillRef, 'copywriting');
   assert.deepEqual(
-    manifest.experts.map(({ id, expertType, category, listingType }) => [
-      id,
-      expertType,
-      category,
-      listingType,
-    ]),
+    manifest.experts
+      .slice(0, 10)
+      .map(({ id, expertType, category, listingType }) => [id, expertType, category, listingType]),
     [
       ['writing-mentor', 'role', '内容创作', 'expert'],
       ['document-processing', 'task', '文档办公', 'expert'],

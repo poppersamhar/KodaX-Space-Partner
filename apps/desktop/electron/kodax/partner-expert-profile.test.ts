@@ -18,6 +18,51 @@ const expert: PartnerExpertSnapshotT = {
   },
 };
 
+test('both expert categories keep the conversation role while adapting methods to follow-up tasks', () => {
+  for (const expertType of ['role', 'task'] as const) {
+    const profile = buildPartnerAgentProfile({
+      ...expert,
+      expert: { ...expert.expert, expertType },
+    });
+    assert.match(profile.instructions, /until the user switches or removes/);
+    assert.match(profile.instructions, /existing conversation context and decisions/);
+    assert.match(profile.instructions, /Do not restart intake or produce a full deliverable/);
+    assert.match(
+      profile.instructions,
+      /explicitly selected Skill overrides only the method for that run/,
+    );
+    assert.equal(profile.id, PARTNER_AGENT_PROFILE.id);
+  }
+  assert.doesNotMatch(
+    buildPartnerAgentProfile().instructions,
+    /until the user switches or removes/,
+  );
+});
+
+test('expert work expectations reach the agent and its verification without changing base permissions', () => {
+  const workflow = {
+    inputs: ['Target user and problem evidence'],
+    deliverables: ['PRD and acceptance criteria'],
+    qualityChecks: ['Each requirement has an observable acceptance criterion'],
+    connectorNeeds: [
+      { operation: 'read' as const, required: false, reason: 'Read selected research sources' },
+    ],
+  };
+  const configured = { ...expert, expert: { ...expert.expert, workflow } };
+  const profile = buildPartnerAgentProfile(configured);
+  assert.match(profile.instructions, /Target user and problem evidence/);
+  assert.match(profile.instructions, /PRD and acceptance criteria/);
+  assert.ok(profile.verification.instructions?.includes(workflow.qualityChecks[0]!));
+  assert.ok(
+    profile.verification.criteria?.some(
+      (criterion) => criterion.description === workflow.qualityChecks[0],
+    ),
+  );
+  assert.ok(profile.instructions.includes('Do not request unrestricted shell'));
+  assert.ok(!PARTNER_AGENT_PROFILE.instructions.includes('Target user and problem evidence'));
+  assert.equal(configured.expert.workflow.connectorNeeds[0]!.required, false);
+});
+
 test('the actual SDK system prompt contains the selected expert and the original Partner boundary', async (t) => {
   const profile = buildPartnerAgentProfile(expert);
   assert.equal(profile.name, 'Writing guide');

@@ -52,7 +52,7 @@ const staleConfigurationBinding={
     accountLabel:'Legacy Slack account',
     documents:[],
   },
-  available:true,
+  available:false,
 };
 if(window.configurationMode)connections[connectors[2].id]=[{
   id:staleConfigurationBinding.binding.connectionId,
@@ -62,7 +62,7 @@ if(window.configurationMode)connections[connectors[2].id]=[{
   adapter:'slack-mcp',
   profile:'legacy-slack',
   accountLabel:'Legacy Slack account',
-  connected:true,
+  connected:false,
   permissions:{read:true,create:false,append:false,createBase:false},
 }];
 window.staleRows=projectPartnerConnectorMenuRows([{
@@ -261,7 +261,7 @@ test(
 );
 
 test(
-  'configuration-required stale bindings never appear connected and remain removable',
+  'revoked Slack bindings never appear connected and remain removable',
   { skip: !browserPath },
   async (t) => {
     const output = await build({
@@ -302,12 +302,9 @@ test(
     )) as string[];
     assert.equal(priorityNames.includes('Slack'), true);
     const slackRow = menu.getByTestId('partner-connector-menu-row').filter({ hasText: 'Slack' });
-    const remove = slackRow.getByRole('button', {
-      name: '从本会话移除不可用的 Slack',
-      exact: true,
-    });
+    const remove = slackRow.getByRole('switch');
     await remove.waitFor();
-    assert.equal(await slackRow.getByRole('switch').count(), 0);
+    assert.equal(await remove.getAttribute('aria-checked'), 'true');
     assert.equal(await page.getByTestId('partner-connector-chips').count(), 0);
     await remove.click();
     await page.waitForFunction(() =>

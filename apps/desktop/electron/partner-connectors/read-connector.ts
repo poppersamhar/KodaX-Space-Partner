@@ -10,7 +10,11 @@ export type ReadConnectorId =
   | 'airtable-mcp'
   | 'atlassian-mcp'
   | 'slack-mcp'
-  | 'zoom-mcp';
+  | 'zoom-mcp'
+  | 'github-api'
+  | 'tencent-docs-mcp'
+  | 'netease-mail-imap'
+  | 'qq-mail-imap';
 export interface ReadConnectorIdentity {
   authorityId: string;
   subjectId: string;
@@ -38,6 +42,29 @@ export interface ReadConnectorDocument {
   content: string;
 }
 
+export interface ReadConnectorSearchInput extends Omit<ReadConnectorInput, 'documentUrl'> {
+  query: { subject?: string; from?: string; since?: string; before?: string; unreadOnly?: boolean };
+  cursor?: string;
+  limit?: number;
+  signal?: AbortSignal;
+}
+export type ReadConnectorSearchResult =
+  import('@kodax-space/space-ipc-schema').PartnerConnectorSearchResultT;
+export type ReadConnectorSearchMessage = ReadConnectorSearchResult['messages'][number];
+export interface ReadConnectorCreateInput {
+  profile: string;
+  expected: ReadConnectorIdentity;
+  title: string;
+  content: string;
+  beforeDispatch: () => Promise<void>;
+  assertDispatch: () => void;
+}
+export interface ReadConnectorCreateResult {
+  status: 'success' | 'unknown';
+  documentId?: string;
+  url?: string;
+  revision?: number;
+}
 /** A bounded snapshot, never silently truncated or reported as the full oversized source. */
 export function checkReadConnectorDocument(document: ReadConnectorDocument): ReadConnectorDocument {
   if (
@@ -57,6 +84,8 @@ export interface ReadConnector {
   /** Strict canonical reference validation. No arbitrary URL, command or JSON forwarding. */
   acceptsResource(value: string): boolean;
   read(input: ReadConnectorInput): Promise<ReadConnectorDocument>;
+  search?(input: ReadConnectorSearchInput): Promise<ReadConnectorSearchResult>;
+  createDocument?(input: ReadConnectorCreateInput): Promise<ReadConnectorCreateResult>;
   /** Remote OAuth adapters delete the profile credential; local CLIs may omit this hook. */
   disconnect?(profile: string, signal?: AbortSignal): Promise<void>;
 }
@@ -74,6 +103,9 @@ const messages = {
   read_failed: '读取失败，请确认账号对该资源具有查看权限。',
   resource_too_large:
     '资料超出当前读取上限（正文 128 KiB、标题 280 字符），请选择较小的资料；未保存截断内容。',
+  mail_message_too_large: '原始邮件（含附件）超过 2 MiB，未读取正文；请选择较小的邮件。',
+  permission_missing: '授权缺少读取权限，请在官方应用设置中补充所需的只读权限后重新连接。',
+  rate_limited: '服务请求次数达到限制，请稍后再试。',
   configuration_required:
     '此连接器需要产品方预先配置并审核 Slack App 或 Zoom General App；当前构建未配置，尚未连接。',
 } as const;

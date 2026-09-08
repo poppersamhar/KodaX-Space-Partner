@@ -4,7 +4,11 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { after, afterEach, before, test } from 'node:test';
 import JSZip from 'jszip';
-import type { PartnerExpertSnapshotT, SessionEvent } from '@kodax-space/space-ipc-schema';
+import type {
+  PartnerExpertSnapshotT,
+  SessionEvent,
+  SpaceExtensionManifestT,
+} from '@kodax-space/space-ipc-schema';
 
 // Scope Space and SDK before importing any of their singleton stores or providers.
 process.env.KODAX_TEST_ONBOARDING = `expert-runtime-${randomUUID()}`;
@@ -46,11 +50,46 @@ setRendererTarget(() => null);
 const { getSpaceExtensionStore, getSpaceExpertCatalog } =
   await import('../space-extensions/runtime.js');
 const { setPartnerExpertForIpc } = await import('../ipc/session.js');
+const { loadPersistedConversationHistory, setSessionStoreImpl } =
+  await import('./session-store.js');
+const { registerSpaceBuiltinSkills, _resetSpaceBuiltinSkillsForTests } =
+  await import('../skill/space-builtins.js');
 const { KodaXBaseProvider, registerModelProvider } = await import('@kodax-ai/kodax/llm');
 const { awaitLatestCodingMemoryReviewDrain } = await import('@kodax-ai/kodax/coding');
 const projectRoot = path.join(profileDirectory, 'project');
 const boundaryProjectRoot = path.join(profileDirectory, 'boundary-project');
 const systems: string[] = [];
+const conversations: string[] = [];
+const shippedExperts: PartnerExpertSnapshotT[] = [];
+const expandedExpertTasks = [
+  [
+    'writing-mentor',
+    '为小团队工具写中文首页文案，只有自动汇总周报这一已验证功能，不提供效率数据。',
+  ],
+  [
+    'user-research',
+    '三条反馈中两条来自同一用户：导出失败、再次导出失败；另一用户说分享方便。归纳线索，保留样本限制。',
+  ],
+  [
+    'project-management',
+    '周五交付，开发需要四天，评审在开发后需要两天，今天是周一。分析计划冲突。',
+  ],
+  ['data-analysis', 'A组10人成功1人，B组90人成功45人。计算总体成功率并说明分母。'],
+  [
+    'meeting-minutes',
+    '会议记录：小王建议周五上线。小李说测试未完成，日期未定。整理决定和行动，不补造负责人。',
+  ],
+  ['email-editing', '客户问何时交付。团队原话是争取周五，尚未确认。起草回复，保留承诺强度。'],
+  ['process-documentation', '采购流程：申请人提交，主管审批。超过五万元还需财务审批。缺少材料退回；审批通过才能采购。整理SOP，不编造时限。'],
+  ['customer-support', '客户说导出失败要求今天修好和退款。只确认正在调查，无修复时间、退款决定或升级记录。写回复草稿和内部待核实项。'],
+  ['knowledge-synthesis', '正式政策A：2026年9月1日起报销上限500元。9月3日聊天B提议改成800元但未批准。C转发B。整理知识条目，保留冲突与来源，不能把转发视为独立证据。'],
+  ['call-preparation', '准备30分钟拜访，客户预算与决策权未知，希望两周交付但未获批准。给议程和待确认项。'],
+  ['interview-design', '为SQL数据分析师设计30分钟面试，给问题与评分锚点。没有候选人回答，不评分。'],
+  ['new-hire-onboarding', '制定入职首周计划，导师和账号审批尚未确认。只给建议，不发邀请。'],
+  ['presentation-html', '制作4页离线HTML演示和讲稿，只有本期6/10人完成的数据，不编造增长或称为PPTX。'],
+  ['status-report', '本周计划10项、完成6项；其中2项验收未通过。预算实际8万元、总预算10万元。没有上期数据和新增时间承诺。生成周报，区别开发完成与验收完成，不编造趋势。'],
+] as const;
+
 const sessions: InstanceType<typeof RealKodaXSession>[] = [];
 let writingExpert: PartnerExpertSnapshotT;
 let researchExpert: PartnerExpertSnapshotT;
@@ -76,6 +115,7 @@ class RecordingProvider extends KodaXBaseProvider {
   ): Promise<Awaited<ReturnType<InstanceType<typeof KodaXBaseProvider>['stream']>>> {
     if (args[2].includes('KodaX Space Partner surface profile:')) {
       systems.push(args[2]);
+      conversations.push(JSON.stringify(args[0]));
       await beforeResponse?.();
     }
     return {
@@ -215,6 +255,42 @@ before(async () => {
   }
 });
 
+before(async () => {
+  const repositoryRoot = path.resolve(import.meta.dirname, '../../../..');
+  await registerSpaceBuiltinSkills(path.join(repositoryRoot, 'resources/builtin-skills'));
+  const manifest: SpaceExtensionManifestT = JSON.parse(
+    await fs.readFile(
+      path.join(repositoryRoot, 'extensions/partner-library/manifest.json'),
+      'utf8',
+    ),
+  );
+  const html = await fs.readFile(
+    path.join(repositoryRoot, 'extensions/partner-library/ui/index.html'),
+  );
+  manifest.ui.sha256 = createHash('sha256').update(html).digest('hex');
+  const zip = new JSZip();
+  zip.file('manifest.json', JSON.stringify(manifest));
+  zip.file('ui/index.html', html);
+  const archive = path.join(profileDirectory, 'shipped.space-extension');
+  await fs.writeFile(archive, await zip.generateAsync({ type: 'nodebuffer' }));
+  await getSpaceExtensionStore().install(archive);
+  await getSpaceExtensionStore().setEnabled(manifest.id, true);
+  for (const id of [
+    'product-management',
+    'deep-research',
+    ...expandedExpertTasks.map(([id]) => id),
+  ]) {
+    const definition = manifest.experts.find((entry) => entry.id === id)!;
+    shippedExperts.push(
+      await getSpaceExpertCatalog().resolve({
+        extensionId: manifest.id,
+        expertId: id,
+        revision: definition.revision,
+      }),
+    );
+  }
+});
+
 const unregisterProvider = registerModelProvider(
   'space-expert-runtime-test',
   () => new RecordingProvider(),
@@ -222,6 +298,7 @@ const unregisterProvider = registerModelProvider(
 after(async () => {
   await awaitLatestCodingMemoryReviewDrain(2_000);
   unregisterProvider();
+  _resetSpaceBuiltinSkillsForTests();
   keychain._resetMemoryStoreForTesting();
   await fs.rm(profileDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   if (previousCredential === undefined) delete process.env[credentialEnv];
@@ -231,9 +308,11 @@ afterEach(async () => {
   beforeResponse = undefined;
   await Promise.all(sessions.splice(0).map((session) => session.dispose()));
   await kodaxHost.disposeAll();
+  setSessionStoreImpl(null);
   setSessionRuntimeStoreForTesting(null);
   await awaitLatestCodingMemoryReviewDrain(2_000);
   systems.length = 0;
+  conversations.length = 0;
 });
 
 function makeSession(expert?: PartnerExpertSnapshotT, workingDirectory = projectRoot) {
@@ -254,7 +333,7 @@ function makeSession(expert?: PartnerExpertSnapshotT, workingDirectory = project
   return { session, events };
 }
 
-function makeHostSession(expert: PartnerExpertSnapshotT) {
+function makeHostSession(expert?: PartnerExpertSnapshotT) {
   const { sessionId } = kodaxHost.createSession({
     projectRoot,
     provider: 'space-expert-runtime-test',
@@ -268,6 +347,138 @@ function makeHostSession(expert: PartnerExpertSnapshotT) {
   assert.ok(session);
   return session;
 }
+
+async function sendAndRecord(session: ReturnType<typeof makeHostSession>, message: string) {
+  const count = systems.length;
+  assert.deepEqual(await session.send(message), { accepted: true, queued: false });
+  await waitFor(() => !session.isRunning());
+  assert.equal(systems.length, count + 1, 'the actual SDK must call the controlled provider');
+  return systems.at(-1)!;
+}
+
+async function selectShippedExpert(
+  sessionId: string,
+  expert: PartnerExpertSnapshotT,
+  useSkill = true,
+) {
+  return setPartnerExpertForIpc({
+    sessionId,
+    expert: {
+      extensionId: expert.extensionId,
+      expertId: expert.expert.id,
+      revision: expert.expert.revision,
+      useSkill,
+    },
+  });
+}
+
+async function resumeRecordedSession(sessionId: string) {
+  await kodaxHost.disposeAll();
+  assert.equal(await kodaxHost.tryResume(sessionId), true);
+  const session = kodaxHost.get(sessionId);
+  assert.ok(session);
+  return session;
+}
+
+for (const [index, method] of [
+  '证据 → 用户问题 → 需求 → 验收',
+  '多个转载不能算独立交叉验证',
+].entries()) {
+  test(`shipped ${index === 0 ? 'role' : 'task'} expert persists across tasks, Skill choices and actual host restoration`, async () => {
+    const expert = shippedExperts[index]!;
+    let session = makeHostSession();
+    await kodaxHost.persistRuntime(session.sessionId);
+    await selectShippedExpert(session.sessionId, expert);
+    for (const message of [
+      'FIRST-DECISION: 用户是小团队。',
+      'FOLLOW-UP: 沿用前述用户，补充验收。',
+    ]) {
+      const system = await sendAndRecord(session, message);
+      assert.ok(system.includes(expert.expert.prompt));
+      assert.ok(system.includes(method));
+      assert.match(system, /until the user switches or removes/);
+    }
+    assert.match(conversations.at(-1)!, /FIRST-DECISION/);
+    await selectShippedExpert(session.sessionId, expert, false);
+    session = await resumeRecordedSession(session.sessionId);
+    assert.deepEqual(session.partnerExpert, { ...expert, useSkill: false });
+    const promptOnly = await sendAndRecord(session, 'RESTORED-FOLLOW-UP: 简短解释刚才的取舍。');
+    assert.ok(promptOnly.includes(expert.expert.prompt));
+    assert.ok(!promptOnly.includes(method));
+    assert.match(conversations.at(-1)!, /FIRST-DECISION/);
+    await selectShippedExpert(session.sessionId, expert);
+    const explicit = await sendAndRecord(session, '/expert-explicit-fixture 临时审阅方法。');
+    assert.ok(explicit.includes(expert.expert.prompt));
+    assert.ok(explicit.includes('EXPERT_EXPLICIT_SKILL_BODY'));
+    assert.ok(!explicit.includes(method));
+    const next = await sendAndRecord(session, '继续下一项任务。');
+    assert.ok(next.includes(method));
+    assert.ok(!next.includes('EXPERT_EXPLICIT_SKILL_BODY'));
+    session = await resumeRecordedSession(session.sessionId);
+    assert.ok((await sendAndRecord(session, '继续之前的任务。')).includes(method));
+  });
+}
+
+for (const [id, task] of expandedExpertTasks) {
+  test(`expanded ${id} loads the actual bundled method and checks across host restoration`, async () => {
+    const expert = shippedExperts.find((entry) => entry.expert.id === id)!;
+    assert.ok(expert.expert.workflow);
+    const rawMethod = await fs.readFile(
+      path.resolve(
+        import.meta.dirname,
+        '../../../../resources/builtin-skills',
+        expert.expert.skillRef!,
+        'SKILL.md',
+      ),
+      'utf8',
+    );
+    const methodBody = rawMethod.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
+    let session = makeHostSession();
+    await kodaxHost.persistRuntime(session.sessionId);
+    await selectShippedExpert(session.sessionId, expert);
+    const first = await sendAndRecord(session, task);
+    assert.ok(first.includes(methodBody), 'full shipped method reaches the actual model call');
+    for (const check of expert.expert.workflow.qualityChecks) assert.ok(first.includes(check));
+    session = await resumeRecordedSession(session.sessionId);
+    const followUp = await sendAndRecord(session, '沿用上述材料，复核结果中的证据与不确定性。');
+    assert.ok(followUp.includes(expert.expert.prompt));
+    assert.ok(followUp.includes(methodBody));
+    assert.ok(
+      conversations.at(-1)!.includes(task),
+      'original task survives actual host restoration',
+    );
+    await selectShippedExpert(session.sessionId, expert, false);
+    const disabled = await sendAndRecord(session, '简短说明下一步。');
+    assert.ok(disabled.includes(expert.expert.prompt));
+    assert.ok(!disabled.includes(methodBody), 'method remains optional independently of role');
+  });
+}
+
+test('switching and removing shipped experts preserves history while another conversation stays unbound', async () => {
+  const [product, research] = shippedExperts;
+  let session = makeHostSession(product!);
+  await kodaxHost.persistRuntime(session.sessionId);
+  await sendAndRecord(session, 'ORIGINAL-CONTEXT: 目标是服务小团队。');
+  await selectShippedExpert(session.sessionId, research!);
+  const switched = await sendAndRecord(session, '沿用目标，研究另一种方案。');
+  assert.ok(switched.includes(research!.expert.prompt));
+  assert.ok(!switched.includes(product!.expert.prompt));
+  assert.ok(!switched.includes('证据 → 用户问题 → 需求 → 验收'));
+  const independent = await sendAndRecord(makeHostSession(), '这是另一个会话。');
+  assert.ok(!independent.includes(research!.expert.prompt));
+  assert.doesNotMatch(conversations.at(-1)!, /ORIGINAL-CONTEXT/);
+  await setPartnerExpertForIpc({ sessionId: session.sessionId, expert: null });
+  session = await resumeRecordedSession(session.sessionId);
+  assert.equal(session.partnerExpert, undefined);
+  const removed = await sendAndRecord(session, 'REMOVED-FOLLOW-UP: 继续讨论目标。');
+  assert.ok(!removed.includes(research!.expert.prompt));
+  assert.ok(!removed.includes('多个转载不能算独立交叉验证'));
+  assert.match(conversations.at(-1)!, /ORIGINAL-CONTEXT/);
+  const history = await loadPersistedConversationHistory(session.sessionId);
+  assert.equal(history.supported, true);
+  assert.match(JSON.stringify(history.data), /ORIGINAL-CONTEXT/);
+  assert.match(JSON.stringify(history.data), /REMOVED-FOLLOW-UP/);
+});
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 10_000;

@@ -392,7 +392,8 @@ test('the independent build artifact installs and renders through the same publi
   const view = await store.getView(installed.id);
   assert.match(view.html, /专家/);
   assert.match(view.html, /连接器/);
-  assert.equal(installed.expertCount, 10);
+  // Includes five retired definitions retained for historical conversations.
+  assert.equal(installed.expertCount, 21);
   await store.uninstall(installed.id);
   assert.deepEqual(await store.list(), []);
 });

@@ -7,6 +7,46 @@ import {
   spaceExpertSaveInputSchema,
 } from './partner-expert.js';
 
+test('expert workflows preserve inspectable outcomes without accepting executable or authorization declarations', () => {
+  const definition = {
+    id: 'research',
+    revision: 1,
+    name: 'Research',
+    description: '',
+    prompt: 'Research the question.',
+    expertType: 'task',
+    retired: true,
+    workflow: {
+      inputs: ['Decision and available evidence'],
+      deliverables: ['Research report with sources'],
+      qualityChecks: ['Important claims have inspectable evidence'],
+      connectorNeeds: [
+        { operation: 'read', required: false, reason: 'Read selected external evidence' },
+      ],
+    },
+  };
+  const parsed = spaceExpertDefinitionSchema.parse(definition);
+  assert.deepEqual(parsed.workflow, definition.workflow);
+  assert.equal(parsed.retired, true);
+  for (const workflow of [
+    { ...definition.workflow, command: 'arbitrary' },
+    { ...definition.workflow, qualityChecks: [] },
+    {
+      ...definition.workflow,
+      connectorNeeds: [{ operation: 'delete', required: true, reason: 'unsupported' }],
+    },
+    {
+      ...definition.workflow,
+      connectorNeeds: [{ operation: 'read', required: true, reason: 'read', token: 'secret' }],
+    },
+  ])
+    assert.equal(spaceExpertDefinitionSchema.safeParse({ ...definition, workflow }).success, false);
+  assert.equal(
+    spaceExpertSaveInputSchema.safeParse({ extensionId: 'library', values: definition }).success,
+    false,
+  );
+});
+
 test('a prompt-only expert has no implicit Skill and snapshots preserve its revision', () => {
   const expert = spaceExpertDefinitionSchema.parse({
     id: 'writing-mentor',
@@ -139,7 +179,7 @@ test('a platform expert can publish a bounded two-level capability guide in its 
   assert.equal(snapshot.expert.capabilityGuide?.groups[1]?.actions[0]?.id, 'create-base');
 });
 
-test('capability guides are platform-only, unique, bounded package metadata', () => {
+test('capability guides are independent of expert type and remain unique bounded metadata', () => {
   const guide = {
     groups: [
       {
@@ -168,7 +208,7 @@ test('capability guides are platform-only, unique, bounded package metadata', ()
   assert.equal(spaceExpertDefinitionSchema.safeParse(definition).success, true);
   assert.equal(
     spaceExpertDefinitionSchema.safeParse({ ...definition, expertType: 'role' }).success,
-    false,
+    true,
   );
   assert.equal(
     spaceExpertDefinitionSchema.safeParse({

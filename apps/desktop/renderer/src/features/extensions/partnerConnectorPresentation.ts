@@ -2,7 +2,12 @@ import type { PartnerConnectorAdapterT } from '@kodax-space/space-ipc-schema';
 import type { MessageKey } from '../../i18n/messages.js';
 
 export type ConnectorSetupKind =
-  'bundled' | 'private-cli' | 'remote-oauth' | 'configuration-required';
+  | 'bundled'
+  | 'private-cli'
+  | 'remote-oauth'
+  | 'mail-credentials'
+  | 'api-credentials'
+  | 'configuration-required';
 
 type ConnectorPresentation = {
   placeholder: string;
@@ -21,6 +26,21 @@ export const connectorPresentation: Record<PartnerConnectorAdapterT, ConnectorPr
     placeholder: 'https://example.feishu.cn/docx/…',
     setupKind: 'bundled',
     requirementsKey: 'connectors.scopeHint',
+  },
+  'tencent-docs-mcp': {
+    placeholder: 'https://docs.qq.com/doc/…',
+    setupKind: 'remote-oauth',
+    requirementsKey: 'connectors.tencentDocsHint',
+  },
+  'netease-mail-imap': {
+    placeholder: 'name@163.com',
+    setupKind: 'mail-credentials',
+    requirementsKey: 'connectors.neteaseMailHint',
+  },
+  'qq-mail-imap': {
+    placeholder: 'name@qq.com',
+    setupKind: 'mail-credentials',
+    requirementsKey: 'connectors.qqMailHint',
   },
   'wecom-cli': {
     placeholder: 'https://doc.weixin.qq.com/doc/…',
@@ -59,13 +79,18 @@ export const connectorPresentation: Record<PartnerConnectorAdapterT, ConnectorPr
     requirementsKey: 'connectors.atlassianHint',
   },
   'slack-mcp': {
-    placeholder: 'slack://channel/C…/message/1234567890.123456',
-    setupKind: 'configuration-required',
+    placeholder: 'https://your-workspace.slack.com/archives/C…/p…',
+    setupKind: 'api-credentials',
     requirementsKey: 'connectors.slackSetupHint',
   },
+  'github-api': {
+    placeholder: 'https://github.com/owner/repo/issues/123',
+    setupKind: 'api-credentials',
+    requirementsKey: 'connectors.githubHint',
+  },
   'zoom-mcp': {
-    placeholder: 'zoom://meeting/123456789',
-    setupKind: 'configuration-required',
+    placeholder: 'https://zoom.us/j/12345678901',
+    setupKind: 'api-credentials',
     requirementsKey: 'connectors.zoomSetupHint',
   },
 };

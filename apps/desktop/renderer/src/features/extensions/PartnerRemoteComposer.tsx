@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  partnerConnectorSupports,
+  projectPartnerConnectorResource,
+} from '@kodax-space/space-ipc-schema';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { useAppStore } from '../../store/appStore.js';
 import { invokeExtensionHost } from './SpaceExtensionsProvider.js';
@@ -21,7 +25,8 @@ export function PartnerRemoteComposer({
       (item) =>
         item.binding.extensionId === extensionId &&
         item.binding.connectorId === connectorId &&
-        item.available,
+        item.available &&
+        partnerConnectorSupports(item.binding.adapter ?? 'feishu-cli', 'read'),
     ) ?? [];
   const [target, setTarget] = useState('');
   const [title, setTitle] = useState('');
@@ -37,14 +42,25 @@ export function PartnerRemoteComposer({
   }, []);
   if (!selected.length) return null;
   const scope = context!.snapshot.context;
-  const targets = selected.flatMap((item) => [
-    ...item.binding.documents.map((document) => ({
-      connectionId: item.binding.connectionId,
-      url: document.url,
-      operation: document.access === 'append' ? ('append' as const) : ('read' as const),
-      label: item.binding.accountLabel,
-    })),
-  ]);
+  const targets = selected.flatMap(({ binding }) =>
+    binding.documents.flatMap((document) => {
+      const adapter = binding.adapter ?? 'feishu-cli';
+      const resource = projectPartnerConnectorResource(document.url, adapter);
+      if (!resource) return [];
+      return [
+        {
+          connectionId: binding.connectionId,
+          url: resource.canonicalRef,
+          kind: resource.kind,
+          operation:
+            document.access === 'append' && partnerConnectorSupports(adapter, 'append')
+              ? ('append' as const)
+              : ('read' as const),
+          label: binding.accountLabel,
+        },
+      ];
+    }),
+  );
   if (!targets.length) return null;
   const key = (item: (typeof targets)[number]) => `${item.connectionId}:${item.url}`;
   const active = targets.find((item) => key(item) === target) ?? targets[0];
@@ -112,11 +128,7 @@ export function PartnerRemoteComposer({
             disabled={busy || !active}
             onClick={() => void act(true)}
           >
-            {t(
-              selected.some((item) => item.binding.adapter && item.binding.adapter !== 'feishu-cli')
-                ? 'connectors.readResourceNow'
-                : 'connectors.readNow',
-            )}
+            {t(active?.kind === 'document' ? 'connectors.readNow' : 'connectors.readResourceNow')}
           </button>
           {active && active.operation !== 'read' && (
             <>

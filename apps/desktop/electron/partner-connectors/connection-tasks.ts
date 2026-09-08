@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { PartnerConnectorOnboardingT } from '@kodax-space/space-ipc-schema';
+import {
+  partnerConnectorOnboardingValueSchema,
+  type PartnerConnectorOnboardingT,
+  type PartnerConnectorOnboardingValueT,
+} from '@kodax-space/space-ipc-schema';
 import {
   FeishuOnboardingError,
   isFeishuOnboardingAuthorizationUrl,
@@ -21,6 +25,11 @@ interface Task {
   authorizationUrl?: string;
   abortReason?: 'cancelled' | 'expired';
   adapter?: ReadConnector;
+  pendingInput?: {
+    kind: NonNullable<PartnerConnectorOnboardingT['inputKind']>;
+    resolve(value: PartnerConnectorOnboardingValueT): void;
+    reject(error: Error): void;
+  };
 }
 interface Dependencies {
   service: Pick<PartnerConnectorService, 'assertConnectionAllowed' | 'connect'>;
@@ -74,6 +83,43 @@ export class PartnerConnectorTasks {
 
   get(input: Identity): PartnerConnectorOnboardingT {
     return structuredClone(this.requireTask(input).job);
+  }
+  submit(
+    input: Identity & { value: PartnerConnectorOnboardingValueT },
+  ): PartnerConnectorOnboardingT {
+    const task = this.requireTask(input);
+    this.assertLive(task);
+    const pending = task.pendingInput;
+    const value = partnerConnectorOnboardingValueSchema.parse(input.value);
+    if (
+      !pending ||
+      !{
+        mail_credentials: 'email' in value,
+        authorization_complete: 'confirmed' in value,
+        slack_token: 'token' in value,
+        github_token: 'token' in value,
+        zoom_account: 'accountId' in value,
+      }[pending.kind]
+    )
+      throw new Error('此连接步骤不接受该输入');
+    task.pendingInput = undefined;
+    this.publish(task, { inputKind: undefined, phase: 'verifying' });
+    pending.resolve(value);
+    return structuredClone(task.job);
+  }
+  private requestInput(
+    task: Task,
+    kind: NonNullable<PartnerConnectorOnboardingT['inputKind']>,
+  ): Promise<PartnerConnectorOnboardingValueT> {
+    this.assertLive(task);
+    if (task.pendingInput) throw new Error('已有输入步骤等待完成');
+    return new Promise((resolve, reject) => {
+      task.pendingInput = { kind, resolve, reject };
+      this.publish(task, {
+        inputKind: kind,
+        phase: kind === 'authorization_complete' ? 'waiting_authorization' : 'waiting_input',
+      });
+    });
   }
   async cancel(input: Identity): Promise<PartnerConnectorOnboardingT> {
     const task = this.requireTask(input);
@@ -138,8 +184,10 @@ export class PartnerConnectorTasks {
     task.abortReason = reason;
     task.authorizationUrl = undefined;
     clearTimeout(task.timer);
+    task.pendingInput?.reject(new ReadConnectorError(reason));
+    task.pendingInput = undefined;
     task.controller.abort();
-    this.publish(task, { canReopen: false });
+    this.publish(task, { canReopen: false, inputKind: undefined });
   }
   private scheduleExpiry(task: Task, deadline: number): void {
     clearTimeout(task.timer);
@@ -176,7 +224,9 @@ export class PartnerConnectorTasks {
   private finish(task: Task, patch: Partial<PartnerConnectorOnboardingT>): void {
     clearTimeout(task.timer);
     task.authorizationUrl = undefined;
-    this.publish(task, { ...patch, canReopen: false, expiresAt: undefined });
+    task.pendingInput?.reject(new ReadConnectorError('cancelled'));
+    task.pendingInput = undefined;
+    this.publish(task, { ...patch, canReopen: false, expiresAt: undefined, inputKind: undefined });
   }
   private async execute(task: Task, installCli: boolean): Promise<void> {
     try {
@@ -185,6 +235,7 @@ export class PartnerConnectorTasks {
       task.adapter = await this.deps.resolveAdapter?.(task.job);
       this.assertLive(task);
       const input: FeishuOnboardingInput = {
+        requestInput: (kind) => this.requestInput(task, kind),
         profile: task.profile,
         // Shared onboarding IPC keeps explicit install consent for the other
         // read-only providers. Feishu is host-managed and must never accept an

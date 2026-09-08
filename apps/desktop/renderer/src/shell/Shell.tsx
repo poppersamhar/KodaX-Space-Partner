@@ -76,6 +76,7 @@ import { pushToast } from '../store/toastStore.js';
 import { useSurfaceStore } from '../store/surface.js';
 import { PartnerWorkspace } from '../features/partner/PartnerWorkspace.js';
 import { PartnerRightSidebar } from '../features/partner/PartnerRightSidebar.js';
+import { usePartnerLinkDetails } from '../features/partner/partnerLinkDetails.js';
 import {
   SpaceExtensionsProvider,
   useSpaceExtensions,
@@ -793,6 +794,8 @@ function ShellContent({ version = null }: ShellProps): JSX.Element {
       rightSidebarDefaultWidthFits,
     ],
   );
+
+  usePartnerLinkDetails(openPartnerDetail);
 
   useEffect(() => {
     const onConnectorDetails = (event: Event): void => {

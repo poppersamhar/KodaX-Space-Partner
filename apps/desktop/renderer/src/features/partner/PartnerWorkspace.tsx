@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Handshake, List, PanelRight } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
+import { useAppStore } from '../../store/appStore.js';
 import { SidebarToggleButton } from '../../shell/SidebarToggleButton.js';
 import { PartnerContextRail } from './PartnerContextRail.js';
 import { PartnerConversation } from './PartnerConversation.js';
@@ -67,10 +68,13 @@ export function PartnerWorkspace({
   const { t } = useI18n();
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const compact = useCompactPartnerLayout();
+  const currentSessionId = useAppStore((state) => state.currentSessionId);
+  const [homeContextOpen, setHomeContextOpen] = useState(false);
   const [contextRailOpen, setContextRailOpen] = useState(readContextRailOpen);
   const [workspaceWidth, setWorkspaceWidth] = useState<number | null>(null);
   const contextRailAutoHidden = shouldAutoHidePartnerContextRail(rightSidebarOpen, workspaceWidth);
-  const contextRailVisible = contextRailOpen && !compact && !contextRailAutoHidden;
+  const contextRailVisible =
+    (currentSessionId ? contextRailOpen : homeContextOpen) && !compact && !contextRailAutoHidden;
 
   const requestMaterialPicker = useCallback((): void => {
     onOpenDetail({ kind: 'materials', openPicker: true });
@@ -97,6 +101,11 @@ export function PartnerWorkspace({
   const toggleContextRail = (): void => {
     if (compact) {
       onOpenDetail({ kind: 'materials' });
+      return;
+    }
+    if (!currentSessionId) {
+      if (contextRailAutoHidden) onToggleRightSidebar();
+      setHomeContextOpen((open) => !open);
       return;
     }
     if (contextRailAutoHidden) {

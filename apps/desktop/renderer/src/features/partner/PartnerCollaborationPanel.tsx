@@ -3,17 +3,24 @@ import { Bot, Sparkles, WandSparkles } from 'lucide-react';
 import { useI18n } from '../../i18n/I18nProvider.js';
 import { requestPartnerSkillDraft } from './partnerSkillDraft.js';
 import { usePartnerTaskCollaboration } from './usePartnerTaskCollaboration.js';
+import { usePartnerRemoteRecords } from '../extensions/usePartnerRemoteRecords.js';
 
 export function PartnerCollaborationPanel({
   onOpenExpert,
   onOpenSkill,
+  onOpenProposal,
 }: {
   readonly onOpenExpert: (expert: PartnerExpertSnapshotT) => void;
   readonly onOpenSkill: (skill: SkillMeta) => void;
+  readonly onOpenProposal: (proposalId: string, title: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const { expert, skills, loading, error } = usePartnerTaskCollaboration();
-  const empty = !expert && skills.length === 0;
+  const { records } = usePartnerRemoteRecords();
+  const reviews = records.proposals.filter(
+    (proposal) => proposal.operation === 'append' && proposal.status === 'pending',
+  );
+  const empty = !expert && skills.length === 0 && reviews.length === 0;
 
   return (
     <div
@@ -29,6 +36,24 @@ export function PartnerCollaborationPanel({
         </p>
       </header>
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        {reviews.length > 0 && (
+          <section>
+            <h3 className="mb-2 text-[11px] font-medium text-fg-muted">
+              {t('connectors.remoteReviews')}
+            </h3>
+            <div className="space-y-2">
+              {reviews.map((proposal) => (
+                <CollaborationRow
+                  key={proposal.id}
+                  icon={<WandSparkles className="h-4 w-4" strokeWidth={1.75} aria-hidden />}
+                  title={proposal.title}
+                  subtitle={t('connectors.pending')}
+                  onClick={() => onOpenProposal(proposal.id, proposal.title)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
         {error && (
           <p role="status" className="text-xs text-danger">
             {error}
