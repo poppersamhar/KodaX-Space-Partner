@@ -20,11 +20,31 @@
 ## 验证范围与已知限制
 
 - 本地类型、改动文件lint、构建、归档及专家SDK/真实Electron流程已验证。首轮全量4,047项中5个旧目录/界面测试失败，已修正并定向通过；第二轮发现一项SDK隔离用例偶发失败，单独复测通过。最终统计见Release正文。
-- 远端CI未完成：当前GitHub凭据没有workflow权限，无法更新本分支的CI触发配置，相关改动已撤回。
-- 当前只分发macOS arm64体验包；Windows、Intel Mac、Linux未作为本次已验证安装包提供。
+- Windows专项CI已通过；完整跨平台CI尚未运行。
+- 当前提供macOS arm64和Windows x64体验包；Intel Mac与Linux尚未提供本次验证的安装包。
 - 连接器目录存在不等于每个真实企业账号都已端到端验证。飞书之外的服务多数仍处于Preview；具体API/fixture/真实账号证据见各PF验收材料，不承诺所有服务已通过真实环境测试。
 - 专家真实模型样板仍需人工复核数据、承诺和日期；HTML演示不等于原生PPTX，生成质量并非保证。
 - 独立的PartnerWorkspace TSX服务端渲染旧测试仍有测试加载问题；它不在当前npm test脚本的TS测试集合中，真实Electron流程另有证据。未将其描述为已通过。
 - 保留上游与第三方许可证、版权及来源；本次公开发布许可已由用户确认来自上游作者。
 
 源码、独立插件及安装包属于Partner预发布，不代表已合入Space主线或通过全部生产环境验证。
+
+## 本次验收记录
+
+- 最终源码：`243bb2ea58151390c7be9c1a86fbe3c71ce98140`。
+- 第二轮npm test：4047项，4042通过、4跳过、1失败；SDK连接器隔离用例单独复测通过，但整轮不计为零失败。
+- 类型、改动文件lint、smoke build和Partner归档构建通过。
+- 后续已补充workflow权限，Windows专项CI已通过；此前完整跨平台CI仍未运行。
+- 下载后可用SHA256SUMS.txt核对附件。
+
+- 最终发行包真实Electron隔离复测通过：4位新专家、默认方法开关、重载恢复、会话隔离和移除；使用控制模型，不冒称真实账号业务验收。
+
+
+## Windows x64 下载（补充发布）
+
+- **安装版**：`KodaX-Space-Partner-Setup-0.1.0-x64.exe`，适合正常安装使用。
+- **免安装版**：`KodaX-Space-Partner-Portable-0.1.0-x64.exe`，无需安装即可运行；用户数据仍保存于用户目录，并非完全随程序移动。
+- 两种版本均需安装并启用本Release的 `kodax.partner-library-0.1.0.space-extension`。
+- `SHA256SUMS-Windows.txt`用于校验Windows附件；原有Mac及插件校验文件保持不变。
+- [Windows构建与启动验证](https://github.com/poppersamhar/KodaX-Space-Partner/actions/runs/34209355634)通过：Windows runner安装依赖、类型检查、smoke build、原生打包、更新源校验、真实打包程序启动检查。构建使用已发布源码 `243bb2ea58151390c7be9c1a86fbe3c71ce98140`，未移动原tag。
+- Windows包未签名；专项启动检查不等于已验证所有用户电脑或真实企业账号。

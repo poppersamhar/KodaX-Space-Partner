@@ -11,7 +11,7 @@
 
 ## Version Info
 
-- Current Partner Release: Unreleased
+- Current Partner Release: `0.1.0` (Pre-release)
 - Planned Partner Version: `v0.1.0`
 - Partner Library Target: `0.1.0`
 - Space Baseline: KodaX Space `v0.1.46-alpha.5` / KodaX `0.7.96-beta.1`（来源：`package-lock.json`）
