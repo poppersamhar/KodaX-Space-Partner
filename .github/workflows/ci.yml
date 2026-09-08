@@ -23,7 +23,7 @@ name: ci
 
 on:
   push:
-    branches: [main, 'integration/partner-*']
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
